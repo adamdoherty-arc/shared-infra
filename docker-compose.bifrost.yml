@@ -159,6 +159,38 @@ services:
         max-size: "20m"
         max-file: "3"
 
+  bifrost-logs-pruner:
+    # Nightly pruner for Bifrost logs.db.  Without retention the file
+    # grows without bound (reached 8.3 GB corrupt on 2026-06-11).
+    # Runs DELETE + VACUUM at 03:00 UTC, keeping 7 days of rows.
+    # Mounts bifrost/ read-WRITE so it can modify logs.db directly.
+    # No network access needed — pure local SQLite operation.
+    build:
+      context: ./bifrost-logs-pruner
+      dockerfile: Dockerfile
+    image: shared-infra/bifrost-logs-pruner:1.0
+    container_name: bifrost-logs-pruner
+    depends_on:
+      - bifrost
+    volumes:
+      # Read-WRITE mount (unlike the exporter which is :ro).
+      - ./bifrost:/data
+    environment:
+      BIFROST_LOGS_DB: "/data/logs.db"
+      LOGS_RETENTION_DAYS: "7"
+      PRUNE_HOUR_UTC: "3"
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+          cpus: "0.05"
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+
 networks:
   shared:
     name: shared-infra_default
