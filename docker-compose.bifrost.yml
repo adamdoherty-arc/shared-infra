@@ -81,8 +81,14 @@ services:
           # /v1/models every ~8s). The bifrost-metrics sidecar's stalled
           # cursor (no new rows in 9000+ scrapes as of 2026-06-15 20:00) is
           # consistent with logs.db write-buffer pressure under tight memory.
-          memory: 1G
-          cpus: "0.5"
+          # Fix-100418 followup (2026-06-16): 20h uptime hit 97% of 1G again
+          # (999.4 MiB), same one-allocation-from-OOMKill posture. Same
+          # workload — bifrost just needs more headroom under sustained
+          # multi-project load. Bumped 1G -> 2G; CPU also doubled to 1.0
+          # since the metrics export + provider-discovery loops are CPU-
+          # light but were ceiling-clipped under spikes.
+          memory: 2G
+          cpus: "1.0"
     restart: unless-stopped
     healthcheck:
       # Keep Docker health focused on gateway liveness. Bifrost's aggregate

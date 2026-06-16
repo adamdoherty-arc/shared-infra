@@ -437,6 +437,20 @@ services:
       - "autoheal=true"
     deploy:
       resources:
+        # Fix-100418 followup (2026-06-16): cap CPU. vllm-chat was burning
+        # ~125% host CPU (1.25 cores) on every chat completion because there
+        # was NO cpu limit. Inference is GPU-bound, so the CPU work is just
+        # the FastAPI server + tokenizer / chat-template overhead — that
+        # genuinely needs only a small slice. Without a cap the container
+        # was grabbing whatever Docker Desktop's WSL2 scheduler would give
+        # it, which during multi-symbol fanout in ada-backend triggered a
+        # scheduler-level CPU squeeze on ada-backend's event loop (12s+
+        # event_loop_lag warnings + 40s /api/health timings, even though
+        # ada-backend's own pool/code was healthy). 2.0-core cap leaves the
+        # server + tokenizer comfortable while preserving CPU headroom for
+        # the rest of the stack on shared hosts.
+        limits:
+          cpus: "2.0"
         reservations:
           devices:
             - driver: nvidia
