@@ -1,0 +1,75 @@
+# Sprint S11 (2026-05-18) — ecosystem alert rules.
+#
+# Joined the existing alert_rules.yml + heartbeat_alert_rules.yml.
+# Two new conditions captured from real incident patterns:
+#
+# - LegionDaemonRestartLoop: any container restart_count grows by >2 in 10 min.
+#   Catches the kind of silent flapping that removed the legacy watchdog
+#   on 2026-05-15 — but here the alert routes to Discord instead of an
+#   auto-restart, preserving the deliberate UI-driven recovery design.
+#
+# - ClickHouseCpuStorm: ClickHouse CPU sustained >300% for 5 min.
+#   Direct revisit of Phase 1 (2026-05-18) where text_log debug-storm
+#   pegged ClickHouse at 489% for hours. New rule fires fast so the
+#   operator can take action before the container OOMs.
+
+groups:
+  - name: ecosystem_resilience
+    interval: 30s
+    rules:
+      - alert: LegionDaemonRestartLoop
+        expr: increase(container_last_seen{name=~"legion-.*|ada-.*|zero-.*"}[10m]) == 0 AND changes(container_start_time_seconds{name=~"legion-.*|ada-.*|zero-.*"}[10m]) > 2
+        for: 1m
+        labels:
+          severity: critical
+          tier: ecosystem
+        annotations:
+          summary: "{{ $labels.name }} is in a restart loop"
+          description: >
+            Container {{ $labels.name }} has restarted >2 times in the last
+            10 min. Silent-flap pattern: check container logs + recent
+            commits. The auto-restart watchdog was removed 2026-05-15 in
+            favor of operator-driven recovery — investigate before
+            restarting.
+
+      - alert: ClickHouseCpuStorm
+        expr: avg_over_time(container_cpu_usage_seconds_total{name=~".*clickhouse.*"}[5m]) > 3
+        for: 5m
+        labels:
+          severity: critical
+          tier: ecosystem
+        annotations:
+          summary: "ClickHouse CPU sustained >300% for 5 min ({{ $labels.name }})"
+          description: >
+            {{ $labels.name }} CPU is {{ $value | printf "%.0f" }}× a single
+            core, sustained 5 min. Phase 1 pattern (2026-05-18) — the most
+            common cause is system.text_log debug-level storming inside a
+            tight memory cap. Check `text_log` row count and the
+            config.d/zero-system-logs.xml override.
+
+      - alert: LearningBusBacklog
+        expr: pg_legion_cross_project_learnings_unapplied > 50
+        for: 10m
+        labels:
+          severity: warning
+          tier: ecosystem
+        annotations:
+          summary: "Cross-project learning bus has {{ $value }} unapplied rows"
+          description: >
+            The general-cross-pollinate skill consumes ≤5 learnings per tick
+            with a 6h cron, so steady-state backlog should be <30. Higher
+            means the cron isn't firing or each draft is failing. Check
+            skill_runs for general-cross-pollinate.
+
+      - alert: LegionCoordinatorStaleTick
+        expr: time() - pg_legion_coordinator_last_tick_seconds > 180
+        for: 1m
+        labels:
+          severity: warning
+          tier: ecosystem
+        annotations:
+          summary: "Legion coordinator hasn't ticked in {{ $value }}s"
+          description: >
+            S1 coordinator ticks every 30s. >3 min silence usually means the
+            supervised task crashed and isn't being restarted. Hit
+            /api/legion/status — if state != "running", restart legion-backend.

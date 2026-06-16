@@ -1,0 +1,267 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "description": "Sprint-Tracking observability — Legion proxy latency, circuit-breaker state, retro gate rejections, vault render perf, commit ingest velocity. Backs the Sprint-Tracking policy that took effect 2026-05-17.",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [
+    {
+      "asDropdown": false,
+      "icon": "external link",
+      "includeVars": true,
+      "keepTime": true,
+      "tags": ["adam"],
+      "targetBlank": true,
+      "title": "ADA Dashboards",
+      "type": "dashboards"
+    }
+  ],
+  "liveNow": false,
+  "panels": [
+    {
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 0},
+      "id": 10,
+      "panels": [],
+      "title": "Legion Sprint Client — Health",
+      "type": "row"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "description": "Circuit breaker state: 0=closed (healthy), 1=half-open (probing), 2=open (legion unreachable, falling back to vault journal)",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "mappings": [
+            {"options": {"0": {"text": "CLOSED"}, "1": {"text": "HALF-OPEN"}, "2": {"text": "OPEN"}}, "type": "value"}
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 1},
+              {"color": "red", "value": 2}
+            ]
+          },
+          "unit": "none"
+        }
+      },
+      "gridPos": {"h": 5, "w": 6, "x": 0, "y": 1},
+      "id": 11,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "expr": "ada_sprint_circuit_breaker_state",
+          "refId": "A"
+        }
+      ],
+      "title": "Circuit Breaker",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "description": "Requests per second to Legion by status. Spikes in http_5xx or error indicate Legion-side trouble; circuit_open means we're journaling to vault.",
+      "fieldConfig": {"defaults": {"unit": "reqps"}},
+      "gridPos": {"h": 8, "w": 12, "x": 6, "y": 1},
+      "id": 12,
+      "options": {"legend": {"placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi"}},
+      "targets": [
+        {
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "expr": "sum by (status) (rate(ada_sprint_legion_request_total[5m]))",
+          "legendFormat": "{{status}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Legion Request Rate by Status",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "description": "Vault journal events (per-op deferred writes when Legion is down). Should be near zero when Legion is healthy.",
+      "fieldConfig": {"defaults": {"unit": "ops"}},
+      "gridPos": {"h": 8, "w": 6, "x": 18, "y": 1},
+      "id": 13,
+      "options": {"legend": {"placement": "bottom", "showLegend": true}},
+      "targets": [
+        {
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "expr": "increase(ada_sprint_legion_request_total{status=\"deferred\"}[1h])",
+          "legendFormat": "{{op}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Vault-Journal Deferrals (last hour)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "description": "P50 / P95 / P99 latency per Legion op. Slow ops are the first signal of Legion DB pressure.",
+      "fieldConfig": {"defaults": {"unit": "s"}},
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 9},
+      "id": 14,
+      "options": {"legend": {"placement": "bottom", "showLegend": true}},
+      "targets": [
+        {
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "expr": "histogram_quantile(0.5, sum by (op, le) (rate(ada_sprint_legion_request_duration_seconds_bucket[5m])))",
+          "legendFormat": "p50 {{op}}",
+          "refId": "A"
+        },
+        {
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "expr": "histogram_quantile(0.95, sum by (op, le) (rate(ada_sprint_legion_request_duration_seconds_bucket[5m])))",
+          "legendFormat": "p95 {{op}}",
+          "refId": "B"
+        },
+        {
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "expr": "histogram_quantile(0.99, sum by (op, le) (rate(ada_sprint_legion_request_duration_seconds_bucket[5m])))",
+          "legendFormat": "p99 {{op}}",
+          "refId": "C"
+        }
+      ],
+      "title": "Legion Request Latency by Op",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 17},
+      "id": 20,
+      "panels": [],
+      "title": "Retro Gate & Vault Renderer",
+      "type": "row"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "description": "Sprint completions rejected by the 5-field retro gate. A persistent count means agents are skipping the retro — investigate which fields are most often missing.",
+      "fieldConfig": {"defaults": {"unit": "ops"}},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 18},
+      "id": 21,
+      "options": {"legend": {"placement": "bottom", "showLegend": true}},
+      "targets": [
+        {
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "expr": "sum by (reason) (increase(ada_sprint_retro_rejection_total[6h]))",
+          "legendFormat": "{{reason}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Retro Gate Rejections (6h)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "description": "Vault render latency p95 and ok/skip/error counts. Skipped means the sprint was missing in Legion at render time.",
+      "fieldConfig": {"defaults": {"unit": "s"}},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 18},
+      "id": 22,
+      "options": {"legend": {"placement": "bottom", "showLegend": true}},
+      "targets": [
+        {
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(ada_sprint_vault_render_duration_seconds_bucket[5m])))",
+          "legendFormat": "p95 render",
+          "refId": "A"
+        },
+        {
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(ada_sprint_vault_render_duration_seconds_bucket[5m])))",
+          "legendFormat": "p50 render",
+          "refId": "B"
+        }
+      ],
+      "title": "Vault Render Latency",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "description": "Vault render outcomes by status (ok / error / skipped). Sustained 'error' means filesystem trouble — check OBSIDIAN_VAULT_DIR writability.",
+      "fieldConfig": {"defaults": {"unit": "short"}},
+      "gridPos": {"h": 6, "w": 12, "x": 0, "y": 26},
+      "id": 23,
+      "options": {"legend": {"placement": "bottom", "showLegend": true}},
+      "targets": [
+        {
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "expr": "sum by (status) (increase(ada_sprint_vault_render_total[1h]))",
+          "legendFormat": "{{status}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Vault Render Outcomes (1h)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "description": "Commit-trailer scanner velocity. 'ingested' = new commits attached; 'skipped' = idempotent dedupes; 'error' = ingest endpoint failures.",
+      "fieldConfig": {"defaults": {"unit": "short"}},
+      "gridPos": {"h": 6, "w": 12, "x": 12, "y": 26},
+      "id": 24,
+      "options": {"legend": {"placement": "bottom", "showLegend": true}},
+      "targets": [
+        {
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "expr": "sum by (result) (increase(ada_sprint_commits_ingested_total[24h]))",
+          "legendFormat": "{{result}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Commits Ingested (24h)",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 38,
+  "style": "dark",
+  "tags": ["adam", "sprints", "legion"],
+  "templating": {
+    "list": [
+      {
+        "current": {"selected": false, "text": "Prometheus", "value": "Prometheus"},
+        "hide": 0,
+        "includeAll": false,
+        "label": "Datasource",
+        "multi": false,
+        "name": "DS_PROMETHEUS",
+        "options": [],
+        "query": "prometheus",
+        "queryValue": "",
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "type": "datasource"
+      }
+    ]
+  },
+  "time": {"from": "now-6h", "to": "now"},
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "ADA Sprint Tracking",
+  "uid": "ada-sprint-tracking",
+  "version": 1,
+  "weekStart": ""
+}

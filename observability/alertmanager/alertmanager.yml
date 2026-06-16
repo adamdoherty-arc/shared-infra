@@ -1,0 +1,46 @@
+global:
+  resolve_timeout: 5m
+
+route:
+  group_by: ['alertname', 'severity']
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  receiver: 'default'
+  routes:
+    # S56 (2026-05-19): ecosystem-tier route — 15-min repeat keeps the
+    # legion_alerts audit trail dense enough that "when exactly was X
+    # firing?" stays answerable. Discord rate-limited by group_interval.
+    # Place BEFORE the generic severity routes so it wins precedence.
+    - match:
+        tier: ecosystem
+      receiver: 'legion-webhook'
+      repeat_interval: 15m
+      continue: false
+    - match:
+        severity: critical
+      receiver: 'legion-webhook'
+      repeat_interval: 1h
+    - match:
+        severity: warning
+      receiver: 'legion-webhook'
+      repeat_interval: 6h
+
+receivers:
+  - name: 'default'
+    # Default receiver - logs only (no external notification)
+
+  # S11 (2026-05-18): route alerts through Legion's webhook endpoint so we
+  # can fan out to Discord, persist to legion_alerts, and surface in the
+  # Cross-Project Overview dashboard. Legion forwards to Discord using
+  # DISCORD_ALERT_WEBHOOK_URL.
+  - name: 'legion-webhook'
+    webhook_configs:
+      - url: 'http://legion-backend:8005/api/webhooks/alertmanager'
+        # 2026-05-18: resolved notifications silenced at the source —
+        # operator finds "alert resolved" pings disruptive. The webhook
+        # handler also filters status != "firing" defensively, so even if
+        # this is flipped back to true, resolved alerts won't reach
+        # Discord without an additional code change.
+        send_resolved: false
+        max_alerts: 50

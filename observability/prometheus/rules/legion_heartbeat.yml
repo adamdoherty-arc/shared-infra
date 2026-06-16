@@ -1,0 +1,55 @@
+# Heartbeat-derived alerts (Sprint S5, 2026-05-18).
+#
+# The /api/projects/{id}/heartbeat endpoint receives POSTs from ADA + Zero
+# every 30 s. The expected steady-state is now_seconds - last_heartbeat <= 60 s.
+# A 2-minute gap is the soft alarm threshold; a 5-minute gap is critical.
+#
+# These rules read project_heartbeats from Postgres via the existing
+# postgres-exporter scrape. If postgres-exporter isn't wired with a custom
+# query for last_heartbeat_seconds_ago, configure it in
+# docker/postgres-exporter/queries.yml with:
+#
+#   pg_legion_last_heartbeat_seconds:
+#     query: |
+#       SELECT project_id,
+#              EXTRACT(EPOCH FROM (now() - max(created_at)))::int AS seconds_ago
+#       FROM project_heartbeats
+#       GROUP BY project_id
+#     metrics:
+#       - project_id:
+#           usage: "LABEL"
+#           description: "project id"
+#       - seconds_ago:
+#           usage: "GAUGE"
+#           description: "seconds since the last heartbeat"
+
+groups:
+  - name: project_heartbeats
+    interval: 30s
+    rules:
+      - alert: ProjectHeartbeatStale
+        expr: pg_legion_last_heartbeat_seconds_seconds_ago > 120
+        for: 30s
+        labels:
+          severity: warning
+          tier: ecosystem
+        annotations:
+          summary: "Project {{ $labels.project_id }} heartbeat stale (>2m)"
+          description: >
+            No heartbeat from project {{ $labels.project_id }} in
+            {{ $value }} seconds. Confirm the sub-project's heartbeat emitter
+            is still posting; the most common cause is the emitter cron task
+            being silently dropped.
+
+      - alert: ProjectHeartbeatGone
+        expr: pg_legion_last_heartbeat_seconds_seconds_ago > 300
+        for: 1m
+        labels:
+          severity: critical
+          tier: ecosystem
+        annotations:
+          summary: "Project {{ $labels.project_id }} appears DOWN (>5m)"
+          description: >
+            Project {{ $labels.project_id }} has not heartbeat in
+            {{ $value }} seconds. The service is likely down. Check Docker
+            container state, recent logs, and Grafana → Project Health.

@@ -1,0 +1,532 @@
+# ADA Agentic System Alert Rules
+# Sprint 374, Task 310
+#
+# Severity Levels:
+#   critical - Requires immediate attention (pages on-call)
+#   warning  - Should be investigated soon (within hours)
+#   info     - For visibility and trending
+#
+# All alerts include runbook_url placeholders for documentation
+
+groups:
+  # ==========================================================================
+  # AGENT HEALTH ALERTS
+  # ==========================================================================
+  - name: ada_agent_alerts
+    interval: 30s
+    rules:
+      # High Agent Error Rate - Critical
+      - alert: HighAgentErrorRate
+        expr: |
+          (
+            sum(rate(ada_agent_calls_total{status="error"}[5m])) by (agent_name)
+            /
+            sum(rate(ada_agent_calls_total[5m])) by (agent_name)
+          ) > 0.10
+        for: 5m
+        labels:
+          severity: critical
+          component: agent
+          team: platform
+        annotations:
+          summary: "High error rate for agent {{ $labels.agent_name }}"
+          description: |
+            Agent {{ $labels.agent_name }} has an error rate of {{ $value | humanizePercentage }} over the last 5 minutes.
+            This exceeds the 10% threshold and requires immediate investigation.
+          runbook_url: "https://docs.adam.internal/runbooks/agent-error-rate"
+          dashboard_url: "http://grafana:3000/d/ada-agents/ada-agents?var-agent={{ $labels.agent_name }}"
+
+      # Agent Latency High - Warning
+      - alert: AgentLatencyHigh
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(ada_agent_latency_seconds_bucket[5m])) by (agent_name, le)
+          ) > 5
+        for: 5m
+        labels:
+          severity: warning
+          component: agent
+          team: platform
+        annotations:
+          summary: "High p95 latency for agent {{ $labels.agent_name }}"
+          description: |
+            Agent {{ $labels.agent_name }} has p95 latency of {{ $value | humanizeDuration }}.
+            This exceeds the 5 second threshold and may impact user experience.
+          runbook_url: "https://docs.adam.internal/runbooks/agent-latency"
+          dashboard_url: "http://grafana:3000/d/ada-agents/ada-agents?var-agent={{ $labels.agent_name }}"
+
+      # Agent Completely Unavailable - Critical
+      - alert: AgentUnavailable
+        expr: |
+          sum(rate(ada_agent_calls_total[5m])) by (agent_name) == 0
+          and
+          sum(ada_agent_calls_total) by (agent_name) > 0
+        for: 10m
+        labels:
+          severity: critical
+          component: agent
+          team: platform
+        annotations:
+          summary: "Agent {{ $labels.agent_name }} is unavailable"
+          description: |
+            Agent {{ $labels.agent_name }} has had no calls in the last 10 minutes
+            but has historical activity. The agent may be crashed or unreachable.
+          runbook_url: "https://docs.adam.internal/runbooks/agent-unavailable"
+
+  # ==========================================================================
+  # CIRCUIT BREAKER ALERTS
+  # ==========================================================================
+  - name: ada_circuit_breaker_alerts
+    interval: 30s
+    rules:
+      # Circuit Breaker Open - Critical
+      - alert: CircuitBreakerOpen
+        expr: ada_circuit_breaker_state == 1
+        for: 2m
+        labels:
+          severity: critical
+          component: circuit_breaker
+          team: platform
+        annotations:
+          summary: "Circuit breaker OPEN for service {{ $labels.service }}"
+          description: |
+            The circuit breaker for {{ $labels.service }} has been in OPEN state
+            for more than 2 minutes. This service is currently unavailable and
+            all requests are being rejected.
+          runbook_url: "https://docs.adam.internal/runbooks/circuit-breaker-open"
+          dashboard_url: "http://grafana:3000/d/ada-overview/ada-overview"
+
+      # Circuit Breaker Half-Open (Recovery Attempt) - Warning
+      - alert: CircuitBreakerHalfOpen
+        expr: ada_circuit_breaker_state == 0.5
+        for: 5m
+        labels:
+          severity: warning
+          component: circuit_breaker
+          team: platform
+        annotations:
+          summary: "Circuit breaker stuck in HALF-OPEN for {{ $labels.service }}"
+          description: |
+            The circuit breaker for {{ $labels.service }} has been in HALF-OPEN
+            state for more than 5 minutes. Recovery attempts may be failing.
+          runbook_url: "https://docs.adam.internal/runbooks/circuit-breaker-recovery"
+
+      # Frequent Circuit Breaker Trips - Warning
+      - alert: CircuitBreakerFrequentTrips
+        expr: |
+          increase(ada_circuit_breaker_trips_total[1h]) > 5
+        for: 0m
+        labels:
+          severity: warning
+          component: circuit_breaker
+          team: platform
+        annotations:
+          summary: "Frequent circuit breaker trips for {{ $labels.service }}"
+          description: |
+            Circuit breaker for {{ $labels.service }} has tripped {{ $value }} times
+            in the last hour. Investigate underlying service instability.
+          runbook_url: "https://docs.adam.internal/runbooks/circuit-breaker-frequent"
+
+  # ==========================================================================
+  # LEARNING LOOP ALERTS
+  # ==========================================================================
+  - name: ada_learning_alerts
+    interval: 60s
+    rules:
+      # Learning Loop Stalled - Warning
+      - alert: LearningLoopStalled
+        expr: |
+          time() - max(ada_learning_cycles_total) by (cycle_type) > 7200
+          unless
+          max(ada_learning_cycles_total) by (cycle_type) == 0
+        for: 5m
+        labels:
+          severity: warning
+          component: learning
+          team: ml
+        annotations:
+          summary: "Learning loop {{ $labels.cycle_type }} has stalled"
+          description: |
+            No {{ $labels.cycle_type }} learning cycle has completed in over 2 hours.
+            The learning system may be stuck or disabled.
+          runbook_url: "https://docs.adam.internal/runbooks/learning-stalled"
+          dashboard_url: "http://grafana:3000/d/ada-learning/ada-learning"
+
+      # Learning Loop Errors - Warning
+      - alert: LearningLoopHighErrors
+        expr: |
+          (
+            sum(rate(ada_learning_cycles_total{status="error"}[30m])) by (cycle_type)
+            /
+            sum(rate(ada_learning_cycles_total[30m])) by (cycle_type)
+          ) > 0.20
+        for: 15m
+        labels:
+          severity: warning
+          component: learning
+          team: ml
+        annotations:
+          summary: "High error rate in {{ $labels.cycle_type }} learning loop"
+          description: |
+            Learning cycle {{ $labels.cycle_type }} has {{ $value | humanizePercentage }}
+            error rate over the last 30 minutes.
+          runbook_url: "https://docs.adam.internal/runbooks/learning-errors"
+
+      # Learning Cycle Completed - Info (for visibility)
+      - alert: LearningCycleCompleted
+        expr: increase(ada_learning_cycles_total{status="success"}[5m]) > 0
+        for: 0m
+        labels:
+          severity: info
+          component: learning
+          team: ml
+        annotations:
+          summary: "Learning cycle {{ $labels.cycle_type }} completed successfully"
+          description: "A {{ $labels.cycle_type }} learning cycle has completed."
+
+  # ==========================================================================
+  # RAG/MEMORY ALERTS
+  # ==========================================================================
+  - name: ada_rag_memory_alerts
+    interval: 30s
+    rules:
+      # RAG Retrieval Failures - Warning
+      - alert: RAGRetrievalFailures
+        expr: |
+          (
+            sum(rate(ada_memory_operations_total{operation="search", status="error"}[5m]))
+            /
+            sum(rate(ada_memory_operations_total{operation="search"}[5m]))
+          ) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+          component: rag
+          team: ml
+        annotations:
+          summary: "High RAG retrieval failure rate"
+          description: |
+            RAG retrieval operations are failing at {{ $value | humanizePercentage }} rate.
+            This exceeds the 5% threshold and may impact response quality.
+          runbook_url: "https://docs.adam.internal/runbooks/rag-failures"
+          dashboard_url: "http://grafana:3000/d/ada-rag-memory/ada-rag-memory"
+
+      # Memory Pressure High - Warning
+      - alert: MemoryPressureHigh
+        expr: ada_memory_items_count{store_type="working"} > 1000
+        for: 10m
+        labels:
+          severity: warning
+          component: memory
+          team: platform
+        annotations:
+          summary: "High memory pressure in {{ $labels.store_type }} store"
+          description: |
+            Working memory has {{ $value }} entries, exceeding the 1000 item threshold.
+            Memory cleanup or eviction may be needed.
+          runbook_url: "https://docs.adam.internal/runbooks/memory-pressure"
+
+      # Memory Store Unavailable - Critical
+      - alert: MemoryStoreUnavailable
+        expr: |
+          sum(rate(ada_memory_operations_total{status="error"}[5m])) by (store_type)
+          /
+          sum(rate(ada_memory_operations_total[5m])) by (store_type)
+          > 0.50
+        for: 2m
+        labels:
+          severity: critical
+          component: memory
+          team: platform
+        annotations:
+          summary: "Memory store {{ $labels.store_type }} has high failure rate"
+          description: |
+            Memory store {{ $labels.store_type }} is experiencing {{ $value | humanizePercentage }}
+            failure rate. The store may be unavailable.
+          runbook_url: "https://docs.adam.internal/runbooks/memory-unavailable"
+
+  # ==========================================================================
+  # LLM ALERTS
+  # ==========================================================================
+  - name: ada_llm_alerts
+    interval: 30s
+    rules:
+      # LLM Response Slow - Warning
+      - alert: LLMResponseSlow
+        expr: |
+          histogram_quantile(0.99,
+            sum(rate(ada_llm_request_duration_seconds_bucket[5m])) by (provider, model, le)
+          ) > 10
+        for: 5m
+        labels:
+          severity: warning
+          component: llm
+          team: ml
+        annotations:
+          summary: "Slow LLM responses from {{ $labels.provider }}/{{ $labels.model }}"
+          description: |
+            LLM provider {{ $labels.provider }} model {{ $labels.model }} has p99 latency
+            of {{ $value | humanizeDuration }}, exceeding the 10 second threshold.
+          runbook_url: "https://docs.adam.internal/runbooks/llm-slow"
+          dashboard_url: "http://grafana:3000/d/ada-overview/ada-overview"
+
+      # LLM Provider Errors - Critical
+      - alert: LLMProviderErrors
+        expr: |
+          (
+            sum(rate(ada_llm_requests_total{status="error"}[5m])) by (provider)
+            /
+            sum(rate(ada_llm_requests_total[5m])) by (provider)
+          ) > 0.10
+        for: 5m
+        labels:
+          severity: critical
+          component: llm
+          team: ml
+        annotations:
+          summary: "High error rate for LLM provider {{ $labels.provider }}"
+          description: |
+            LLM provider {{ $labels.provider }} has {{ $value | humanizePercentage }} error rate.
+            Requests may be failing or the provider may be unavailable.
+          runbook_url: "https://docs.adam.internal/runbooks/llm-errors"
+
+      # LLM Provider Unavailable - Critical
+      - alert: LLMProviderUnavailable
+        expr: |
+          sum(rate(ada_llm_requests_total[5m])) by (provider) == 0
+          and
+          sum(ada_llm_requests_total) by (provider) > 0
+        for: 10m
+        labels:
+          severity: critical
+          component: llm
+          team: ml
+        annotations:
+          summary: "LLM provider {{ $labels.provider }} appears unavailable"
+          description: |
+            No requests to LLM provider {{ $labels.provider }} in the last 10 minutes
+            despite historical activity.
+          runbook_url: "https://docs.adam.internal/runbooks/llm-unavailable"
+
+  # ==========================================================================
+  # LANGGRAPH EXECUTION ALERTS
+  # ==========================================================================
+  - name: ada_graph_alerts
+    interval: 30s
+    rules:
+      # Graph Execution Failures - Critical
+      - alert: GraphExecutionFailures
+        expr: |
+          increase(ada_graph_executions_total{status="error"}[10m]) >= 5
+          and
+          increase(ada_graph_executions_total{status="success"}[10m]) == 0
+        for: 2m
+        labels:
+          severity: critical
+          component: graph
+          team: platform
+        annotations:
+          summary: "Consecutive failures for graph {{ $labels.graph_name }}"
+          description: |
+            Graph {{ $labels.graph_name }} has had {{ $value }} consecutive failures
+            with no successes in the last 10 minutes.
+          runbook_url: "https://docs.adam.internal/runbooks/graph-failures"
+          dashboard_url: "http://grafana:3000/d/ada-overview/ada-overview"
+
+      # Graph Execution High Error Rate - Warning
+      - alert: GraphExecutionHighErrorRate
+        expr: |
+          (
+            sum(rate(ada_graph_executions_total{status="error"}[5m])) by (graph_name)
+            /
+            sum(rate(ada_graph_executions_total[5m])) by (graph_name)
+          ) > 0.10
+        for: 5m
+        labels:
+          severity: warning
+          component: graph
+          team: platform
+        annotations:
+          summary: "High error rate for graph {{ $labels.graph_name }}"
+          description: |
+            Graph {{ $labels.graph_name }} has {{ $value | humanizePercentage }} error rate
+            over the last 5 minutes.
+          runbook_url: "https://docs.adam.internal/runbooks/graph-error-rate"
+
+      # Graph Latency High - Warning
+      - alert: GraphLatencyHigh
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(ada_graph_latency_seconds_bucket[5m])) by (graph_name, le)
+          ) > 30
+        for: 5m
+        labels:
+          severity: warning
+          component: graph
+          team: platform
+        annotations:
+          summary: "High latency for graph {{ $labels.graph_name }}"
+          description: |
+            Graph {{ $labels.graph_name }} has p95 latency of {{ $value | humanizeDuration }},
+            exceeding the 30 second threshold.
+          runbook_url: "https://docs.adam.internal/runbooks/graph-latency"
+
+  # ==========================================================================
+  # TOOL EXECUTION ALERTS
+  # ==========================================================================
+  - name: ada_tool_alerts
+    interval: 30s
+    rules:
+      # Tool High Error Rate - Warning
+      - alert: ToolHighErrorRate
+        expr: |
+          (
+            sum(rate(ada_tool_calls_total{status="error"}[5m])) by (tool_name)
+            /
+            sum(rate(ada_tool_calls_total[5m])) by (tool_name)
+          ) > 0.15
+        for: 5m
+        labels:
+          severity: warning
+          component: tool
+          team: platform
+        annotations:
+          summary: "High error rate for tool {{ $labels.tool_name }}"
+          description: |
+            Tool {{ $labels.tool_name }} has {{ $value | humanizePercentage }} error rate.
+          runbook_url: "https://docs.adam.internal/runbooks/tool-errors"
+
+      # Tool Latency High - Warning
+      - alert: ToolLatencyHigh
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(ada_tool_latency_seconds_bucket[5m])) by (tool_name, le)
+          ) > 5
+        for: 5m
+        labels:
+          severity: warning
+          component: tool
+          team: platform
+        annotations:
+          summary: "High latency for tool {{ $labels.tool_name }}"
+          description: |
+            Tool {{ $labels.tool_name }} has p95 latency of {{ $value | humanizeDuration }}.
+          runbook_url: "https://docs.adam.internal/runbooks/tool-latency"
+
+  # ==========================================================================
+  # ACCURACY AND PREDICTION ALERTS
+  # ==========================================================================
+  - name: ada_accuracy_alerts
+    interval: 60s
+    rules:
+      # Low Accuracy - Warning
+      - alert: LowAccuracy
+        expr: ada_accuracy_current < 0.60
+        for: 30m
+        labels:
+          severity: warning
+          component: accuracy
+          team: ml
+        annotations:
+          summary: "Low accuracy for {{ $labels.agent }} {{ $labels.metric_type }}"
+          description: |
+            Agent {{ $labels.agent }} has {{ $labels.metric_type }} accuracy of
+            {{ $value | humanizePercentage }}, below the 60% threshold.
+          runbook_url: "https://docs.adam.internal/runbooks/low-accuracy"
+
+      # Accuracy Degradation - Warning
+      - alert: AccuracyDegradation
+        expr: |
+          ada_accuracy_current - ada_accuracy_current offset 1h < -0.10
+        for: 15m
+        labels:
+          severity: warning
+          component: accuracy
+          team: ml
+        annotations:
+          summary: "Accuracy degradation detected for {{ $labels.agent }}"
+          description: |
+            Agent {{ $labels.agent }} {{ $labels.metric_type }} accuracy has dropped
+            by more than 10% in the last hour.
+          runbook_url: "https://docs.adam.internal/runbooks/accuracy-degradation"
+
+  # ==========================================================================
+  # INFRASTRUCTURE ALERTS
+  # ==========================================================================
+  - name: ada_infrastructure_alerts
+    interval: 30s
+    rules:
+      # High HTTP Error Rate - Critical
+      - alert: HighHTTPErrorRate
+        expr: |
+          (
+            sum(rate(ada_http_requests_total{status=~"5.."}[5m]))
+            /
+            sum(rate(ada_http_requests_total[5m]))
+          ) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+          component: http
+          team: platform
+        annotations:
+          summary: "High HTTP 5xx error rate"
+          description: |
+            ADA backend is returning 5xx errors at {{ $value | humanizePercentage }} rate.
+          runbook_url: "https://docs.adam.internal/runbooks/http-errors"
+
+      # Database Connection Pool Exhausted - Critical
+      - alert: DBPoolExhausted
+        expr: |
+          ada_db_pool_connections{state="idle"} == 0
+          and
+          ada_db_pool_connections{state="active"} == ada_db_pool_connections{state="total"}
+        for: 2m
+        labels:
+          severity: critical
+          component: database
+          team: platform
+        annotations:
+          summary: "Database connection pool exhausted"
+          description: |
+            All database connections are in use with none idle.
+            Queries may be queueing or timing out.
+          runbook_url: "https://docs.adam.internal/runbooks/db-pool-exhausted"
+
+      # High Database Query Latency - Warning
+      - alert: DBQueryLatencyHigh
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(ada_db_query_duration_seconds_bucket[5m])) by (operation, le)
+          ) > 1
+        for: 5m
+        labels:
+          severity: warning
+          component: database
+          team: platform
+        annotations:
+          summary: "High database query latency for {{ $labels.operation }}"
+          description: |
+            Database {{ $labels.operation }} operations have p95 latency of
+            {{ $value | humanizeDuration }}.
+          runbook_url: "https://docs.adam.internal/runbooks/db-latency"
+
+      # Cache Hit Rate Low - Warning
+      - alert: CacheHitRateLow
+        expr: |
+          (
+            sum(rate(ada_cache_hits_total[5m])) by (cache_name)
+            /
+            (sum(rate(ada_cache_hits_total[5m])) by (cache_name) + sum(rate(ada_cache_misses_total[5m])) by (cache_name))
+          ) < 0.50
+        for: 15m
+        labels:
+          severity: warning
+          component: cache
+          team: platform
+        annotations:
+          summary: "Low cache hit rate for {{ $labels.cache_name }}"
+          description: |
+            Cache {{ $labels.cache_name }} has hit rate of {{ $value | humanizePercentage }},
+            below the 50% threshold. Consider cache warming or TTL adjustment.
+          runbook_url: "https://docs.adam.internal/runbooks/cache-hit-rate"

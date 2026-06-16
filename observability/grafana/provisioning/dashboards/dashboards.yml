@@ -1,0 +1,20 @@
+# Per-project dashboard folders (Infra-50) — keeps Legion's 6 + ADA's 8
+# dashboards organised under their own folders in the one shared Grafana.
+apiVersion: 1
+providers:
+  - name: legion
+    folder: Legion
+    type: file
+    disableDeletion: false
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/dashboards/legion
+      foldersFromFilesStructure: false
+  - name: ada
+    folder: ADA
+    type: file
+    disableDeletion: false
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/dashboards/ada
+      foldersFromFilesStructure: false

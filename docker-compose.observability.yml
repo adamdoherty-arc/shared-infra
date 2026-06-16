@@ -1,0 +1,134 @@
+# Shared observability stack (Infra-50) — ONE Prometheus + Grafana + Jaeger +
+# Alertmanager for the WHOLE ecosystem, replacing the duplicated per-project
+# legion-* / ada-* monitoring containers (8 containers -> 4). Lives on
+# shared-infra_default so it scrapes every project backend by container DNS.
+# Per-project datastores (Postgres/Redis/Qdrant/Neo4j) stay isolated.
+#
+# STATUS: CUTOVER COMPLETE (2026-05-27).
+#   - legion + ada prometheus/grafana/jaeger/alertmanager blocks removed from
+#     their compose files; both backends' OTLP exporters repointed to
+#     shared-jaeger:4317.
+#   - This stack owns the final ports: Prometheus 9099, Grafana 3050,
+#     Jaeger 16700/4317/4318, Alertmanager 9095.
+#   - Scrapes legion-backend, ada-backend, ada-postgres-exporter (via host),
+#     bifrost-metrics, vllm-chat, vllm-embed. Zero has no Prometheus endpoint
+#     yet (commented in prometheus.yml — re-enable when it mounts prometheus_client).
+#   - 14 dashboards provisioned (Legion folder x6, ADA folder x8); 83 alert
+#     rules; Alertmanager routes to Legion's webhook receiver.
+#
+# Bring up:  docker compose -p shared-infra -f docker-compose.observability.yml up -d
+
+services:
+  shared-prometheus:
+    image: prom/prometheus:latest
+    container_name: shared-prometheus
+    restart: unless-stopped
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=30d'
+      - '--web.enable-lifecycle'
+    ports:
+      - "9099:9090"   # Legion's freed Prometheus port (final)
+    volumes:
+      - ./observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./observability/prometheus/rules:/etc/prometheus/rules:ro
+      - shared-prometheus-data:/prometheus
+    networks:
+      - shared-infra
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    deploy:
+      resources:
+        limits: { memory: 768M }
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:9090/-/healthy"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  shared-alertmanager:
+    image: prom/alertmanager:latest
+    container_name: shared-alertmanager
+    restart: unless-stopped
+    command:
+      - '--config.file=/etc/alertmanager/alertmanager.yml'
+    ports:
+      - "9095:9093"   # Legion's freed alertmanager port
+    volumes:
+      - ./observability/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+    networks:
+      - shared-infra
+    deploy:
+      resources:
+        limits: { memory: 256M }
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:9093/-/healthy"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  shared-jaeger:
+    # all-in-one:latest is the exact image Legion ran (badger storage), a proven
+    # drop-in that avoids the Legion-v1 / ADA-v2 schema mismatch. Both backends'
+    # OTLP exporters point here.
+    image: jaegertracing/all-in-one:latest
+    container_name: shared-jaeger
+    restart: unless-stopped
+    # Run as root so badger can create its dirs on the named volume (matches
+    # Legion's proven jaeger config — non-root hits mkdir permission denied).
+    user: "0:0"
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+      SPAN_STORAGE_TYPE: badger
+      BADGER_EPHEMERAL: "false"
+      BADGER_DIRECTORY_VALUE: /badger/data
+      BADGER_DIRECTORY_KEY: /badger/key
+    ports:
+      - "16700:16686"   # Legion's freed Jaeger UI port
+      - "4317:4317"     # OTLP gRPC
+      - "4318:4318"     # OTLP HTTP
+    volumes:
+      - shared-jaeger-data:/badger
+    networks:
+      - shared-infra
+    deploy:
+      resources:
+        limits: { memory: 512M }
+
+  shared-grafana:
+    image: grafana/grafana:latest
+    container_name: shared-grafana
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    ports:
+      - "3050:3000"   # Legion's freed Grafana port (final)
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/etc/grafana/dashboards:ro
+      - shared-grafana-data:/var/lib/grafana
+    networks:
+      - shared-infra
+    depends_on:
+      - shared-prometheus
+    deploy:
+      resources:
+        limits: { memory: 512M }
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/api/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+networks:
+  shared-infra:
+    external: true
+    name: shared-infra_default
+
+volumes:
+  shared-prometheus-data:
+  shared-grafana-data:
+  shared-jaeger-data:

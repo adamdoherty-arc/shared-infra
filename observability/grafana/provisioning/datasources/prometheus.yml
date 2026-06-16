@@ -1,0 +1,10 @@
+# Datasource MUST be named exactly "Prometheus" — both Legion's and ADA's
+# imported dashboards bind panels to a datasource with that name.
+apiVersion: 1
+datasources:
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    url: http://shared-prometheus:9090
+    isDefault: true
+    editable: false

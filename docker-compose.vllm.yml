@@ -1,0 +1,683 @@
+# Shared LLM infrastructure serving Zero, Ada, and Legion.
+# Single instance of each model in VRAM; all three projects point at these endpoints
+# via VLLM_CHAT_BASE_URL / VLLM_EMBED_BASE_URL in their .env files.
+#
+# Chat backend (2026-06-11→): vLLM v0.22.1 serving Qwen3.5-35B-A3B-GPTQ-Int4
+# (official Qwen quant, Marlin INT4 kernels — the proven kernel family on
+# this card). MoE 35B total / 3B active per token + hybrid Gated-DeltaNet
+# attention → much faster than the old dense-32B AND cheap KV (64K context
+# costs ~1-2 GB). Tool calling enabled (qwen3_xml parser). Bifrost forwards
+# `vllm-local/qwen3-chat` (and legacy `Qwen3-32B-AWQ`) here.
+# (Qwen3.6-35B-A3B-NVFP4 was attempted first the same day and retired —
+# FlashInfer NVFP4 kernels crash/hang on this WSL2+Blackwell box; see the
+# attempt log inside the vllm-chat service block.)
+#
+# VRAM budget on a 5090 (32 GB):
+#   chat  (Qwen3.5-35B-A3B GPTQ-Int4, vLLM)    ~19 GB weights + KV
+#   embed (Qwen3-Embedding-0.6B, vLLM)         ~1.5 GB
+#   total                                       ~26 GB pinned (0.88 util cap)
+#
+# Model swap history:
+#   - Qwen3.6-35B-A3B-FP8 (March 2026): 34 GiB, OOM on 32 GB. RETIRED.
+#   - Qwen3.6-35B-A3B-AWQ via QuantTrio (attempted 2026-04-27): MoE 3B-active.
+#     OOM at 16K and 8K (cudagraph + KV ceiling); then stalled on vision-encoder
+#     profile because the QuantTrio AWQ port carried Qwen2VLImageProcessor
+#     config. REVERTED 2026-04-27.
+#   - Qwen3-32B-AWQ (2026-04-27→2026-04-28): proven dense Int4 baseline,
+#     ~50 tok/s @ 12K ctx. Replaced by Qwen3.6-35B-A3B Q4_K_M on 2026-04-28
+#     when the abliterated GGUF landed — 3B-active MoE delivers same quality
+#     at ~3× the TTFT speed AND has the refusal vector removed for the
+#     companion / voice persona.
+#   - Dual vllm-chat + vllm-heretic (briefly tried 2026-04-28): GPU contention
+#     during cudagraph capture caused both to crashloop (KV-cache budget +
+#     CUDA "unknown error"). Replaced by single llama.cpp serving the
+#     MoE model — handles the voice-loop AND brain use cases in one process.
+#   - Q4_K_M → Q5_K_M (2026-05-17): swapped the same Huihui-Qwen3.6-35B-A3B
+#     abliterated MoE from Q4_K_M (21.17 GB) to Q5_K_M (24.73 GB) for higher
+#     fidelity. Source: mradermacher/Huihui-Qwen3.6-35B-A3B-abliterated-GGUF.
+#     Resident VRAM bumped ~3.5 GB, full --ctx-size 131072 retained, fits on
+#     the 5090 alongside vllm-embed (~1.5 GB). Q6_K (28.5 GB) would have
+#     required dropping ctx; Q8_0 (36.9 GB) wouldn't fit in 32 GB at all.
+#   - Qwen3-32B-AWQ → Qwen3.6-35B-A3B-NVFP4 (2026-06-11): vLLM v0.19.1 →
+#     v0.22.1 + RedHatAI official NVFP4 quant (~17 GB weights). The 2026-05-21
+#     rollback was caused by vLLM 0.19.x hybrid-arch bugs (GDN+full-attn KV
+#     page-size unification, vllm#41153; Mamba contiguous-alloc OOM, #41619),
+#     missing flags (bf16 + max-num-batched-tokens>=2096), and the abliterated
+#     community AWQ port — NOT the model family. Hybrid models became
+#     first-class in vLLM v0.21.0. Payoff: ~3x decode speed (MoE 3B-active),
+#     12K → 64K context (hybrid GDN keeps KV tiny), tool calling re-enabled
+#     (qwen3_xml parser). Rollback ladder if NVFP4 misbehaves on SM120:
+#       (a) Qwen/Qwen3.5-35B-A3B-GPTQ-Int4 (official quant; proven 5090
+#           recipe: --quantization gptq_marlin --dtype bfloat16
+#           --kv-cache-dtype fp8 --max-model-len 131072
+#           --max-num-batched-tokens 2096, ~31.3 GB total)
+#       (b) full revert: image v0.19.1 + Qwen/Qwen3-32B-AWQ
+#           --quantization awq_marlin --max-model-len 12288 --enforce-eager
+#           --kv-cache-dtype fp8 (known-good 2026-04-28→2026-06-11),
+#           VLLM_TOOL_CALL_FLAGS unset.
+
+services:
+  # ─────────────────────────────────────────────────────────────────────────
+  # llama-cpp-chat: RETIRED 2026-05-17 — vllm-chat now serves the chat
+  # workload (Qwen3-32B-AWQ on real vLLM, behind the same Bifrost
+  # `vllm-local` alias). The provider name `vllm-local` is now ACCURATE
+  # for the first time since the migration. Reasons for swap:
+  #   - llama.cpp #20178 + #19894: Qwen3.6-A3B structured-JSON bugs + 35%
+  #     CUDA regression on the 35B-A3B model vs 30B-A3B.
+  #   - Q5_K_M GGUF doesn't use Blackwell FP8 tensor cores; AWQ Marlin
+  #     on vLLM does (RTX 5090's tensor cores were built for this).
+  #   - Thematic discovery (AI Long-Term Beneficiaries) went from
+  #     500ms+ per-token thinking + frequent Bifrost-timeout 504s on
+  #     llama.cpp to 0.27s warm inference on vLLM. Real proof: the
+  #     "broken all week" rule now returns 8 stocks (NVDA, MSFT, AMZN,
+  #     AMD, GOOGL, SNOW, AI, PLTR) in 56s end-to-end.
+  # If you need to revive llama.cpp temporarily (emergency rollback),
+  # the previous service block is in git history at commit before
+  # 2026-05-17T22:30. The GGUF file is still on disk at
+  # c:/code/zero/workspace/llm-models/Huihui-Qwen3.6-35B-A3B-abliterated.Q5_K_M.gguf
+  # — kept for 30 days for emergency rollback, then delete.
+  # The block below is wrapped in profile=retired so a normal
+  # `docker compose up` won't bring it back.
+  llama-cpp-chat:
+    profiles: ["retired"]
+    # llama.cpp server (CUDA build) running Qwen3.6-35B-A3B (MoE 35B/3B-active)
+    # in GGUF Q5_K_M quantization, abliterated (refusal vector removed).
+    #
+    # Why llama.cpp here instead of vLLM:
+    #   - vLLM 0.19's MoE path under WSL2 hit OOM + multimodal-config bugs
+    #     on Qwen3.6-A3B (see swap history above). llama.cpp's GGUF runtime
+    #     handles the same model cleanly because the GGUF conversion drops
+    #     the unused vision encoder.
+    #   - GGUF Q5_K_M (upgraded from Q4_K_M on 2026-05-17) is the
+    #     well-tested community quant for this model.
+    #   - llama.cpp exposes an OpenAI-compatible API at /v1/chat/completions,
+    #     so all existing callers (LiteLLM, Zero realtime handler, the
+    #     unified LLM client) work unchanged.
+    #
+    # Container is the official ghcr.io/ggml-org/llama.cpp:server-cuda image.
+    # Pinned to build b8953 (commit 434b2a1ff) — validated 2026-04-28 with
+    # Qwen3.6-35B-A3B abliterated Q4_K_M on a 5090 (CUDA driver 12.0,
+    # compute capability 12.0). Bumping is fine, just verify the new build
+    # still loads this GGUF cleanly + serves /v1/chat/completions before
+    # changing this tag. Don't float — llama.cpp ships daily and behavior
+    # can drift between builds (template handling, sampling defaults).
+    image: ghcr.io/ggml-org/llama.cpp:server-cuda-b8953
+    container_name: llama-cpp-chat
+    # GGUF is pre-downloaded onto the host at
+    # ``c:/code/zero/workspace/llm-models/`` and bind-mounted read-only
+    # into the container at ``/models/``. We tried llama.cpp's built-in
+    # ``--hf-repo`` / ``-hf`` auto-downloader first but it tripped on a
+    # HEAD 404 against a HuggingFace metadata endpoint — pre-fetching with
+    # ``huggingface_hub`` (in zero-api) and bind-mounting is the reliable
+    # path. Replace this file path if you swap quants.
+    #
+    # ``--no-mmap`` (added 2026-05-17 during Q5_K_M swap): on Docker
+    # Desktop for Windows the bind-mount goes through 9p/virtiofs and
+    # mmap page faults thrash horribly — the Q5_K_M load was stuck at
+    # ~3 MB/s and actively losing pages to OS reclaim. ``--no-mmap``
+    # forces a single sequential read into container RAM (~25 GB) at
+    # native disk bandwidth. Costs ~25 GB host RAM but the 5090 box
+    # has 48 GB, plenty of headroom.
+    # Flag tuning notes (2026-05-17):
+    #   --parallel 1   — single-user voice assistant; eliminates inter-slot
+    #                    KV contention. Previous parallel=4 split the 131K
+    #                    ctx into 32K per slot AND forced full prompt
+    #                    re-processing on every request (Qwen3-A3B uses
+    #                    Gated Delta Net, a hybrid attention scheme that
+    #                    llama.cpp's prefix cache doesn't reuse cleanly
+    #                    across slots — see PR ggml-org/llama.cpp#13194).
+    #   --ctx-size 32768 — voice turns are short; full 131K wastes KV-cache
+    #                      VRAM and slows context shifting. 32K still covers
+    #                      a multi-turn conversation with rich personas.
+    #   --cache-reuse 256 — try to reuse cached prefix tokens across requests
+    #                       even with SWA/hybrid memory. Caps re-processed
+    #                       prompt at 256 tokens delta from last cache hit.
+    #   --no-mmap      — keep (Windows 9p bind-mount mmap thrashes; see
+    #                    2026-05-17 load-time history above).
+    command: >
+      --model /models/Huihui-Qwen3.6-35B-A3B-abliterated.Q5_K_M.gguf
+      --no-mmap
+      --alias Qwen3.6-35B-A3B
+      --port 8000
+      --host 0.0.0.0
+      --ctx-size 32768
+      --n-gpu-layers 999
+      --threads 8
+      --parallel 1
+      --batch-size 512
+      --cache-reuse 256
+      --flash-attn auto
+      --cache-type-k q8_0
+      --cache-type-v q8_0
+      --jinja
+      --metrics
+    ports:
+      # Host port 18800 — same as the previous vllm-chat slot so existing
+      # VLLM_CHAT_BASE_URL settings keep working without an env edit.
+      # Internal container port stays 8000 (llama.cpp default).
+      - "18800:8000"
+    ipc: host
+    shm_size: "4gb"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    volumes:
+      # Pre-downloaded GGUF files. Host path
+      # ``c:/code/zero/workspace/llm-models/`` is shared with zero-api
+      # so we can use that container's ``huggingface_hub`` to fetch new
+      # quants. Mount is read-only inside llama.cpp — it doesn't write here.
+      - ../zero/workspace/llm-models:/models:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      # First start: ~21 GB download (8-25 min depending on HF cache hit
+      # rate) plus ~1-2 min model load. Bumped to 1800s so Docker doesn't
+      # mark unhealthy mid-download. Cached restarts are ~30 s.
+      start_period: 1800s
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "5"
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # vllm-chat (added 2026-05-17): proper vLLM serving Qwen3-32B-AWQ (dense,
+  # Int4 AWQ Marlin kernel). Replaces the long-serving llama-cpp-chat
+  # container for chat once validated. Why this model:
+  #   - Qwen3-32B-AWQ proven on this RTX 5090 in April 2026 (see model-swap
+  #     history at the top of this file). ~50 tok/s @ 12K ctx, JSON-reliable.
+  #   - Avoids the Qwen3.6-35B-A3B MoE pathologies that previously OOM'd both
+  #     FP8 and the QuantTrio AWQ port (both retired April 2026).
+  #   - Dense 32B has best-in-class JSON adherence at this size class
+  #     (BFCL v3 75.7%), which is the actual current bottleneck for
+  #     thematic-discovery rules.
+  # Co-existence: runs alongside llama-cpp-chat at port 18801 (vs 18800)
+  # during the validation window. gpu-memory-utilization capped at 0.55
+  # (~17.6 GB of 32 GB) so vllm-embed (1.5 GB) + llama-cpp-chat (~25 GB)
+  # don't fight. After Bifrost is flipped to point at this service and
+  # llama-cpp-chat is retired, bump gpu-util to 0.85 in a follow-up.
+  vllm-chat:
+    environment:
+      HF_TOKEN: ${HF_TOKEN}
+      # PARKED (inert on the current GPTQ/v0.22.1 build — vLLM ignores this unknown
+      # env var here). Kept for the next NVFP4 attempt: selects the FP4 GEMM backend
+      # on a vLLM build that actually quantizes the MoE experts. Valid values:
+      # marlin | flashinfer-cutlass | flashinfer-trtllm | cutlass | emulation.
+      # (2026-06-14: had no effect on cu130-nightly because that build loaded the
+      # experts UNQUANTIZED and OOM'd before any FP4 GEMM — see image comment below.)
+      VLLM_NVFP4_GEMM_BACKEND: ${VLLM_NVFP4_GEMM_BACKEND:-marlin}
+    # v0.22.1 (2026-06-04): required for the Qwen3.5/3.6 hybrid family —
+    # hybrid GDN+full-attention models became first-class in v0.21.0
+    # (Model Runner V2, Hybrid Memory Allocator). v0.19.x has the KV
+    # page-size unification bug (vllm#41153) that caused the 2026-05-21
+    # rollback. Don't downgrade below v0.21.
+    # Phase 2 NVFP4 ATTEMPT 2026-06-14 — FAILED, ROLLED BACK to v0.22.1 GPTQ.
+    #   Tried: image vllm/vllm-openai:cu130-nightly + nvidia/Qwen3.6-35B-A3B-NVFP4
+    #   + VLLM_NVFP4_GEMM_BACKEND=marlin, no --quantization (auto-detect).
+    #   Root cause = CUDA OOM, NOT a kernel/backend problem: the cu130-nightly tag
+    #   is actually vLLM v0.19.2rc1.dev134 (an OLD line), whose ModelOpt NVFP4 path
+    #   does NOT quantize the qwen3_5_moe FusedMoE experts — it selected the
+    #   "FlashInfer CUTLASS UNQUANTIZED MoE backend" and allocated the 35B experts
+    #   as dense BF16 (~61 GiB on a 31.84 GiB card → torch.OutOfMemoryError in
+    #   unquantized_fused_moe_method.create_weights). The marlin env var was moot
+    #   (code never reached an FP4 MoE GEMM). NVFP4 on this box needs a vLLM build
+    #   that quantizes qwen3_5_moe experts to FP4 on SM120 — cu130-nightly does not.
+    #   NEXT TIME: do NOT reuse cu130-nightly. Find a build whose startup logs show
+    #   a *quantized* (modelopt/compressed-tensors FP4) FusedMoE method, not
+    #   "Unquantized MoE backend"; candidates to vet: a newer pinned nightly digest,
+    #   or v0.23.0-cu129 (CUDA 12.9) once confirmed to carry SM120 NVFP4 MoE.
+    image: vllm/vllm-openai:v0.22.1
+    container_name: vllm-chat
+    # --quantization awq_marlin: fastest AWQ path; falls back to plain awq
+    #   kernel if marlin doesn't load cleanly on Blackwell (untested kernel
+    #   path on 5090 — swap to "awq" or "gptq_marlin" if first start fails).
+    # --max-model-len 12288: covers thematic-discovery prompts (theme + focus
+    #   areas + 15-stock JSON output). Bump to 32K after validation if KV
+    #   headroom permits.
+    # --gpu-memory-utilization 0.55: coexistence cap. Bump to 0.85 after
+    #   llama-cpp-chat is decommissioned (Step 6 of swap plan).
+    # --enforce-eager: matches vllm-embed's pattern, avoids the dual-container
+    #   CUDA-graph contention that crashlooped both containers in April 2026.
+    # --enable-prefix-caching: wins on repeated system prompts (LangGraph
+    #   swarm nodes hammer the same system prompt across turns).
+    # Fix-240 (2026-05-19): `--enable-auto-tool-choice --tool-call-parser hermes`
+    # adds ~12GB of GPU overhead beyond model weights. Removed because the
+    # shared GPU (RTX 5090, 32GB) was already at ~5GB used by vllm-embed +
+    # vllm-vlm + host apps. Re-enable when GPU is quieter (host apps closed)
+    # or when running on a dedicated host. ada_brain_service callers that hit
+    # tool='auto' will still 400 until this lands; the rest of the LLM surface
+    # works without it.
+    #
+    # Fix-241 (2026-05-20): GPU fit budget is fragile. The Qwen3-32B-AWQ model
+    # weights are 18.14GB and activation buffers consume ~10-12GB depending on
+    # max-model-len. On a quiet GPU (vllm-embed + vllm-vlm only, no host apps)
+    # 0.85/8192 fits with room for KV cache. On a busy GPU (host apps using
+    # ~5GB extra) any config above 6144 ctx hits OOM. If smoke tests fail with
+    # "Engine core initialization failed" + "Available KV cache memory: negative",
+    # close host apps (Cursor/Edge/Chrome/Spotify can take 5GB+) and retry.
+    #
+    # Infra-Bifrost-Qwen3.6-Upgrade-01 (2026-05-21): MIGRATION ROLLED BACK.
+    # Three attempts to swap to the Qwen 3.6 family all hit KV-cache OOM
+    # on this 32 GB 5090 + vLLM 0.19.1 + fp8 KV:
+    #   (1) Qwen3.6-35B-A3B-AWQ @ 8K  → KV OOM after 22 GiB weights load
+    #   (2) Qwen3.6-35B-A3B-AWQ @ 4K  → `awq_marlin_moe_repack` CUDA error
+    #       during expert-weight post-load (MoE QuantTrio AWQ port unviable)
+    #   (3) Qwen3.6-27B-AWQ @ 16K     → KV OOM after 14 GiB weights load
+    # Hardware genuinely cannot host 3.6-family AWQ-INT4 + fp8 KV at any
+    # useful context width alongside vllm-embed + vllm-vlm + host apps.
+    # Reverted to Qwen3-32B-AWQ (known-working since 2026-04-28). Sprint
+    # 5266 tracks: (a) try fp16 KV cache (drops KV size but may unlock
+    # more context on 27B), (b) evaluate single-container 27B + drop
+    # vllm-vlm permanently (Qwen3.6 multimodal handles it), (c) Q4_K_M
+    # GGUF via llama-cpp-server (different memory profile, retired 2026-
+    # 05-17 due to upstream bugs but worth revisiting), (d) revisit when
+    # GPU is upgraded.
+    # Attempt 4 (2026-05-21): operator paused all GPU consumers — embed +
+    # vlm + ada-backend + zero-api + zero-ui + legion-backend all OFF.
+    # Only Cursor (~2.4 GB) is competing for VRAM. The Qwen3.6-27B-AWQ
+    # dense @ 16K needs ~22 GB; we have ~30 GB available. gpu-mem 0.90
+    # gives vllm-chat ~29 GB. Same QuantTrio dense port that crashed in
+    # attempt 3 — only difference is the cleared GPU state. Two
+    # served-model-name aliases so legacy callers using "Qwen3-32B-AWQ"
+    # keep working when sidecars come back up later.
+    # Infra-49 (2026-05-27): max-model-len 8192 -> 12288. The live engine
+    # reports num_gpu_blocks=1622 at block_size=16 = 25,952-token KV pool.
+    # vLLM refuses to start when max-model-len exceeds that pool, which is
+    # exactly why Infra-47's 32768 attempt (=2048 blocks > 1622) never held
+    # and the config sat at 8192. 12288 = 768 blocks << 1622, so it starts
+    # with ample margin while clearing the Legion critic's >6K-char diff
+    # truncation (Fix-625). max-num-seqs 4 -> 3 trades a concurrency slot for
+    # less KV preemption/recompute when long contexts are in flight. Do NOT
+    # raise gpu-memory-utilization or switch off fp8 KV — both shrink the
+    # block pool and reintroduce the documented OOM. fp16 KV would DOUBLE
+    # per-token KV and is what made 16K/32K unaffordable here.
+    # ATTEMPT LOG 2026-06-11 (Qwen3.6-35B-A3B-NVFP4, RETIRED same day):
+    #   RedHatAI/Qwen3.6-35B-A3B-NVFP4 on v0.22.1 failed BOTH ways on this
+    #   WSL2 + RTX 5090 box: (1) with torch.compile -> "CUDA error: unknown
+    #   error" in qwen_gdn_linear_attn._warmup_prefill_kernels; (2) with
+    #   --enforce-eager -> booted healthy but decoded at <1 tok/s and then
+    #   wedged (GPU 100%, vllm:generation_tokens_total flat, 3 reqs stuck).
+    #   The FlashInfer CUTLASS NVFP4 kernel path is the new variable that
+    #   failed — Marlin INT4 kernels (awq_marlin/gptq_marlin) have been
+    #   solid on this card since April. Hence the switch below to the
+    #   official GPTQ-Int4 quant of the same model family.
+    #
+    # UPGRADE LOG 2026-06-14 (Qwen3.5 -> Qwen3.6, staged GPTQ -> NVFP4):
+    #   Phase 1 (this change): --model swapped from Qwen/Qwen3.5-35B-A3B-GPTQ-Int4
+    #   to palmfuture/Qwen3.6-35B-A3B-GPTQ-Int4 — the newer Qwen3.6 family, SAME
+    #   qwen3_5_moe arch, SAME gptq_marlin Int4 kernel path, SAME image (v0.22.1),
+    #   SAME served-model-name list (canonical "Qwen3.5-35B-A3B" stays first, so
+    #   no Bifrost/VK allow-list churn — the "3.5" label is now cosmetic). This is
+    #   a drop-in model bump; everything else below is unchanged.
+    #   Phase 2 (planned, after Phase 1 verifies): NVFP4 done correctly this time.
+    #   The 2026-06-11 NVFP4 failure was NOT a hardware wall — it ran on the
+    #   CUDA-12.8 v0.22.1 image through the FlashInfer CUTLASS NVFP4 path (the path
+    #   that crashes/wedges here). The fix (proven by aliez-ren/vllm-qwen3.5-nvfp4-sm120
+    #   at ~70-80 tok/s on a 5090): image -> vllm/vllm-openai:cu130-nightly (CUDA 13,
+    #   required for SM120 NVFP4 MoE per vllm#35065/#31085, PR#24968) + env
+    #   VLLM_NVFP4_GEMM_BACKEND=marlin (route NVFP4 weights through the stable Marlin
+    #   GEMM, NOT CUTLASS) + --model nvidia/Qwen3.6-35B-A3B-NVFP4 + drop --quantization
+    #   (auto-detected from compressed-tensors). Rollback for Phase 2 = revert to this
+    #   Phase 1 state.
+    #
+    # Qwen3.5-35B-A3B-GPTQ-Int4 config notes (2026-06-11):
+    #   --dtype bfloat16          REQUIRED — hybrid models crash on mixed fp16
+    #   --limit-mm-per-prompt '{"image":0,"video":0}'  single-quoted JSON.
+    #                             v0.22.1's dot-form (.image/.video) merges to
+    #                             UNQUOTED {image:0,video:0} internally and
+    #                             json.loads rejects it (crash loop 2026-06-11);
+    #                             bare JSON loses its double quotes to compose
+    #                             shlex. Single-quote shielding survives both.
+    #                             Qwen3.5 is natively
+    #                             multimodal; without this vLLM reserves a
+    #                             16K-token encoder cache AND profiles with a
+    #                             max-size image — several GB of the budget.
+    #                             Boot 2 failed at "Available KV cache memory:
+    #                             -0.62 GiB" (weights 21.06 GiB + mm profile).
+    #                             We serve text+tools only locally; vision
+    #                             rides the cloud lanes (gemini-flash, gemma-4,
+    #                             llama-90b-vision).
+    #   --max-num-batched-tokens 2304  REQUIRED >= 2096 (Mamba block alignment).
+    #                             First GPTQ boot attempt used 8192 and died
+    #                             "No available memory for the cache blocks" —
+    #                             the profiling/activation buffer scales with
+    #                             this value and ate the whole 0.88 budget on
+    #                             top of ~19.5 GB weights. 2304 matches the
+    #                             field-proven 5090 recipe (2096) with a
+    #                             little margin. Costs prefill throughput,
+    #                             not correctness.
+    #   --kv-cache-dtype fp8      plain fp8 only; TurboQuant KV is broken with
+    #                             hybrid models (vllm#40124)
+    #   --max-model-len 65536     hybrid GDN: only a minority of layers carry
+    #                             full-attn KV, so 64K costs ~1-2 GB. Proven
+    #                             96K@2seq / 128K@1seq on a 5090 in the field.
+    #   no --quantization flag    NVFP4 auto-detected from compressed-tensors
+    #                             model config
+    #   --enforce-eager           REQUIRED on this box (re-added 2026-06-11
+    #                             after first boot attempt): without it the
+    #                             torch.compile'd GDN prefill warmup crashes
+    #                             with "CUDA error: unknown error" in
+    #                             qwen_gdn_linear_attn._warmup_prefill_kernels
+    #                             on WSL2 + Blackwell. Eager loses some decode
+    #                             speed but matches the proven pattern for
+    #                             this GPU (both prior configs ran eager).
+    #   no expert-parallel / MTP  EP is multi-GPU-only; MTP spec-decode hurts
+    #                             throughput on this model
+    #   served-model-name keeps the legacy "Qwen3-32B-AWQ" + "qwen3-chat"
+    #   aliases so Bifrost vllm-local callers work unchanged during cutover.
+    #   --default-chat-template-kwargs enable_thinking=false (Fix-100381,
+    #                             2026-06-12): Qwen3.5-35B-A3B thinks by
+    #                             DEFAULT and its template ignores the legacy
+    #                             /no_think soft-switch (verified: /no_think
+    #                             probe still produced 929 chars of reasoning
+    #                             and hit the length cap with EMPTY content).
+    #                             Per-request chat_template_kwargs can't help
+    #                             ADA/Legion/Zero because Bifrost strips
+    #                             unknown body fields. Result pre-fix: every
+    #                             caller's max_tokens burned on reasoning
+    #                             (1251 of 1701 completions finished
+    #                             'length'), 3-5 min generations saturating
+    #                             all seq slots, gateway-wide timeouts.
+    #                             Server-level default = thinking off for
+    #                             every client; direct vLLM callers can still
+    #                             opt back in per-request.
+    # ⚠ VK ALLOW-LIST COUPLING (2026-06-14 incident + fix): Bifrost governance
+    # checks the RESOLVED served-model name against each virtual key's
+    # `allowed_models` (governance_virtual_key_provider_configs in
+    # bifrost/config.db). The provider aliases (qwen3-chat / Qwen3-32B-AWQ /
+    # Qwen3.6-35B-A3B → Qwen3.5-35B-A3B, in bifrost/config.json) resolve EVERY
+    # request to the FIRST served-model-name below, so that canonical name MUST
+    # be present in all four VK allow-lists (ada-prod, legion-prod, zero-prod,
+    # fortressos-prod) or every project's local chat gets 403 "model not allowed
+    # for this virtual key". On 2026-06-14 the swap to Qwen3.5-35B-A3B was made
+    # here but the VKs still only allowed [Qwen3.6-35B-A3B, qwen3-chat,
+    # Qwen3-32B-AWQ] → platform-wide chat outage. Fix: added Qwen3.5-35B-A3B to
+    # all 4 VK allow-lists via direct SQLite write (admin API PUT is buggy) then
+    # `docker restart shared-bifrost`. WHEN YOU CHANGE THE FIRST served-model
+    # name BELOW, also add it to every VK's vllm-local allowed_models. The
+    # current allow-lists hold all four aliases, so reusing any of these names is
+    # safe; a brand-new canonical name needs the VK update.
+    command: >
+      --model palmfuture/Qwen3.6-35B-A3B-GPTQ-Int4
+      --served-model-name Qwen3.5-35B-A3B Qwen3.6-35B-A3B qwen3-chat Qwen3-32B-AWQ
+      --port 8000
+      --host 0.0.0.0
+      --quantization gptq_marlin
+      --dtype bfloat16
+      --max-model-len ${VLLM_MAX_MODEL_LEN:-65536}
+      --gpu-memory-utilization ${VLLM_GPU_MEM_UTIL:-0.88}
+      --max-num-seqs ${VLLM_MAX_NUM_SEQS:-3}
+      --max-num-batched-tokens 2304
+      --limit-mm-per-prompt '{"image":0,"video":0}'
+      --kv-cache-dtype fp8
+      --enforce-eager
+      --enable-prefix-caching
+      --enable-chunked-prefill
+      --default-chat-template-kwargs '{"enable_thinking": false}'
+      ${VLLM_TOOL_CALL_FLAGS:- }
+    ports:
+      - "18801:8000"
+    ipc: host
+    shm_size: "4gb"
+    # Ops-06 (2026-06-12): autoheal opt-in. The engine core can wedge on this
+    # WSL2+Blackwell box (4 requests "running", 0 tok/s, /health still 200 —
+    # observed 2026-06-12 ~05:50, healthcheck failing streak 24 with nothing
+    # acting on it). The generation-ping healthcheck below DETECTS the wedge;
+    # the vllm-autoheal sidecar RESTARTS any container labeled autoheal=true
+    # once Docker marks it unhealthy. restart:on-failure only covers exits,
+    # not hangs.
+    labels:
+      - "autoheal=true"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    volumes:
+      - hf-cache:/root/.cache/huggingface
+    # Fix-241 (2026-05-20): switched from `unless-stopped` to `on-failure:3`.
+    # vllm-chat KV cache OOM is hard to recover from automatically because
+    # each failed init holds GPU memory until the next worker kills it,
+    # creating a self-reinforcing memory shortage. With on-failure:3, after
+    # 3 consecutive failed starts the container stays stopped — visible to
+    # ops (compose ps shows Exited) instead of churning silently. To recover:
+    # `docker stop vllm-vlm` (or close GPU-hungry host apps), then
+    # `docker compose up -d vllm-chat`.
+    #
+    # Infra (2026-06-14): on-failure:3 -> on-failure:10. The :3 cap left
+    # vllm-chat DEAD for 1h+ on 2026-06-14: an autoheal-triggered restart at
+    # 02:11 raced GPU-VRAM release from the dying wedged instance, so all 3 fast
+    # retries failed init ("Engine core initialization failed" in 49s, BEFORE
+    # weight load) and the policy then gave up. autoheal only restarts UNHEALTHY
+    # (wedged) containers, never EXITED ones — so a crash-exit that exhausts the
+    # retries has NO recovery path and the model just stays down until a human
+    # notices. Docker's on-failure backoff is exponential (~100ms → minutes), so
+    # the later retries in a count of 10 land AFTER the transient VRAM race
+    # clears and self-heal, while a genuinely-broken config still gives up
+    # (bounded) and shows Exited to ops. This is the anti-churn intent preserved
+    # with a realistic recovery window for the common transient case.
+    restart: "on-failure:10"
+    # Fix-245 (2026-05-20): healthcheck does a /v1/chat/completions ping
+    # alongside /health so the FlashInfer attention kernel JIT-compile path
+    # (which fires on the first real chat request) is warm by the time the
+    # container is marked "healthy". Without this, the first ada-backend
+    # call after restart hits a broken-pipe because Bifrost's client timeout
+    # is shorter than the JIT compile time.
+    healthcheck:
+      test:
+        - "CMD-SHELL"
+        - >
+          curl -sf http://localhost:8000/health > /dev/null &&
+          curl -sf -X POST http://localhost:8000/v1/chat/completions
+          -H 'Content-Type: application/json'
+          -d '{"model":"qwen3-chat","messages":[{"role":"user","content":"hi"}],"max_tokens":1}'
+          --max-time 110 > /dev/null
+      interval: 60s
+      timeout: 120s
+      retries: 5
+      # First start: ~17-19 GB AWQ weights + Marlin kernel JIT compile +
+      # warmup-ping above. First boot of Qwen3.6-35B-A3B downloads from HF
+      # (no shared-hf-cache hit yet) → 15-25 min on first run. Cached
+      # restarts ~3-5 min. Bumped to 1800s to cover first-boot pull.
+      start_period: 1800s
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "5"
+
+  vllm-embed:
+    environment:
+      HF_TOKEN: ${HF_TOKEN}
+    # Bumped with vllm-chat to v0.22.1 (2026-06-11) so both share one image
+    # pull. Pooling runner is stable across versions; if embed regresses,
+    # pin this one service back to v0.19.1 — they're independent.
+    image: vllm/vllm-openai:v0.22.1
+    container_name: vllm-embed
+    # --enforce-eager: skip CUDA graph warmup that triggers the shared-GPU memory
+    # profile assertion (vllm-chat's KV cache fluctuates during embed's boot).
+    # For a 0.6B pooling model cudagraphs give negligible speedup.
+    # --max-model-len 8192: embed inputs are short; 32K default reserves needlessly
+    # large KV blocks in the already-tight residual VRAM after vllm-chat loads.
+    # --gpu-memory-utilization 0.12: weights + pooling workspace + safety margin.
+    command: >
+      --model Qwen/Qwen3-Embedding-0.6B
+      --served-model-name Qwen/Qwen3-Embedding-0.6B
+      --port 8001
+      --host 0.0.0.0
+      --runner pooling
+      --max-model-len 8192
+      --gpu-memory-utilization 0.12
+      --dtype auto
+      --enforce-eager
+    depends_on:
+      vllm-chat:
+        condition: service_healthy
+    ports:
+      - "8001:8001"
+    ipc: host
+    shm_size: "2gb"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    volumes:
+      - hf-cache:/root/.cache/huggingface
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 180s
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "5"
+
+  vllm-vlm:
+    # Infra-Retire-VLLM-VLM-01 (sprint 5337, 2026-05-21): RETIRED. The
+    # Qwen3.6 family on vllm-chat is natively multimodal so this sidecar
+    # became redundant. Bifrost logs prior to retirement showed only
+    # "Provider 'vllm-vlm' is not allowed for this virtual key" rejections
+    # — no productive callers. Stopped 2026-05-21 to free ~4 GB VRAM
+    # (31.6 → 27.7 GiB used). Profile-guarded so `docker compose up` no
+    # longer brings it back; revive with `--profile retired up vllm-vlm`
+    # in an emergency. Confirmed no Legion / ADA / Zero env vars depend
+    # on a dedicated VLM endpoint.
+    profiles: ["retired"]
+    environment:
+      HF_TOKEN: ${HF_TOKEN}
+    # Qwen2-VL-2B-Instruct AWQ — local vision-language model. Routed
+    # through Bifrost as `vllm-vlm/Qwen2-VL-2B-Instruct-AWQ`. ~2 GB
+    # runtime in the headroom alongside vllm-chat (~17 GB) + vllm-embed
+    # (~1.5 GB) on the RTX 5090.
+    image: vllm/vllm-openai:v0.19.1
+    container_name: vllm-vlm
+    command: >
+      --model Qwen/Qwen2-VL-2B-Instruct-AWQ
+      --served-model-name Qwen2-VL-2B-Instruct-AWQ
+      --port 8000
+      --host 0.0.0.0
+      --quantization awq_marlin
+      --max-model-len 2048
+      --gpu-memory-utilization 0.18
+      --dtype auto
+      --enforce-eager
+      --trust-remote-code
+    depends_on:
+      vllm-chat:
+        condition: service_healthy
+    ports:
+      - "18803:8000"
+    ipc: host
+    shm_size: "2gb"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    volumes:
+      - hf-cache:/root/.cache/huggingface
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 300s
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "5"
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # vllm-heretic was retired 2026-04-28 — the abliterated Qwen3.6-35B-A3B
+  # served by llama-cpp-chat above replaces both the brain and the
+  # voice-loop / Sally-persona use cases in a single container.
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Optional: Fish-Speech S2 Pro for high-quality local TTS + voice cloning.
+  # Behind the ``tts`` profile. Default companion voice (en-US-JennyNeural via
+  # Edge-TTS) works without this; this is the upgrade path. Enable with:
+  #     docker compose --profile tts -f shared-infra/docker-compose.vllm.yml up -d
+  # ─────────────────────────────────────────────────────────────────────────
+  fish-speech:
+    profiles: ["tts"]
+    image: fishaudio/fish-speech:latest
+    container_name: fish-speech
+    command: ["fish-speech", "serve", "--port", "8000", "--host", "0.0.0.0", "--device", "cuda"]
+    ports:
+      - "18802:8000"
+    ipc: host
+    shm_size: "2gb"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    volumes:
+      - hf-cache:/root/.cache/huggingface
+      # Voice clone reference samples that POST /api/reachy/realtime/voices/clone
+      # writes. fish-speech reads them at synth time when voice id starts with
+      # ``fish:``.
+      - ../zero/backend/app/data/voice_clones:/app/voice_clones:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/v1/models"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 240s
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
+
+  # litellm-proxy was retired 2026-05-14. Bifrost (port 4445) is now the sole
+  # LLM gateway. All three projects (Zero, ADA, Legion) talk only to
+  # shared-bifrost. Service block + ./litellm/config.yaml deleted. If you
+  # need to bring it back for an emergency rollback, the last known-good
+  # block is in git history (commit prior to 2026-05-14 bifrost migration).
+
+  # Ops-06 (2026-06-12): restart-on-unhealthy actor. Docker never restarts a
+  # container that is merely UNHEALTHY (only exited ones, per restart policy),
+  # so vllm-chat's engine-core wedges (gen requests hang, /health stays 200,
+  # generation-ping healthcheck times out -> unhealthy) sat unrecovered for
+  # hours until a human restarted the container. autoheal watches the Docker
+  # events/health stream and restarts any container labeled autoheal=true.
+  # Healthcheck start_period is respected (no restart during model load).
+  vllm-autoheal:
+    image: willfarrell/autoheal:1.2.0
+    container_name: vllm-autoheal
+    restart: always
+    environment:
+      - AUTOHEAL_CONTAINER_LABEL=autoheal
+      - AUTOHEAL_INTERVAL=30
+      - AUTOHEAL_DEFAULT_STOP_TIMEOUT=60
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    network_mode: none
+
+volumes:
+  hf-cache:
+    name: shared-hf-cache

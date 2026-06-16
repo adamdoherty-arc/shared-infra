@@ -1,0 +1,583 @@
+groups:
+  - name: legion_alerts
+    rules:
+      - alert: OllamaQueueDepthHigh
+        expr: legion_ollama_queue_depth > 15
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Ollama queue depth is high ({{ $value }})"
+
+      - alert: OllamaCircuitBreakerOpen
+        expr: legion_circuit_breaker_state{provider="ollama"} == 1
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Ollama circuit breaker is open — LLM requests falling back to Gemini"
+
+      - alert: HighMemoryUsage
+        expr: legion_system_memory_percent > 85
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "System memory usage is {{ $value }}%"
+
+      - alert: HighCPUUsage
+        expr: legion_system_cpu_percent > 90
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "System CPU usage is {{ $value }}%"
+
+      - alert: SlowAPIResponses
+        expr: histogram_quantile(0.99, rate(legion_http_request_duration_seconds_bucket[5m])) > 30
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "99th percentile API response time exceeds 30s"
+
+      - alert: HighLLMErrorRate
+        expr: rate(legion_llm_requests_total{status="error"}[5m]) / rate(legion_llm_requests_total[5m]) > 0.3
+        for: 3m
+        labels:
+          severity: critical
+        annotations:
+          summary: "LLM error rate exceeds 30%"
+
+      - alert: OllamaQueueSaturated
+        expr: legion_ollama_queue_depth > 6
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Ollama queue saturated ({{ $value }} requests queued) — requests may timeout"
+
+      - alert: ContainerCPURunaway
+        expr: rate(container_cpu_usage_seconds_total[1m]) * 100 > 90
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Container {{ $labels.name }} CPU usage above 90% for 5 minutes"
+
+      - alert: OllamaCircuitOpen
+        expr: legion_circuit_breaker_state{provider="ollama"} == 1
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: "Ollama circuit breaker tripped — all LLM requests falling back to cloud"
+
+      # ── Audit-16: daemon restart loop detection (2026-05-18) ───
+      - alert: DaemonRestartLoop
+        expr: increase(legion_daemon_restarts_total[10m]) > 3
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Daemon {{ $labels.task_name }} restarted >3x in 10 min — supervisor is masking a broken daemon"
+
+      # ── Diag-Bifrost-02: route latency alerts (2026-05-18) ─────
+      - alert: BifrostRouteLatencyHigh
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(legion_bifrost_route_latency_seconds_bucket[5m])) by (le)
+          ) > 5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Bifrost route p95 > 5s for 5 min — upstream LLM route is slow or hung"
+
+      - alert: BifrostRouteAllFailing
+        expr: |
+          sum(rate(legion_bifrost_route_latency_seconds_count{outcome="ok"}[5m]))
+            / clamp_min(sum(rate(legion_bifrost_route_latency_seconds_count[5m])), 0.001)
+          < 0.5
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Less than 50% of synthetic Bifrost pings succeeded in 5m — upstream route is broken"
+
+      # ── Learn-17: closed-loop verification alerts ────────────
+      - alert: ImprovementRollbackRateHigh
+        expr: |
+          (sum(increase(legion_improvements_rolled_back_total[6h]))
+            /
+           clamp_min(sum(increase(legion_improvements_verified_positive_total[6h])
+                       + increase(legion_improvements_rolled_back_total[6h])), 1)
+          ) > 0.3
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Improvement rollback rate above 30% over last 6h — prompt evolution is regressing"
+
+      - alert: ImprovementEffectivenessDropping
+        expr: legion_improvements_7d_effectiveness_pct < 40
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "7-day improvement effectiveness below 40% — auto-evolution is producing more regressions than wins"
+
+      # ── Learn-18: per-source provider override (Ollama re-introduction) alerts ────
+      - alert: OllamaProviderOverrideQualityRegression
+        expr: increase(legion_provider_override_rolled_back_total[15m]) > 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Provider override rolled back due to quality regression (source={{ $labels.source }} target={{ $labels.target_provider }})"
+          description: "Learn-17 feedback_loop_verifier auto-rolled-back a Learn-18 provider override row in the last 15 minutes. Investigate the source's review_score delta before enabling more canaries."
+
+      - alert: OllamaCallLatencyHigh
+        expr: histogram_quantile(0.95, sum by (le, provider) (rate(legion_llm_latency_seconds_bucket{provider="ollama"}[10m]))) > 600
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Ollama p95 latency above 600s for 10m — model swap thrash or VRAM saturation likely"
+          description: "Learn-18 routes Tier 1 sources to Ollama. Persistent p95 > 10 min suggests GPU Manager should switch ollama to CPU mode or stop low-priority containers."
+
+      # ── Mesh-71: stale mesh daemon detection ────────────────────────────
+      - alert: MeshDaemonStale
+        expr: |
+          (time() - legion_mesh_daemon_last_tick_at{daemon="per_project_general_dispatcher"}) > 7200
+          OR
+          (time() - legion_mesh_daemon_last_tick_at{daemon="auditor_weight_learner"}) > 172800
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Mesh daemon {{ $labels.daemon }} last tick > 2× expected interval"
+          description: "Daemon is silently broken despite supervisor restart. Check legion_daemon_crashes_total{task_name=\"{{ $labels.daemon }}\"} and recent backend logs."
+
+      - alert: MeshDaemonErrorRateHigh
+        expr: |
+          sum by (daemon) (rate(legion_mesh_daemon_tick_total{outcome="error"}[1h]))
+            /
+          sum by (daemon) (rate(legion_mesh_daemon_tick_total[1h])) > 0.5
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Mesh daemon {{ $labels.daemon }} error rate > 50% over last hour"
+          description: "Daemon ticks are completing but reporting outcome=error more than half the time."
+
+  # S5 + S11 (2026-05-18) — ecosystem-resilience alerts.
+  # Project-heartbeat staleness + ClickHouse storm + daemon restart loops +
+  # learning-bus backlog. All routed via legion-webhook → /api/webhooks/alertmanager
+  # → Discord (DISCORD_ALERT_WEBHOOK_URL).
+  - name: ecosystem_resilience
+    interval: 30s
+    rules:
+      # The metric ``legion_project_heartbeat_age_seconds`` is already the
+      # age in seconds since the last heartbeat; compare directly. The old
+      # expr (``time() - age > 120``) was always-true because it treated
+      # the gauge as a unix timestamp.
+      - alert: ProjectHeartbeatStale
+        expr: max by (project_id, project_name) (legion_project_heartbeat_age_seconds) > 120
+        for: 30s
+        labels:
+          severity: warning
+          tier: ecosystem
+        annotations:
+          summary: "Project heartbeat stale (>2m)"
+          description: >
+            No heartbeat from project_id={{ $labels.project_id }} ({{ $labels.project_name }})
+            in {{ $value }} seconds. Confirm the project's heartbeat
+            emitter is still running.
+
+      - alert: ProjectHeartbeatGone
+        expr: max by (project_id, project_name) (legion_project_heartbeat_age_seconds) > 300
+        for: 1m
+        labels:
+          severity: critical
+          tier: ecosystem
+        annotations:
+          summary: "Project appears DOWN (>5m no heartbeat)"
+          description: >
+            Project_id={{ $labels.project_id }} ({{ $labels.project_name }})
+            has not heartbeat in {{ $value }} seconds. Service is likely down.
+
+      - alert: ClickHouseCpuStorm
+        expr: avg_over_time(container_cpu_usage_seconds_total{name=~".*clickhouse.*"}[5m]) > 3
+        for: 5m
+        labels:
+          severity: critical
+          tier: ecosystem
+        annotations:
+          summary: "ClickHouse {{ $labels.name }} CPU storming (>300% for 5m)"
+          description: >
+            Revisits the Phase 1 incident pattern — most common cause is
+            system.text_log debug-level inside a tight memory cap. Check
+            the config.d/zero-system-logs.xml override + text_log rowcount.
+
+      - alert: LegionDaemonRestartLoop
+        expr: changes(container_start_time_seconds{name=~"legion-.*|ada-.*|zero-.*"}[10m]) > 2
+        for: 1m
+        labels:
+          severity: critical
+          tier: ecosystem
+        annotations:
+          summary: "{{ $labels.name }} is in a restart loop"
+          description: >
+            >2 restarts in 10 min. Silent-flap pattern. The auto-restart
+            watchdog was removed 2026-05-15 in favor of operator-driven
+            recovery — investigate before forcing a restart.
+
+      - alert: LearningBusBacklog
+        expr: legion_cross_project_learnings_unapplied > 50
+        for: 10m
+        labels:
+          severity: warning
+          tier: ecosystem
+        annotations:
+          summary: "Learning bus has {{ $value }} unapplied rows"
+          description: >
+            general-cross-pollinate consumes ≤5 per tick at a 6h cron, so
+            steady-state backlog should be <30. Check skill_runs for
+            general-cross-pollinate failures.
+
+      - alert: LegionCoordinatorStaleTick
+        expr: time() - legion_coordinator_last_tick_at > 180
+        for: 1m
+        labels:
+          severity: warning
+          tier: ecosystem
+        annotations:
+          summary: "Legion coordinator hasn't ticked in {{ $value }}s"
+          description: >
+            S1 coordinator ticks every 30 s. >3 min silence means the
+            supervised task crashed and isn't being restarted. Restart
+            legion-backend.
+
+      # S36 (2026-05-19): startup-reap orphan spike. The reaper closes
+      # RUNNING skill_runs orphaned by a crash. >50 in one boot means
+      # legion-backend died with significant in-flight work; that's a
+      # signal worth paging on so we don't accumulate orphan storms.
+      - alert: LegionRestartOrphanSpike
+        expr: increase(legion_skill_run_reaper_orphans_total{reason="startup"}[10m]) > 50
+        for: 1m
+        labels:
+          severity: warning
+          tier: ecosystem
+          ecosystem_project: legion
+        annotations:
+          summary: "{{ $value }} skill_runs orphaned by recent legion-backend restart"
+          description: >
+            The S30 reaper closed {{ $value }} RUNNING rows in the last 10 min.
+            A normal restart should see <5. High counts mean legion-backend is
+            crashing under load or being restarted too aggressively. Check
+            recent legion-backend logs for OOMs / unhandled exceptions.
+
+      # S35 (2026-05-19): sprint stale-ACTIVE pile-up. If a tick reaps >5
+      # sprints, that's an unusual one-shot — either a long uptime gap or
+      # the autonomous brain spawned a wave of sprints that never advanced.
+      - alert: SprintStaleSpike
+        expr: increase(legion_sprint_stale_reaper_total[1h]) > 5
+        for: 5m
+        labels:
+          severity: warning
+          tier: ecosystem
+        annotations:
+          summary: "{{ $value }} sprints marked STALE in the last hour"
+          description: >
+            S35 stale-reaper made >5 transitions to STALE within an hour.
+            Typically a sign that a swarm of started-but-never-progressed
+            sprints accumulated. Check sprints table for project_id grouping.
+
+      # S54 (2026-05-19): ada-scheduler memory headroom alert. Container
+      # was at 98.56 % when measured (1.478/1.5 GiB); ceiling now 2.5 GiB.
+      # Fire at 85 % so we have a 15 % buffer before OOM-kill. Generic
+      # selector — extend to other containers as they show pressure.
+      - alert: ContainerMemoryHigh
+        expr: |
+          (container_memory_usage_bytes{name=~"ada-.*|legion-.*|zero-.*"}
+           / container_spec_memory_limit_bytes{name=~"ada-.*|legion-.*|zero-.*"}
+           ) > 0.85
+        for: 5m
+        labels:
+          severity: warning
+          tier: ecosystem
+        annotations:
+          summary: "{{ $labels.name }} memory >85% ({{ $value | humanizePercentage }})"
+          description: >
+            Container memory has been above 85 % of its limit for 5 min.
+            Raise the limit OR profile the leak (tracemalloc snapshot diff
+            usually points at the culprit within 2-3 cycles).
+
+      # S46 (2026-05-19): ACTIVE sprint with zero tasks. Two-call create
+      # (POST /sprints then POST /sprints/{id}/tasks) leaves orphan shells
+      # when the caller fails between the two requests. Catch within 2h
+      # rather than waiting 24h for S35 to reap them.
+      - alert: SprintsActiveNoTasks
+        expr: legion_sprints_active_no_tasks > 0
+        for: 2h
+        labels:
+          severity: warning
+          tier: ecosystem
+        annotations:
+          summary: "{{ $value }} sprints ACTIVE with 0 tasks for >2h"
+          description: >
+            One or more sprints are ACTIVE but have no SprintTaskDB rows
+            (typically Zero-side bulk creates that didn't follow up with
+            task POSTs). They'll be S35-reaped at 24h, but this is a
+            faster warning so the operator can re-seed before then.
+
+      # Alert-Cov-1 (2026-05-19): three drift canaries surfaced in Round 6 audit.
+      # 1. Wave of failed sprints — early warning before the system loops.
+      - alert: SprintFailureWave
+        expr: |
+          (
+            rate(legion_sprint_failed_total[1h])
+            / clamp_min(rate(legion_sprints_created_total[1h]), 0.001)
+          ) > 0.5
+        for: 5m
+        labels:
+          severity: critical
+          tier: ecosystem
+        annotations:
+          summary: "Sprint failure rate >50% over 1h ({{ $value | humanizePercentage }})"
+          description: >
+            More than half of all sprints created in the last hour have ended
+            in FAILED status. Possible causes: LLM outage (Health-1 family),
+            sprint_stale_reaper too aggressive (Watchdog-1), or executor regression.
+            Inspect: SELECT slug, updated_at FROM sprints WHERE status='FAILED'
+            AND updated_at > NOW() - INTERVAL '1 hour' ORDER BY updated_at DESC.
+
+      # 2. Generic daemon staleness — fires for ANY daemon whose age exceeds 24h.
+      - alert: DaemonAgeStale
+        expr: max(legion_daemon_age_seconds) by (daemon) > 86400
+        for: 30m
+        labels:
+          severity: warning
+          tier: ecosystem
+        annotations:
+          summary: "Daemon {{ $labels.daemon }} hasn't fired in {{ $value | humanizeDuration }}"
+          description: >
+            One or more recurring daemons hasn't reported a heartbeat in over
+            24h. Could be a misregistered one-shot (Daemon-1 sprint), a
+            crashed daemon not restarted by the supervisor, or a scheduler
+            misconfiguration. Check task_health_registry for the actual kind.
+
+      # Wave-11 Coordinator-Kick-Lag-Alert-01: the event-driven kick path
+      # exists to short-circuit the 30s poll. If the 95th-percentile kick→tick
+      # latency exceeds 5s for 10 minutes, the speedup isn't happening.
+      - alert: CoordinatorKickLagHigh
+        expr: |
+          histogram_quantile(0.95,
+            rate(legion_coordinator_kick_to_tick_latency_seconds_bucket[10m])
+          ) > 5
+        for: 10m
+        labels:
+          severity: warning
+          tier: ecosystem
+        annotations:
+          summary: "Coordinator kick→tick p95 = {{ $value | humanizeDuration }} (>5s)"
+          description: >
+            LegionCoordinator's event-driven kick path is not winning
+            against the 30s poll. Check /api/legion/status — event_driven
+            should be true and kick_count should be incrementing.
+
+      # Wave-11 Failure-Rate-Spike-Alert-01: per-class quarantine spike.
+      - alert: TaskFailureClassSpike
+        expr: |
+          (sum by (error_class) (rate(legion_task_quarantined_total[30m])))
+            > 2 * (sum by (error_class) (rate(legion_task_quarantined_total[7d])) + 0.001)
+        for: 10m
+        labels:
+          severity: warning
+          tier: ecosystem
+        annotations:
+          summary: "Failure class {{ $labels.error_class }} spiking (>2× 7d baseline)"
+          description: >
+            Quarantine rate for error_class={{ $labels.error_class }} is
+            running >2× its 7-day baseline. Likely upstream regression
+            (circuit_breaker → LLM down, oom → memory leak, db_pool →
+            connection exhaustion). Check
+            /api/sprint-tasks/failure-summary?since_hours=1.
+
+      # Wave-12 MeshGuard-Coverage-Daemon-01: canary regression alert.
+      - alert: CanaryCoverageRegression
+        expr: legion_mesh_guard_canary_coverage < 1.0
+        for: 1h
+        labels:
+          severity: warning
+          tier: ecosystem
+        annotations:
+          summary: "MeshGuard canary coverage = {{ $value | humanizePercentage }} (<100%)"
+          description: >
+            One or more critical files lost their `# wave-N: do not
+            regenerate` canary token. Likely a refactor stripped it.
+            Check /api/auditor/mesh-guard-coverage for the missing
+            file(s); restore the canary before the next mesh self-modify
+            cycle.
+
+      # Bifrost-Chain-01: alerts that the FreeLLMAPI fallback chain is
+      # bottoming out (exhausting upstream attempts) or rate-limit-thrashing.
+      - alert: FreeLLMChainExhausted
+        expr: rate(legion_llm_freellm_calls_total{outcome="exhausted"}[10m]) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+          tier: ecosystem
+        annotations:
+          summary: "FreeLLMAPI chain exhausting upstream attempts (~{{ $value }}/s)"
+          description: >
+            shared-freellmapi is returning chain-exhausted responses faster
+            than 0.1/s sustained for 5 min. Upstream free-tier daily caps
+            have likely tripped. Check
+            http://localhost:3001/ for key health, or pause callers via
+            POST /api/llm/chain-controls/policies with mode=forbid.
+
+      - alert: FreeLLMChainRateLimitedHigh
+        expr: rate(legion_llm_freellm_calls_total{outcome="rate_limited"}[10m]) > 0.5
+        for: 10m
+        labels:
+          severity: warning
+          tier: ecosystem
+        annotations:
+          summary: "FreeLLMAPI chain rate-limited at ~{{ $value }}/s"
+          description: >
+            More than 0.5 rate-limited responses per second over 10 min
+            indicates the active chain head is hitting RPM ceilings. Open
+            http://localhost:3001/ and reorder the Fallback Chain so a
+            different provider takes head, OR add more provider keys.
+
+      # 3. Git drift canary — unpushed commits on the Legion repo (config drift).
+      - alert: LegionGitUnpushedCommits
+        expr: legion_git_unpushed_commits{repo="legion"} > 0
+        for: 10m
+        labels:
+          severity: warning
+          tier: ecosystem
+        annotations:
+          summary: "{{ $value }} unpushed commits on Legion main"
+          description: >
+            Legion's local main branch has commits not pushed to origin.
+            Either: (a) an operator started work and stepped away, or
+            (b) the Self-Modify pipeline made local commits but the push
+            stage failed. Either way, the changes are at risk if the host
+            reboots before push. Investigate: `git -C c:/code/legion log
+            origin/main..main --oneline`
+
+      # ── Learn-30-04: learning subsystem composite alert ─────────────
+      - alert: LearningCompositeLow
+        expr: legion_learning_composite < 40
+        for: 30m
+        labels:
+          severity: warning
+          tier: ecosystem
+        annotations:
+          summary: "Learning composite grade is low ({{ $value | humanize }}/100)"
+          description: >
+            The learning subsystem composite grade (legion_learning_composite) has been
+            below 40/100 for 30 minutes. Degraded dimensions are surfaced per-key via
+            legion_learning_dim_grade{dim_key="..."}. Check the Learning Dashboard at
+            /learning-engine for per-dimension breakdowns and top-dropping dims.
+            If alerts are firing frequently, review legion_learning_alert_fired_total
+            for the triggering reason (delta_drop / red_dim).
+
+  # ────────────────────────────────────────────────────────────────
+  # Infra-Heimdall-01 (2026-05-20) — Bifrost & Docker steward agent.
+  # heimdall-watch fires every 15 min. If its last tick is older than
+  # 1800s, the persona is silent — likely a driver crash or a coordinator
+  # stall. Critical heimdall findings should reach the brain via
+  # root_cause_analysis; if none of them trip the fix authorization gate
+  # within 6h, the operator must intervene.
+  # ────────────────────────────────────────────────────────────────
+  - name: heimdall
+    interval: 60s
+    rules:
+      - alert: HeimdallStale
+        expr: (time() - legion_mesh_daemon_last_tick_at{daemon="heimdall-watch"}) > 1800
+        for: 5m
+        labels:
+          severity: warning
+          tier: ecosystem
+        annotations:
+          summary: "Heimdall watch silent — last tick > 30 min ago"
+          description: >
+            heimdall-watch should fire every 15 min via the
+            skill_loop_runner. No tick in {{ $value }} seconds. Check
+            skill_definitions WHERE name='heimdall-watch' for enabled=true,
+            and recent legion-backend logs for driver exceptions.
+
+      - alert: HeimdallCriticalUnresolved
+        expr: |
+          (sum(increase(legion_heimdall_findings_total{severity="CRITICAL"}[6h])) > 0)
+          AND
+          (sum(increase(legion_execution_fix_gate_total{gate="authorization",outcome="allowed"}[6h])) == 0)
+        for: 30m
+        labels:
+          severity: critical
+          tier: ecosystem
+        annotations:
+          summary: "Heimdall CRITICAL findings open with no Fix sprint authorized in 6h"
+          description: >
+            Heimdall has emitted CRITICAL findings but the autonomous brain
+            has not authorized any Fix sprints in the last 6 hours. Either
+            the brain is throttled, the gate is too strict, or the findings
+            need operator intervention. Check /api/heimdall/findings/recent
+            and /self-modify console.
+
+  # ────────────────────────────────────────────────────────────────
+  # Sprint 5336 (2026-05-21): VRAM headroom monitor. After the
+  # Qwen3.6-27B migration, vllm-chat sits ~28 GB on a 32 GB 5090.
+  # If free VRAM drops below 500 MB for 5 min, KV-cache allocations
+  # for the next prompt may fail. Triggers the Heimdall remediation
+  # template kv_cache_oom_imminent (sprint 5266 ext).
+  # ────────────────────────────────────────────────────────────────
+  - name: gpu_vram
+    interval: 30s
+    rules:
+      - alert: HeimdallVRAMTight
+        expr: legion_gpu_vram_free_mb < 500
+        for: 5m
+        labels:
+          severity: critical
+          tier: infra
+        annotations:
+          summary: "GPU VRAM headroom below 500 MB"
+          description: >
+            Free VRAM = {{ $value }} MB. Imminent risk of KV-cache OOM on
+            the next vllm-chat allocation. Auto-remediation template
+            kv_cache_oom_imminent (Heimdall) will propose shrinking
+            --max-model-len by 25%. Operator can also free VRAM by
+            stopping vllm-vlm (already retired), closing host apps, or
+            switching --kv-cache-dtype to fp16 (uses more KV memory per
+            block but in larger contiguous chunks).
+
+  # ────────────────────────────────────────────────────────────────
+  # Ops-06 (2026-06-12): event-loop lag alert. The watchdog gauge
+  # (commit ace19ad0, run 3db48e57) made the silent backend wedge
+  # observable; this rule makes it ALERT. A wedged main loop serves
+  # /livez fine (cheap probe) while every real coroutine starves —
+  # the 2026-06-10 full-wedge incident pattern.
+  # ────────────────────────────────────────────────────────────────
+  - name: event_loop
+    interval: 15s
+    rules:
+      - alert: EventLoopLagHigh
+        expr: legion_event_loop_lag_seconds > 1
+        for: 2m
+        labels:
+          severity: critical
+          tier: backend
+        annotations:
+          summary: "Backend event loop lagging (>{{ $value }}s)"
+          description: >
+            legion_event_loop_lag_seconds sustained above 1s for 2m. The
+            asyncio main loop is starving — heavy sync work on the loop, a
+            D-state FS call, or session-across-await contention. /livez may
+            still return 200 (it is too cheap to detect this). Check
+            legion_event_loop_stall_total and docker restart legion-backend
+            if lag keeps climbing.

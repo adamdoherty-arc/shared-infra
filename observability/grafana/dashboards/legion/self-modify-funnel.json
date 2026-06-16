@@ -1,0 +1,146 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": { "type": "grafana", "uid": "-- Grafana --" },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "description": "Dev-06..Dev-28 self-modify funnel: attempts → gates → PRs → verify/revert. Built from Prometheus counters emitted by ExecutionFixService and SelfModifyHealthWatcher.",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "id": 1,
+      "type": "row",
+      "title": "Funnel: attempts → PRs → verified/reverted",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "collapsed": false
+    },
+    {
+      "id": 2,
+      "title": "Auto-fix attempts (by source / outcome)",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 1 },
+      "targets": [
+        {
+          "expr": "sum by (source, outcome) (rate(legion_execution_fix_attempts_total[5m]))",
+          "legendFormat": "{{source}} / {{outcome}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "ops" }
+      }
+    },
+    {
+      "id": 3,
+      "title": "PR state transitions",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 1 },
+      "targets": [
+        {
+          "expr": "sum by (state) (rate(legion_execution_fix_pr_total[15m]))",
+          "legendFormat": "{{state}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ops" } }
+    },
+    {
+      "id": 4,
+      "type": "row",
+      "title": "Gate health",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 9 },
+      "collapsed": false
+    },
+    {
+      "id": 5,
+      "title": "Gate pass/fail by gate",
+      "type": "bargauge",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 10 },
+      "targets": [
+        {
+          "expr": "sum by (gate, outcome) (legion_execution_fix_gate_total)",
+          "legendFormat": "{{gate}} {{outcome}}",
+          "refId": "A"
+        }
+      ],
+      "options": { "displayMode": "lcd", "orientation": "horizontal" }
+    },
+    {
+      "id": 6,
+      "title": "Diagnosis tier hit rate (Dev-17)",
+      "type": "piechart",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 10 },
+      "targets": [
+        {
+          "expr": "sum by (tier) (legion_execution_fix_diagnosis_tier_total)",
+          "legendFormat": "{{tier}}",
+          "refId": "A"
+        }
+      ],
+      "options": { "legend": { "displayMode": "table", "values": ["value", "percent"] } }
+    },
+    {
+      "id": 7,
+      "type": "row",
+      "title": "Notifications + governor",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 19 },
+      "collapsed": false
+    },
+    {
+      "id": 8,
+      "title": "Notifications by event_type and status",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 20 },
+      "targets": [
+        {
+          "expr": "sum by (event_type, status) (legion_notifications_total)",
+          "legendFormat": "{{event_type}} / {{status}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "title": "Daemon crashes",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 20 },
+      "targets": [
+        {
+          "expr": "increase(legion_daemon_crashes_total[24h])",
+          "legendFormat": "{{daemon}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": { "defaults": { "thresholds": { "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 1 }] } } }
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": ["legion", "self-modify", "dev-28"],
+  "templating": { "list": [] },
+  "time": { "from": "now-24h", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Legion Self-Modify Funnel (Dev-28)",
+  "uid": "legion-self-modify",
+  "version": 1,
+  "weekStart": ""
+}

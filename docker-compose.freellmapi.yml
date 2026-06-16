@@ -1,0 +1,80 @@
+# shared-freellmapi — free-tier LLM proxy peer of shared-bifrost.
+#
+# Why a separate compose file (mirrors docker-compose.bifrost.yml pattern):
+#   - Bring up:   docker compose -f docker-compose.freellmapi.yml up -d
+#   - Bring down: docker compose -f docker-compose.freellmapi.yml down
+#   - Doesn't touch the bifrost / vllm / litellm stacks. Rolling back the
+#     fallback-chain capability is a single `down` away.
+#
+# Provider key management:
+#   The container exposes its admin dashboard on the same port as the API
+#   (3001). After first boot, open http://localhost:3001 in a browser,
+#   add provider API keys via the Keys page, reorder the Fallback Chain
+#   priority list, and copy the unified bearer token. That bearer token
+#   goes into each consumer project's env as FREELLM_BEARER_TOKEN.
+#
+# Network: joins shared-infra_default (the network created by
+# docker-compose.vllm.yml) so Legion/ADA/Zero backends reach it as
+# `shared-freellmapi:3001` from inside the docker network, and operators
+# reach it as `http://localhost:3001` from the host.
+#
+# Single-user design (per upstream README): one unified bearer token for
+# all clients. If we ever need per-project budgets, fork or wrap.
+
+services:
+  freellmapi:
+    build:
+      context: ./freellmapi
+      dockerfile: Dockerfile
+      args:
+        # Pinned upstream commit. Bump deliberately when upstream lands fixes;
+        # do not float to `main`. Verified 2026-05-20.
+        FREELLMAPI_COMMIT: ${FREELLMAPI_COMMIT:-18eb04be990bcdaca842574bf6e00a6968308761}
+    image: shared-infra/freellmapi:0.1-${FREELLMAPI_COMMIT:-18eb04be}
+    container_name: shared-freellmapi
+    networks:
+      - shared
+    ports:
+      # Host 3015 (default) → container 3001. The image always binds 3001
+      # internally; the host port is configurable to dodge local collisions
+      # (ada-grafana owns 3001, zero-langfuse-web owns 3010, legion-grafana
+      # owns 3050 — see those compose files). 3015 is uncontested as of
+      # 2026-05-20. Override via FREELLMAPI_HOST_PORT in shared-infra/.env.
+      - "${FREELLMAPI_HOST_PORT:-3015}:3001"
+    environment:
+      PORT: "3001"
+      HOST: "0.0.0.0"
+      NODE_ENV: "production"
+      DATABASE_PATH: "/data/freellmapi.db"
+      # AES-256-GCM key for the in-DB provider-key vault. Required.
+      ENCRYPTION_KEY: ${FREELLMAPI_ENCRYPTION_KEY:?FREELLMAPI_ENCRYPTION_KEY missing — see freellmapi/.env.example}
+    volumes:
+      # SQLite database lives at /data/freellmapi.db. Named volume so we
+      # survive `down + up` without losing keys / chain config / analytics.
+      - freellmapi-data:/data
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.5"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://127.0.0.1:3001/', r => process.exit(r.statusCode >= 200 && r.statusCode < 500 ? 0 : 1)).on('error', () => process.exit(1))\""]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
+
+networks:
+  shared:
+    name: shared-infra_default
+    external: true
+
+volumes:
+  freellmapi-data:
+    name: shared-freellmapi-data

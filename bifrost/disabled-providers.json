@@ -1,0 +1,302 @@
+{
+  "_README": [
+    "Provider blocks parked here so they can be re-enabled without losing the",
+    "exact known-good config. As of 2026-06-11 the active set in bifrost/",
+    "config.json is: vllm-local + embed-local + nvidia-nim + openrouter +",
+    "hf-router + cerebras + groq + mistral + gemini (flash-only) + zai.",
+    "ALL-FREE stack — no paid providers. Everything else is shaped here for",
+    "fast restoration.",
+    "",
+    "Status (2026-06-11):",
+    "  moonshot   — PARKED 2026-06-11. Was the only PAID provider. Kimi K2.6",
+    "               is now free via nvidia-nim/moonshotai/kimi-k2.6 (40 RPM,",
+    "               200 on request) so paid Moonshot was removed. KIMI_API_KEY",
+    "               blanked in shared-infra/.env; operator to cancel Moonshot",
+    "               billing/auto-recharge. Restore this block + key + compose",
+    "               passthrough to re-enable.",
+    "  anthropic  — env empty; user disabled intentionally.",
+    "  gemini     — ACTIVE again since 2026-05-31 but FLASH-ONLY as of",
+    "               2026-06-11: gemini-3.x Pro previews are billing-gated",
+    "               (no free API tier since ~May 2026). The wildcard block",
+    "               below re-enables Pro IF billing is ever added.",
+    "  minimax    — key still active upstream as of 2026-05-14 but user wants",
+    "               it disabled. Either blank MINIMAX_API_KEY in shared-infra/",
+    "               .env or revoke at MiniMax dashboard before restoring.",
+    "               (MiniMax M2.7 is available FREE via nvidia-nim instead.)",
+    "  openrouter — ACTIVE again since 2026-05-27 with a curated :free list",
+    "               in config.json (refreshed 2026-06-11; one-time $10 topup",
+    "               applied → 1,000 free req/day). The wildcard block below",
+    "               is only for routing PAID OpenRouter models.",
+    "",
+    "FREE perpetual-tier providers added 2026-05-31 (ready-to-enable recipes):",
+    "  groq      — GROQ_API_KEY      (https://console.groq.com/keys; ~30 RPM, json_schema+tools)",
+    "  cerebras  — CEREBRAS_API_KEY  (https://cloud.cerebras.ai; ~1M tok/day, 8K ctx)",
+    "  mistral   — MISTRAL_API_KEY   (https://console.mistral.ai; ~1B tok/month, codestral)",
+    "  gemini    — GEMINI_API_KEY    (https://aistudio.google.com/apikey; best json_schema; native provider block below)",
+    "  These are OpenAI-compatible custom providers; Bifrost appends /v1 so the",
+    "  base_url omits it. Gemini uses the native gemini provider block (models:[*]).",
+    "",
+    "TO RE-ENABLE one of these providers:",
+    "  1. Set / refresh the corresponding env var in shared-infra/.env:",
+    "       anthropic  → ANTHROPIC_API_KEY",
+    "       gemini     → GEMINI_API_KEY",
+    "       groq       → GROQ_API_KEY",
+    "       cerebras   → CEREBRAS_API_KEY",
+    "       mistral    → MISTRAL_API_KEY",
+    "       minimax    → MINIMAX_API_KEY",
+    "       openrouter → OPENROUTER_API_KEY",
+    "  2. Add the matching env var passthrough back to",
+    "     docker-compose.bifrost.yml under `environment:` (currently stripped",
+    "     to KIMI_API_KEY only).",
+    "  3. Copy the block from this file into the `providers` object in",
+    "     bifrost/config.json.",
+    "  4. Restart Bifrost:",
+    "       docker compose -f shared-infra/docker-compose.bifrost.yml restart bifrost",
+    "  5. Smoke-test:",
+    "       curl -s -X POST http://localhost:4445/v1/chat/completions \\",
+    "         -H 'Content-Type: application/json' \\",
+    "         -d '{\"model\":\"<provider>/<model>\",\"messages\":[{\"role\":\"user\",\"content\":\"ok\"}],\"max_tokens\":10}'",
+    "",
+    "Why these are disabled-here-but-listed, not deleted:",
+    "  Bifrost runs a model-discovery loop on startup AND every minute. With",
+    "  invalid / missing keys, that floods logs at 4 warn/min × invalid_",
+    "  provider_count. Cheaper to leave the blocks here as recipes."
+  ],
+  "providers": {
+    "moonshot": {
+      "_comment": "PARKED 2026-06-11 — was the only paid provider. Kimi K2.6 now routed free via nvidia-nim/moonshotai/kimi-k2.6. To restore: KIMI_API_KEY in shared-infra/.env + compose passthrough + this block into config.json + restart. NOTE: Moonshot rejects temperature!=1.0 on kimi-k2.6, and list_models is unsupported (one-shot benign startup error).",
+      "keys": [
+        {
+          "name": "moonshot-primary",
+          "value": "env.KIMI_API_KEY",
+          "models": [
+            "kimi-k2.6",
+            "kimi-k2.5",
+            "kimi-k2.6-thinking",
+            "moonshot-v1-32k",
+            "moonshot-v1-128k",
+            "moonshot-v1-8k-vision-preview",
+            "moonshot-v1-32k-vision-preview",
+            "moonshot-v1-128k-vision-preview"
+          ],
+          "weight": 1.0,
+          "aliases": {
+            "kimi-k2.5": "kimi-k2.6",
+            "kimi-k2.6-thinking": "kimi-k2-thinking"
+          }
+        }
+      ],
+      "network_config": {
+        "base_url": "https://api.moonshot.ai",
+        "default_request_timeout_in_seconds": 600,
+        "max_retries": 2
+      },
+      "custom_provider_config": {
+        "base_provider_type": "openai",
+        "allowed_requests": {
+          "chat_completion": true,
+          "chat_completion_stream": true
+        }
+      },
+      "concurrency_and_buffer_size": {
+        "concurrency": 8,
+        "buffer_size": 200
+      }
+    },
+    "anthropic": {
+      "keys": [
+        {
+          "name": "anthropic-primary",
+          "value": "${ANTHROPIC_API_KEY}",
+          "models": ["*"],
+          "weight": 1.0,
+          "aliases": {
+            "claude-haiku-4-5": "claude-haiku-4-5-20251001"
+          }
+        }
+      ],
+      "network_config": {
+        "default_request_timeout_in_seconds": 600,
+        "max_retries": 2
+      },
+      "concurrency_and_buffer_size": {
+        "concurrency": 8,
+        "buffer_size": 200
+      }
+    },
+    "gemini": {
+      "keys": [
+        {
+          "name": "gemini-primary",
+          "value": "${GEMINI_API_KEY}",
+          "models": ["*"],
+          "weight": 1.0,
+          "aliases": {
+            "gemini-3.1-pro": "gemini-3.1-pro-preview",
+            "gemini-3.1-flash-lite": "gemini-3.1-flash-lite-preview",
+            "gemini-3-pro": "gemini-3-pro-preview",
+            "gemini-3-flash": "gemini-3-flash-preview"
+          }
+        }
+      ],
+      "network_config": {
+        "default_request_timeout_in_seconds": 600,
+        "max_retries": 2
+      },
+      "concurrency_and_buffer_size": {
+        "concurrency": 8,
+        "buffer_size": 200
+      }
+    },
+    "minimax": {
+      "keys": [
+        {
+          "name": "minimax-primary",
+          "value": "env.MINIMAX_API_KEY",
+          "models": [
+            "minimax-m2.7",
+            "minimax-m2"
+          ],
+          "weight": 1.0,
+          "aliases": {
+            "minimax-m2.7": "MiniMax-M2.7",
+            "minimax-m2": "MiniMax-M2.7"
+          }
+        }
+      ],
+      "network_config": {
+        "base_url": "https://api.minimax.io",
+        "default_request_timeout_in_seconds": 600,
+        "max_retries": 2
+      },
+      "custom_provider_config": {
+        "base_provider_type": "openai",
+        "allowed_requests": {
+          "chat_completion": true,
+          "chat_completion_stream": true
+        }
+      },
+      "concurrency_and_buffer_size": {
+        "concurrency": 4,
+        "buffer_size": 100
+      }
+    },
+    "openrouter": {
+      "keys": [
+        {
+          "name": "openrouter-primary",
+          "value": "env.OPENROUTER_API_KEY",
+          "models": ["*"],
+          "weight": 1.0,
+          "aliases": {
+            "openrouter-auto": "openrouter/auto"
+          }
+        }
+      ],
+      "network_config": {
+        "default_request_timeout_in_seconds": 600,
+        "max_retries": 2
+      },
+      "concurrency_and_buffer_size": {
+        "concurrency": 4,
+        "buffer_size": 100
+      }
+    },
+    "groq": {
+      "_comment": "Free perpetual tier. Key: https://console.groq.com/keys -> GROQ_API_KEY. ~30 RPM / 1000+ RPD per model. json_object + json_schema (gpt-oss/llama) + tools.",
+      "keys": [
+        {
+          "name": "groq-primary",
+          "value": "env.GROQ_API_KEY",
+          "models": [
+            "llama-3.3-70b-versatile",
+            "openai/gpt-oss-120b",
+            "openai/gpt-oss-20b",
+            "llama-3.1-8b-instant"
+          ],
+          "weight": 1.0
+        }
+      ],
+      "network_config": {
+        "base_url": "https://api.groq.com/openai",
+        "default_request_timeout_in_seconds": 600,
+        "max_retries": 2
+      },
+      "custom_provider_config": {
+        "base_provider_type": "openai",
+        "allowed_requests": {
+          "list_models": true,
+          "chat_completion": true,
+          "chat_completion_stream": true
+        }
+      },
+      "concurrency_and_buffer_size": {
+        "concurrency": 4,
+        "buffer_size": 100
+      }
+    },
+    "cerebras": {
+      "_comment": "ACTIVE 2026-05-31 (moved to config.json). Free perpetual tier ~1M tokens/day, 30 RPM, 8K ctx, ~2000 tok/s. Key: https://cloud.cerebras.ai -> CEREBRAS_API_KEY. Real model IDs vary by account; this key exposes gpt-oss-120b + zai-glm-4.7 (verify via GET https://api.cerebras.ai/v1/models).",
+      "keys": [
+        {
+          "name": "cerebras-primary",
+          "value": "env.CEREBRAS_API_KEY",
+          "models": [
+            "gpt-oss-120b",
+            "zai-glm-4.7"
+          ],
+          "weight": 1.0
+        }
+      ],
+      "network_config": {
+        "base_url": "https://api.cerebras.ai",
+        "default_request_timeout_in_seconds": 600,
+        "max_retries": 2
+      },
+      "custom_provider_config": {
+        "base_provider_type": "openai",
+        "allowed_requests": {
+          "list_models": true,
+          "chat_completion": true,
+          "chat_completion_stream": true
+        }
+      },
+      "concurrency_and_buffer_size": {
+        "concurrency": 4,
+        "buffer_size": 100
+      }
+    },
+    "mistral": {
+      "_comment": "Free Experiment tier ~1B tokens/month, ~1 req/s (needs phone verify). Key: https://console.mistral.ai -> MISTRAL_API_KEY. json_object + json_schema + tools; includes codestral.",
+      "keys": [
+        {
+          "name": "mistral-primary",
+          "value": "env.MISTRAL_API_KEY",
+          "models": [
+            "mistral-large-latest",
+            "mistral-small-latest",
+            "codestral-latest"
+          ],
+          "weight": 1.0
+        }
+      ],
+      "network_config": {
+        "base_url": "https://api.mistral.ai",
+        "default_request_timeout_in_seconds": 600,
+        "max_retries": 2
+      },
+      "custom_provider_config": {
+        "base_provider_type": "openai",
+        "allowed_requests": {
+          "list_models": true,
+          "chat_completion": true,
+          "chat_completion_stream": true
+        }
+      },
+      "concurrency_and_buffer_size": {
+        "concurrency": 4,
+        "buffer_size": 100
+      }
+    }
+  }
+}

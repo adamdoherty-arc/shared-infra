@@ -1,0 +1,58 @@
+groups:
+  - name: legion_personas
+    interval: 60s
+    rules:
+      # ----------------------------------------------------------------
+      # AgentOS-Observability-02 (2026-05-20)
+      # Per-persona alerts based on legion_persona_* gauges from the
+      # persona_metrics_daemon (60s sample cadence).
+      # ----------------------------------------------------------------
+
+      - alert: PersonaSuccessRateLow
+        expr: |
+          legion_persona_success_rate_24h < 30
+          and legion_persona_runs_24h > 5
+        for: 30m
+        labels:
+          severity: warning
+          subsystem: agentic_os
+        annotations:
+          summary: 'Persona {{ $labels.persona }} success rate below 30%'
+          description: 'Persona {{ $labels.persona }} ({{ $labels.owner_project }}) has 24h success rate {{ printf "%.1f" $value }}% across >5 runs. Check /agents/{{ $labels.persona }} cognitive stream.'
+
+      - alert: PersonaJudgeScoreLow
+        expr: |
+          legion_persona_judge_score_24h < 50
+          and legion_persona_runs_24h > 10
+        for: 1h
+        labels:
+          severity: warning
+          subsystem: agentic_os
+        annotations:
+          summary: 'Persona {{ $labels.persona }} avg judge score below 50'
+          description: 'Persona {{ $labels.persona }} avg judge {{ printf "%.1f" $value }} over 24h (>10 runs). Consider prompt evolution or model reroute.'
+
+      - alert: PersonaSilent
+        expr: |
+          legion_persona_active == 0
+          and legion_persona_runs_24h == 0
+        for: 24h
+        labels:
+          severity: info
+          subsystem: agentic_os
+        annotations:
+          summary: 'Persona {{ $labels.persona }} silent for 24h'
+          description: 'Persona {{ $labels.persona }} ({{ $labels.owner_project }}) had no runs for 24h despite is_active=true. Deprecated or mismapped source.'
+
+      # AgentOS-Observability-04 (2026-05-20): persona spend over configured budget
+      - alert: PersonaSpendOverBudget
+        expr: |
+          legion_persona_spend_usd_24h
+          > on(persona, owner_project) legion_persona_max_per_day_usd
+        for: 10m
+        labels:
+          severity: warning
+          subsystem: agentic_os
+        annotations:
+          summary: 'Persona {{ $labels.persona }} over daily budget'
+          description: 'Persona {{ $labels.persona }} 24h spend exceeds configured max_per_day_usd. Review autonomy settings in /agents/{{ $labels.persona }}.'

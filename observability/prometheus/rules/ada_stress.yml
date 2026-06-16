@@ -1,0 +1,62 @@
+# W24 Enhancement-3307 task 4: stress harness alerts
+#
+# Triggers when the nightly stress harness reveals a race-safety regression
+# (winner count > 1 per surface) or when the harness itself stops running.
+# All alerts route to #system-health Discord via the existing webhook.
+
+groups:
+  - name: ada_stress_harness
+    interval: 1m
+    rules:
+
+      # CRITICAL: stress harness found more than 1 winner per surface.
+      # Indicates a race window has reopened — the W17/W19/W21 guarantees
+      # are violated and concurrent operations are creating duplicate state.
+      - alert: StressHarnessRaceRegression
+        expr: max by (surface) (ada_stress_winners_total) > 1
+        for: 5m
+        labels:
+          severity: critical
+          area: race-safety
+        annotations:
+          summary: "Stress harness winners > 1 for {{ $labels.surface }}"
+          description: |
+            Concurrent-write stress for surface={{ $labels.surface }} produced
+            {{ $value }} winners, expected exactly 1. A race-safety guarantee
+            has regressed. Investigate W17/W19/W21 fix paths for this surface.
+
+            Recent runs: see Grafana dashboard `ada-stress-harness`.
+          runbook_url: ".claude/memory/topics/notifications-discord.md"
+
+      # WARNING: stress harness hasn't reported in 36h.
+      # Either the GitHub Actions workflow is broken or the push gateway
+      # is dropping metrics. Investigate workflow logs.
+      - alert: StressHarnessStale
+        expr: time() - max(ada_stress_runs_timestamp_seconds) > 36 * 3600
+        for: 10m
+        labels:
+          severity: warning
+          area: race-safety
+        annotations:
+          summary: "Nightly stress harness hasn't run in >36h"
+          description: |
+            Last stress run was {{ $value | humanizeDuration }} ago.
+            Expected nightly at 02:00 UTC. Check .github/workflows/stress.yml runs.
+          runbook_url: ".github/workflows/stress.yml"
+
+      # WARNING: harness ran but flagged the canary health check failing.
+      # Either the target was unreachable or returning 5xx under load.
+      - alert: StressHarnessCanaryFailing
+        expr: |
+          (sum by (surface) (ada_stress_winners_total{surface="health"})
+            / sum by (surface) (ada_stress_attempts_total{surface="health"})) < 0.95
+        for: 5m
+        labels:
+          severity: warning
+          area: race-safety
+        annotations:
+          summary: "Stress harness health canary < 95% success"
+          description: |
+            Baseline /api/system/health success rate under concurrency is
+            {{ $value | humanizePercentage }}. Either the target is unhealthy
+            under load or the harness's HTTPX client is timing out.

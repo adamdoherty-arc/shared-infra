@@ -1,0 +1,163 @@
+# Bifrost LLM gateway — side-car to shared-litellm during the rollout.
+#
+# Why a separate compose file (not folded into docker-compose.vllm.yml):
+#   - Rollback is `docker compose -f docker-compose.bifrost.yml down` and
+#     touches NOTHING in the chat / embed / litellm stack. The plan calls
+#     out 30 days of clean operation before retiring shared-litellm — keep
+#     the two gateways orthogonal until then.
+#   - Zero project-side changes during Phase 1: callers continue hitting
+#     shared-litellm:4444. Only Phase 2 (LEGION_USE_BIFROST canary at 10%)
+#     starts sending real traffic at 4445.
+#
+# Bring up:
+#   docker compose -f docker-compose.vllm.yml -f docker-compose.bifrost.yml up -d bifrost
+# Bring down:
+#   docker compose -f docker-compose.bifrost.yml down
+#
+# Network: joins the existing `shared-infra_default` network created by
+# docker-compose.vllm.yml so it can reach `llama-cpp-chat:8000` and
+# `vllm-embed:8001` by service name. We use `external: true` because
+# docker-compose.vllm.yml owns the network's lifecycle.
+#
+# Image pin: v1.5.0 is the first stable (non-prerelease) tag. Verified on
+# Docker Hub 2026-05-10: linux/amd64 + linux/arm64 multi-arch manifest,
+# pushed 4 days ago. Do NOT float to :latest.
+
+services:
+  bifrost:
+    image: maximhq/bifrost:v1.5.0
+    container_name: shared-bifrost
+    networks:
+      - shared
+    ports:
+      # Host 4445 — parallel to shared-litellm (4444) so the two gateways
+      # can be A/B'd without env edits on the consumer side. Container
+      # listens on 8080 by default (Bifrost APP_PORT).
+      - "4445:8080"
+    environment:
+      APP_PORT: "8080"
+      APP_HOST: "0.0.0.0"
+      LOG_LEVEL: "info"
+      LOG_STYLE: "json"
+      # Cloud-provider API keys are passed through; Bifrost reads them
+      # from the env when a provider config sets `value: env.<NAME>`.
+      # 2026-06-11: moonshot (KIMI_API_KEY) removed — the only paid
+      # provider is gone; Kimi K2.6 now routes free via nvidia-nim.
+      # The active set is ALL-FREE: vllm-local + embed-local + nvidia-nim
+      # + openrouter + hf-router + cerebras + groq + mistral + gemini
+      # (flash-only) + zai. Parked recipes: bifrost/disabled-providers.json.
+      # When re-enabling one, re-add the matching env passthrough here AND
+      # restore the provider block to bifrost/config.json (Bifrost won't
+      # pick up new env vars without a container restart).
+      NV_API_KEY: ${NV_API_KEY:-}
+      # 2026-05-27: re-enabled OpenRouter + added NVIDIA NIM + HF Router provider
+      # blocks in config.json. See those provider entries for the model catalogues.
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      HF_TOKEN: ${HF_TOKEN:-}
+      # 2026-05-31: free-provider lanes. Cerebras keyed + active now;
+      # Gemini/Groq/Mistral passed through but their config.json blocks stay
+      # parked in disabled-providers.json until real keys are added (empty key
+      # would flood the model-discovery loop with validation warnings).
+      CEREBRAS_API_KEY: ${CEREBRAS_API_KEY:-}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      MISTRAL_API_KEY: ${MISTRAL_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      # 2026-06-11: Z.ai (Zhipu) — glm-4.7-flash perpetual free tier.
+      ZAI_API_KEY: ${ZAI_API_KEY:-}
+    volumes:
+      # Bifrost expects its config directory at /app/data — that's where
+      # config.json lives, plus any persistence (logs, governance state).
+      # Bind-mount the whole bifrost/ folder so config edits + restart
+      # are the only loop needed to roll changes.
+      - ./bifrost:/app/data
+    deploy:
+      resources:
+        limits:
+          # Plan-479 (2026-06-15): bumped 512M -> 1G. Pre-fix runtime was at
+          # 97% of 512M (496.9 MiB) — one allocation from OOMKill. Bifrost
+          # buffers in-flight requests + holds the SQLite logs.db handle +
+          # provider model caches; 512M was undersized for the 5-project
+          # traffic (ADA + Legion + Zero each backend + scheduler probing
+          # /v1/models every ~8s). The bifrost-metrics sidecar's stalled
+          # cursor (no new rows in 9000+ scrapes as of 2026-06-15 20:00) is
+          # consistent with logs.db write-buffer pressure under tight memory.
+          memory: 1G
+          cpus: "0.5"
+    restart: unless-stopped
+    healthcheck:
+      # Keep Docker health focused on gateway liveness. Bifrost's aggregate
+      # /v1/models route can block behind provider discovery while /health and
+      # inference remain available; ADA performs model-level checks separately.
+      test: ["CMD-SHELL", "wget -q -O /dev/null --tries=1 --timeout=5 http://localhost:8080/health || exit 1"]
+      interval: 60s
+      timeout: 30s
+      retries: 5
+      start_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
+
+  bifrost-metrics:
+    # Sidecar Prometheus exporter — bifrost v1.5.0's vendor image doesn't
+    # ship the upstream prometheus plugin ("plugin not found, skipping
+    # telemetry middleware" at startup). Rather than rebuild bifrost with
+    # the plugin, this sidecar tails the SQLite logs.db that Bifrost
+    # already writes and re-exports the same shape as the missing plugin.
+    # Adds: bifrost_requests_total, bifrost_request_latency_ms histogram,
+    # token / cost counters, and config gauges (active providers, vks).
+    # ada-prometheus and legion-prometheus both scrape this at :9100.
+    build:
+      context: ./bifrost-metrics-exporter
+      dockerfile: Dockerfile
+    image: shared-infra/bifrost-metrics-exporter:1.0
+    container_name: bifrost-metrics
+    depends_on:
+      - bifrost
+    networks:
+      - shared
+    ports:
+      # Host 9102 — zero-minio holds 9100, zero-minio-console holds 9101.
+      # Container listens on 9100; scrape config uses bifrost-metrics:9100
+      # inside the shared docker network.
+      - "9102:9100"
+    environment:
+      BIFROST_LOGS_DB: "/data/logs.db"
+      BIFROST_CONFIG_DB: "/data/config.db"
+      EXPORTER_STATE_DIR: "/state"
+      EXPORTER_INTERVAL_S: "15"
+      EXPORTER_PORT: "9100"
+    volumes:
+      # Read-only mount of the bifrost data directory so the exporter can
+      # query logs.db + config.db without holding write locks on bifrost.
+      - ./bifrost:/data:ro
+      - bifrost-metrics-state:/state
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          cpus: "0.10"
+    restart: unless-stopped
+    healthcheck:
+      # Use 127.0.0.1 not localhost: busybox wget resolves "localhost"
+      # to IPv6 ::1 but Python's HTTPServer binds IPv4 only.
+      test: ["CMD-SHELL", "wget -q -O /dev/null --tries=1 --timeout=3 http://127.0.0.1:9100/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
+
+networks:
+  shared:
+    name: shared-infra_default
+    external: true
+
+volumes:
+  bifrost-metrics-state:
+    name: shared-bifrost-metrics-state

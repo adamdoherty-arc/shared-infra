@@ -1,0 +1,11 @@
+# NSSM rotated logs — explosively numerous during a crash loop.
+# The current nssm-stdout.log / nssm-stderr.log files are kept (not patterned).
+nssm-stderr-*.log
+nssm-stdout-*.log
+
+# .env carries provider API keys
+.env
+!.env.example
+
+# Migration archives (bifrost migration 2026-05-14)
+.deleted-2026-05-14/

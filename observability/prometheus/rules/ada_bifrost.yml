@@ -1,0 +1,106 @@
+# Bifrost gateway alert rules — Feature-234 (2026-05-19).
+# Bifrost is the single LLM egress for the entire ADA stack: chat, embeddings,
+# and cloud fallback. Down or degraded = every agent affected. These rules
+# page on the four failure modes the Feature-233 dashboard surfaces.
+#
+# Severity levels:
+#   critical - Pages on-call immediately. Bifrost is mission-critical.
+#   warning  - Investigate within a couple of hours.
+#   info     - Trend awareness, no page.
+
+groups:
+  - name: ada_bifrost_alerts
+    interval: 30s
+    rules:
+      # ------------------------------------------------------------------
+      # Hard down: Prometheus can't scrape the gateway. Anything LLM-related
+      # is already failing. Page immediately.
+      # ------------------------------------------------------------------
+      - alert: BifrostGatewayDown
+        expr: up{job="bifrost"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          component: bifrost
+        annotations:
+          summary: "Bifrost gateway unreachable for >1m"
+          description: |
+            up{job="bifrost"} == 0 for 60s. Every agent that needs chat or
+            embeddings is now failing. Check `docker logs shared-bifrost`
+            and the shared-infra network attachment on ada-backend.
+          runbook_url: "https://internal/runbooks/bifrost-down"
+
+      # ------------------------------------------------------------------
+      # Scrape errors: the exporter ran but failed to read state. Indicates
+      # the gateway itself is up but the metrics path is unhealthy.
+      # ------------------------------------------------------------------
+      - alert: BifrostScrapeErrors
+        expr: sum(increase(bifrost_exporter_scrape_errors_total[5m])) > 0
+        for: 5m
+        labels:
+          severity: warning
+          component: bifrost
+        annotations:
+          summary: "Bifrost exporter scrape errors > 0 over 5m"
+          description: |
+            The Bifrost prom-exporter has logged scrape failures. Gateway
+            may still be serving traffic but the observability path is
+            degraded. Check `bifrost_exporter_last_scrape_unixtime` —
+            time since last successful scrape.
+
+      # ------------------------------------------------------------------
+      # Latency degradation: p99 above 30s sustained means agents are timing
+      # out before they can answer. Many internal callers use 30s timeouts.
+      # ------------------------------------------------------------------
+      - alert: BifrostP99LatencyHigh
+        expr: |
+          histogram_quantile(0.99,
+            sum by (le) (rate(bifrost_request_latency_ms_bucket[5m]))
+          ) > 30000
+        for: 5m
+        labels:
+          severity: warning
+          component: bifrost
+        annotations:
+          summary: "Bifrost p99 request latency > 30s sustained 5m"
+          description: |
+            Long-tail Bifrost latency exceeded 30 seconds. Most ADA callers
+            use 30s timeouts so this WILL cause request failures upstream.
+            Check provider health on the dashboard (latency-by-provider panel)
+            to localize.
+
+      # ------------------------------------------------------------------
+      # Cost spike: any non-trivial cost burn on cloud providers means we
+      # leaked traffic out of local Qwen. Almost always a misconfigured
+      # router fallback. Cheap to alert on; cheap to triage.
+      # ------------------------------------------------------------------
+      - alert: BifrostCloudSpend
+        expr: sum(increase(bifrost_cost_usd_total[1h])) > 1.0
+        for: 5m
+        labels:
+          severity: warning
+          component: bifrost
+        annotations:
+          summary: "Bifrost cloud spend > $1.00 in last 1h"
+          description: |
+            Cloud-LLM spend exceeded $1 in the last hour. Local Qwen is the
+            intended primary path — any cloud burn typically means router
+            fallback fired or a caller bypassed the gateway alias map.
+            Check the Bifrost dashboard cost panel for the offending model.
+
+      # ------------------------------------------------------------------
+      # Provider availability: at least one of vllm-local + embed-local must
+      # be active. If both go to zero, the stack can't serve chat OR embeds.
+      # ------------------------------------------------------------------
+      - alert: BifrostNoActiveProviders
+        expr: bifrost_active_providers < 2
+        for: 2m
+        labels:
+          severity: critical
+          component: bifrost
+        annotations:
+          summary: "Bifrost active provider count below expected"
+          description: |
+            bifrost_active_providers fell below 2 (vllm-local + embed-local
+            are the floor). Either vllm-chat or vllm-embed container is down,
+            or Bifrost can't reach them. Embeddings + chat partly broken.

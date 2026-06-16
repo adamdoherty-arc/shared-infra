@@ -1,0 +1,77 @@
+{
+  "title": "Qwen3.6 Migration — Health + Thor Performance",
+  "uid": "qwen36-migration",
+  "tags": ["legion", "migration", "qwen3.6"],
+  "schemaVersion": 36,
+  "version": 1,
+  "refresh": "30s",
+  "time": {"from": "now-6h", "to": "now"},
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "GPU VRAM Headroom (MiB)",
+      "description": "Free VRAM. Alert HeimdallVRAMTight fires when this drops below 500 for 5 min. Sprint 5336.",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+      "targets": [
+        {"expr": "legion_gpu_vram_free_mb", "legendFormat": "free_mb", "refId": "A"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "decmbytes", "thresholds": {"mode": "absolute", "steps": [
+        {"color": "red", "value": null},
+        {"color": "yellow", "value": 500},
+        {"color": "green", "value": 1500}
+      ]}}}
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "GPU VRAM Used (MiB)",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+      "targets": [
+        {"expr": "legion_gpu_vram_used_mb", "legendFormat": "used_mb", "refId": "A"},
+        {"expr": "legion_container_gpu_vram_mb", "legendFormat": "{{container}}", "refId": "B"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "decmbytes"}}
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Thor Sandbox Outcomes (1h)",
+      "description": "Sprint 5357 — sandbox outcome counter. Validator catch-rate = validation_failed / total_failed.",
+      "gridPos": {"h": 6, "w": 12, "x": 0, "y": 8},
+      "targets": [
+        {"expr": "sum by (outcome) (increase(legion_thor_outcome_total[1h]))", "legendFormat": "{{outcome}}", "refId": "A"}
+      ]
+    },
+    {
+      "id": 4,
+      "type": "piechart",
+      "title": "Thor Model Distribution (24h)",
+      "description": "Sprint 5339 — A/B local vs cloud. Use /api/thor/learning/by-model for full detail.",
+      "gridPos": {"h": 6, "w": 12, "x": 12, "y": 8},
+      "targets": [
+        {"expr": "sum by (model) (increase(legion_llm_requests_total{source=\"thor\"}[24h]))", "legendFormat": "{{model}}", "refId": "A"}
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Heimdall Qwen3.6 Findings (last 24h)",
+      "description": "Sprint 5266 ext — the 4 new catalog entries: vision_encoder_stall, endless_thinking, moe_expert_imbalance, kv_fp8_quality_drop.",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 14},
+      "targets": [
+        {"expr": "sum by (pattern_key) (increase(legion_heimdall_findings_total{pattern_key=~\"qwen36_.*|kv_cache_oom_imminent\"}[5m]))", "legendFormat": "{{pattern_key}}", "refId": "A"}
+      ]
+    },
+    {
+      "id": 6,
+      "type": "stat",
+      "title": "FreeLLM Chain Outcomes (1h)",
+      "description": "OpenRouter qwen3-coder:480b route via FreeLLMAPI. Watch for fallback_to_local spikes — they mean the chain isn't healthy.",
+      "gridPos": {"h": 6, "w": 12, "x": 12, "y": 14},
+      "targets": [
+        {"expr": "sum by (outcome) (increase(legion_llm_freellm_calls_total[1h]))", "legendFormat": "{{outcome}}", "refId": "A"}
+      ]
+    }
+  ]
+}

@@ -1,0 +1,152 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "gnetId": null,
+  "graphTooltip": 1,
+  "id": null,
+  "uid": "ada-web-vitals",
+  "title": "ADA Web Vitals & Page SLOs",
+  "tags": ["ada", "perf", "wave-3"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "route",
+        "label": "Route",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "Prometheus" },
+        "query": { "query": "label_values(ada_web_vital_seconds_bucket, route)" },
+        "multi": true,
+        "includeAll": true,
+        "current": { "selected": false, "text": "All", "value": "$__all" }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "row",
+      "title": "Core Web Vitals — p95 per route",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 }
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "LCP p95 (target: page-specific, default 1.5s)",
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 1 },
+      "fieldConfig": { "defaults": { "unit": "s" } },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (route, le) (rate(ada_web_vital_seconds_bucket{metric=\"LCP\", route=~\"$route\"}[5m])))",
+          "legendFormat": "{{route}}"
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "INP p95 (target: < 200ms)",
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 1 },
+      "fieldConfig": { "defaults": { "unit": "s" } },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (route, le) (rate(ada_web_vital_seconds_bucket{metric=\"INP\", route=~\"$route\"}[5m])))",
+          "legendFormat": "{{route}}"
+        }
+      ]
+    },
+    {
+      "id": 12,
+      "type": "timeseries",
+      "title": "TTFB p95 (target: < 500ms)",
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 9 },
+      "fieldConfig": { "defaults": { "unit": "s" } },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (route, le) (rate(ada_web_vital_seconds_bucket{metric=\"TTFB\", route=~\"$route\"}[5m])))",
+          "legendFormat": "{{route}}"
+        }
+      ]
+    },
+    {
+      "id": 13,
+      "type": "timeseries",
+      "title": "CLS p95 (target: < 0.1)",
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 9 },
+      "fieldConfig": { "defaults": { "unit": "short" } },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (route, le) (rate(ada_web_vital_seconds_bucket{metric=\"CLS\", route=~\"$route\"}[5m])))",
+          "legendFormat": "{{route}}"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "row",
+      "title": "Sample volume",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 17 }
+    },
+    {
+      "id": 20,
+      "type": "timeseries",
+      "title": "Samples / sec per metric",
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 18 },
+      "fieldConfig": { "defaults": { "unit": "ops" } },
+      "targets": [
+        {
+          "expr": "sum by (metric) (rate(ada_web_vital_seconds_count[5m]))",
+          "legendFormat": "{{metric}}"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "row",
+      "title": "Correlated saturation — Wave 6 Feature-334",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 26 }
+    },
+    {
+      "id": 30,
+      "type": "timeseries",
+      "title": "Saturation correlation: LCP p95 vs DB pool util vs scheduler RSS",
+      "description": "Overlays user-visible latency, backend pool pressure, and scheduler memory on one timeline. A regression in any line typically precedes a regression in the others.",
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 27 },
+      "fieldConfig": {
+        "defaults": { "unit": "short" },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "LCP p95 (s)" }, "properties": [{ "id": "unit", "value": "s" }, { "id": "color", "value": { "mode": "fixed", "fixedColor": "blue" } }] },
+          { "matcher": { "id": "byName", "options": "DB pool util (%)" }, "properties": [{ "id": "unit", "value": "percent" }, { "id": "color", "value": { "mode": "fixed", "fixedColor": "yellow" } }] },
+          { "matcher": { "id": "byName", "options": "ada-scheduler RSS (MB)" }, "properties": [{ "id": "unit", "value": "decmbytes" }, { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } }] }
+        ]
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(ada_web_vital_seconds_bucket{metric=\"LCP\"}[5m])))",
+          "legendFormat": "LCP p95 (s)"
+        },
+        {
+          "refId": "B",
+          "expr": "max(asyncpg_pool_used) / max(asyncpg_pool_max) * 100",
+          "legendFormat": "DB pool util (%)"
+        },
+        {
+          "refId": "C",
+          "expr": "container_memory_usage_bytes{name=\"ada-scheduler\"} / 1024 / 1024",
+          "legendFormat": "ada-scheduler RSS (MB)"
+        }
+      ]
+    }
+  ]
+}

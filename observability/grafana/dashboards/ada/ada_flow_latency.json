@@ -1,0 +1,88 @@
+{
+  "annotations": {"list": []},
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "type": "row",
+      "title": "Flow Latency (Sprint #3176 + Enhancement-58)",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 0},
+      "collapsed": false
+    },
+    {
+      "type": "timeseries",
+      "title": "p95 latency by flow",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 1},
+      "targets": [
+        {"expr": "histogram_quantile(0.95, sum by (le, flow) (rate(ada_flow_positions_sync_seconds_bucket[5m])))", "legendFormat": "positions_sync p95"},
+        {"expr": "histogram_quantile(0.95, sum by (le, flow) (rate(ada_flow_premium_income_scan_seconds_bucket[5m])))", "legendFormat": "premium_income_scan p95"},
+        {"expr": "histogram_quantile(0.95, sum by (le, flow) (rate(ada_flow_trade_plan_generation_seconds_bucket[5m])))", "legendFormat": "trade_plan_generation p95"},
+        {"expr": "histogram_quantile(0.95, sum by (le, flow) (rate(ada_flow_advisor_briefing_seconds_bucket[5m])))", "legendFormat": "advisor_briefing p95"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "s"}}
+    },
+    {
+      "type": "timeseries",
+      "title": "p50 latency by flow",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 1},
+      "targets": [
+        {"expr": "histogram_quantile(0.5, sum by (le, flow) (rate(ada_flow_positions_sync_seconds_bucket[5m])))", "legendFormat": "positions_sync p50"},
+        {"expr": "histogram_quantile(0.5, sum by (le, flow) (rate(ada_flow_premium_income_scan_seconds_bucket[5m])))", "legendFormat": "premium_income_scan p50"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "s"}}
+    },
+    {
+      "type": "stat",
+      "title": "Calls / 5m (positions_sync)",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 4, "w": 6, "x": 0, "y": 9},
+      "targets": [{"expr": "sum(increase(ada_flow_positions_sync_total[5m]))"}]
+    },
+    {
+      "type": "stat",
+      "title": "Error rate (all flows)",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 4, "w": 6, "x": 6, "y": 9},
+      "targets": [
+        {"expr": "sum by (flow) (rate(ada_flow_positions_sync_total{outcome=\"error\"}[5m])) / sum by (flow) (rate(ada_flow_positions_sync_total[5m]))"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "percentunit", "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": 0}, {"color": "amber", "value": 0.05}, {"color": "red", "value": 0.20}]}}}
+    },
+    {
+      "type": "stat",
+      "title": "LLM tokens today (Enhancement-37)",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 4, "w": 6, "x": 12, "y": 9},
+      "targets": [{"expr": "sum(ada_llm_tokens_today)"}]
+    },
+    {
+      "type": "stat",
+      "title": "Vault queue depth (Feature-63)",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 4, "w": 6, "x": 18, "y": 9},
+      "targets": [{"expr": "ada_sprint_vault_pending"}]
+    },
+    {
+      "type": "heatmap",
+      "title": "positions_sync latency heatmap (broker-aware)",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 13},
+      "targets": [{"expr": "sum by (le) (rate(ada_flow_positions_sync_seconds_bucket[5m]))", "format": "heatmap"}]
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": ["ada", "flows", "sprint-3176"],
+  "templating": {"list": []},
+  "time": {"from": "now-6h", "to": "now"},
+  "title": "ADA Flow Latency",
+  "uid": "ada-flow-latency",
+  "version": 1,
+  "weekStart": ""
+}
