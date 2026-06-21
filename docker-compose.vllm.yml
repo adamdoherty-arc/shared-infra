@@ -206,13 +206,24 @@ services:
   vllm-chat:
     environment:
       HF_TOKEN: ${HF_TOKEN}
-      # PARKED (inert on the current GPTQ/v0.22.1 build — vLLM ignores this unknown
-      # env var here). Kept for the next NVFP4 attempt: selects the FP4 GEMM backend
-      # on a vLLM build that actually quantizes the MoE experts. Valid values:
-      # marlin | flashinfer-cutlass | flashinfer-trtllm | cutlass | emulation.
-      # (2026-06-14: had no effect on cu130-nightly because that build loaded the
-      # experts UNQUANTIZED and OOM'd before any FP4 GEMM — see image comment below.)
+      # ACTIVE (2026-06-21 NVFP4 swap): selects the FP4 GEMM backend now that the
+      # model is RedHatAI/Qwen3.6-35B-A3B-NVFP4. marlin routes NVFP4 weights through
+      # the stable Marlin INT4 GEMM — CUTLASS NVFP4 MoE is broken on SM120 (TMA WS
+      # grouped-GEMM init failure). Valid: marlin | flashinfer-cutlass |
+      # flashinfer-trtllm | cutlass | emulation.
       VLLM_NVFP4_GEMM_BACKEND: ${VLLM_NVFP4_GEMM_BACKEND:-marlin}
+      # FlashInfer SM120 targeting (2026-06-21): pin FlashInfer to the RTX 5090's
+      # compute capability so its NVFP4/attention kernels JIT for sm_120 instead of
+      # erroring ("CUDA error: unknown error" in GDN prefill warmup) when CUDA graphs
+      # are enabled (no --enforce-eager).
+      FLASHINFER_CUDA_ARCH_LIST: "12.0f"
+      FLASHINFER_FORCE_SM: "120f"
+      # KV-OOM fix (2026-06-21): don't pre-reserve the conservative CUDA-graph
+      # memory ESTIMATE from the KV budget. Capture sizes are tiny ([1,2,4]) so
+      # actual graph memory is small, but the estimate over-reserved ~3-4GB and
+      # forced "Available KV cache memory" negative on this VRAM-tight shared card.
+      # With this off, KV allocates first and graphs capture from the slack.
+      VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS: "0"
     # v0.22.1 (2026-06-04): required for the Qwen3.5/3.6 hybrid family —
     # hybrid GDN+full-attention models became first-class in v0.21.0
     # (Model Runner V2, Hybrid Memory Allocator). v0.19.x has the KV
@@ -404,20 +415,30 @@ services:
     # name BELOW, also add it to every VK's vllm-local allowed_models. The
     # current allow-lists hold all four aliases, so reusing any of these names is
     # safe; a brand-new canonical name needs the VK update.
+    # NVFP4 SWAP (2026-06-21) — replaces the GPTQ-Int4 config above (kept as
+    # documented history). WHY: GPTQ-Int4 (22.74GB) left no VRAM for CUDA-graph
+    # capture -> forced --enforce-eager -> ~9 tok/s + engine wedges + 17min loads
+    # (RAM-swap) + autoheal flap. The 2026-06-11 NVFP4 attempt failed only because
+    # it KEPT --enforce-eager (the field recipes — patrickgawron, note.com 2026-06-06,
+    # same RTX5090+WSL2 — explicitly forbid it: ~5x slower). NVFP4 weights are ~17GB
+    # (5.7GB smaller) so CUDA graphs now fit. CUTLASS NVFP4 MoE is broken on SM120
+    # (TMA WS grouped-GEMM init), so VLLM_NVFP4_GEMM_BACKEND=marlin (env above) routes
+    # through Marlin INT4. --max-num-batched-tokens 8192 is REQUIRED for the Mamba/GDN
+    # hybrid with fp8 KV (recipe; <8192 -> Mamba assertion). FlashInfer SM120 env vars
+    # added to environment: above. REVERT: restore the GPTQ command block above +
+    # re-add --enforce-eager + set .env VLLM_MAX_MODEL_LEN=8192/GPU_MEM_UTIL=0.92/SEQS=6.
     command: >
-      --model palmfuture/Qwen3.6-35B-A3B-GPTQ-Int4
+      --model RedHatAI/Qwen3.6-35B-A3B-NVFP4
       --served-model-name Qwen3.5-35B-A3B Qwen3.6-35B-A3B qwen3-chat Qwen3-32B-AWQ
       --port 8000
       --host 0.0.0.0
-      --quantization gptq_marlin
       --dtype bfloat16
-      --max-model-len ${VLLM_MAX_MODEL_LEN:-65536}
-      --gpu-memory-utilization ${VLLM_GPU_MEM_UTIL:-0.88}
-      --max-num-seqs ${VLLM_MAX_NUM_SEQS:-3}
+      --max-model-len ${VLLM_MAX_MODEL_LEN:-16384}
+      --gpu-memory-utilization ${VLLM_GPU_MEM_UTIL:-0.92}
+      --max-num-seqs ${VLLM_MAX_NUM_SEQS:-2}
       --max-num-batched-tokens 2304
       --limit-mm-per-prompt '{"image":0,"video":0}'
       --kv-cache-dtype fp8
-      --enforce-eager
       --enable-prefix-caching
       --enable-chunked-prefill
       --default-chat-template-kwargs '{"enable_thinking": false}'

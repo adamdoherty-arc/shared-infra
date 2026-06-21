@@ -77,8 +77,6 @@
           "name": "nvidia-nim-primary",
           "value": "env.NV_API_KEY",
           "models": [
-            "deepseek-ai/deepseek-v4-pro",
-            "deepseek-ai/deepseek-v4-flash",
             "z-ai/glm-5.1",
             "moonshotai/kimi-k2.6",
             "minimaxai/minimax-m2.7",
@@ -124,8 +122,6 @@
           ],
           "weight": 1.0,
           "aliases": {
-            "deepseek-v4-pro": "deepseek-ai/deepseek-v4-pro",
-            "deepseek-v4-flash": "deepseek-ai/deepseek-v4-flash",
             "glm-5.1": "z-ai/glm-5.1",
             "kimi-k2.6": "moonshotai/kimi-k2.6",
             "kimi-nim": "moonshotai/kimi-k2.6",
@@ -144,7 +140,7 @@
       ],
       "network_config": {
         "base_url": "https://integrate.api.nvidia.com",
-        "default_request_timeout_in_seconds": 600,
+        "default_request_timeout_in_seconds": 120,
         "max_retries": 2
       },
       "custom_provider_config": {
@@ -198,7 +194,7 @@
       ],
       "network_config": {
         "base_url": "https://openrouter.ai/api",
-        "default_request_timeout_in_seconds": 600,
+        "default_request_timeout_in_seconds": 120,
         "max_retries": 2
       },
       "custom_provider_config": {
@@ -220,8 +216,6 @@
           "name": "hf-router-primary",
           "value": "env.HF_TOKEN",
           "models": [
-            "deepseek-ai/DeepSeek-V4-Pro",
-            "deepseek-ai/DeepSeek-V4-Flash",
             "moonshotai/Kimi-K2.6",
             "MiniMaxAI/MiniMax-M2.7",
             "Qwen/Qwen3.6-35B-A3B",
@@ -235,8 +229,6 @@
           ],
           "weight": 1.0,
           "aliases": {
-            "deepseek-v4-pro-hf": "deepseek-ai/DeepSeek-V4-Pro",
-            "deepseek-v4-flash-hf": "deepseek-ai/DeepSeek-V4-Flash",
             "kimi-k2.6-hf": "moonshotai/Kimi-K2.6",
             "minimax-m2.7-hf": "MiniMaxAI/MiniMax-M2.7",
             "qwen3-coder-hf": "Qwen/Qwen3-Coder-Next",
@@ -247,7 +239,7 @@
       ],
       "network_config": {
         "base_url": "https://router.huggingface.co",
-        "default_request_timeout_in_seconds": 600,
+        "default_request_timeout_in_seconds": 120,
         "max_retries": 2
       },
       "custom_provider_config": {
@@ -277,7 +269,7 @@
       ],
       "network_config": {
         "base_url": "https://api.cerebras.ai",
-        "default_request_timeout_in_seconds": 600,
+        "default_request_timeout_in_seconds": 120,
         "max_retries": 2
       },
       "custom_provider_config": {
@@ -310,7 +302,7 @@
       ],
       "network_config": {
         "base_url": "https://api.groq.com/openai",
-        "default_request_timeout_in_seconds": 600,
+        "default_request_timeout_in_seconds": 120,
         "max_retries": 2
       },
       "custom_provider_config": {
@@ -344,7 +336,7 @@
       ],
       "network_config": {
         "base_url": "https://api.mistral.ai",
-        "default_request_timeout_in_seconds": 600,
+        "default_request_timeout_in_seconds": 120,
         "max_retries": 2
       },
       "custom_provider_config": {
@@ -379,7 +371,7 @@
         }
       ],
       "network_config": {
-        "default_request_timeout_in_seconds": 600,
+        "default_request_timeout_in_seconds": 120,
         "max_retries": 2
       },
       "concurrency_and_buffer_size": {
@@ -388,7 +380,7 @@
       }
     },
     "moonshot": {
-      "_comment": "COMPAT SHIM (2026-06-11): provider name kept for the many legacy `moonshot/kimi-*` callers across ADA/Legion/Zero (code + DB rows), but the upstream is NVIDIA NIM's FREE Kimi K2.6 serving \u00e2\u20ac\u201d the paid api.moonshot.ai account was retired. Aliases fold every legacy Kimi variant into moonshotai/kimi-k2.6 (NIM's model id). Remove this block once all projects emit nvidia-nim/moonshotai/kimi-k2.6 natively.",
+      "_comment": "COMPAT SHIM (2026-06-11): provider name kept for the many legacy `moonshot/kimi-*` callers across ADA/Legion/Zero (code + DB rows), but the upstream is NVIDIA NIM's FREE Kimi K2.6 serving â€” the paid api.moonshot.ai account was retired. Aliases fold every legacy Kimi variant into moonshotai/kimi-k2.6 (NIM's model id). Remove this block once all projects emit nvidia-nim/moonshotai/kimi-k2.6 natively.",
       "keys": [
         {
           "name": "moonshot-compat-nim",
@@ -410,7 +402,7 @@
       ],
       "network_config": {
         "base_url": "https://integrate.api.nvidia.com",
-        "default_request_timeout_in_seconds": 600,
+        "default_request_timeout_in_seconds": 120,
         "max_retries": 2
       },
       "custom_provider_config": {
@@ -439,7 +431,7 @@
       ],
       "network_config": {
         "base_url": "https://api.z.ai",
-        "default_request_timeout_in_seconds": 600,
+        "default_request_timeout_in_seconds": 120,
         "max_retries": 2
       },
       "custom_provider_config": {

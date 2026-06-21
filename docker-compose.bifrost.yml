@@ -134,6 +134,14 @@ services:
       EXPORTER_STATE_DIR: "/state"
       EXPORTER_INTERVAL_S: "15"
       EXPORTER_PORT: "9100"
+      # Active lane prober (2026-06-20): actively pings each provider/model
+      # lane through the gateway and emits bifrost_lane_up so a silently-dead
+      # lane (expired key, wedged pool, delisted model) becomes alertable.
+      # Reaches bifrost by service name; VK auto-read from config.db (no secret
+      # here). Set BIFROST_LANE_PROBE_ENABLED=0 to disable.
+      BIFROST_LANE_PROBE_ENABLED: "1"
+      BIFROST_PROBE_BASE: "http://shared-bifrost:8080"
+      BIFROST_PROBE_TIMEOUT_S: "15"
     volumes:
       # Read-only mount of the bifrost data directory so the exporter can
       # query logs.db + config.db without holding write locks on bifrost.

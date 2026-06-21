@@ -27,10 +27,13 @@ Counters are reset every process restart (Prometheus tolerates this via
 """
 from __future__ import annotations
 
+import json
 import os
 import sqlite3
 import threading
 import time
+import urllib.error
+import urllib.request
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
@@ -49,6 +52,45 @@ STATE_DIR = Path(os.getenv("EXPORTER_STATE_DIR", "/state"))
 CURSOR_FILE = STATE_DIR / "cursor.txt"
 SCRAPE_INTERVAL_S = int(os.getenv("EXPORTER_INTERVAL_S", "15"))
 PORT = int(os.getenv("EXPORTER_PORT", "9100"))
+
+# ---- Active lane prober ---------------------------------------------------
+# The metrics above are PASSIVE — they only reflect requests that organically
+# flow through logs.db. A lane that dies but is rarely called (a fallback, a
+# parked provider, an expired key) goes silently down until something happens
+# to try it. That exact gap let nvidia-nim wedge and the Gemini key expire
+# unnoticed for days (2026-06). This prober ACTIVELY pings each lane on a
+# cadence and emits bifrost_lane_up so death is visible + alertable.
+#
+# Probes go through the gateway itself (provider/model routing == what callers
+# see), authenticated with an active virtual key read from config.db (no
+# secret duplicated into env). Per-lane period throttles free-tier quota:
+# critical primaries every 10m (generous quotas), fallbacks hourly.
+PROBE_ENABLED = os.getenv("BIFROST_LANE_PROBE_ENABLED", "1") == "1"
+PROBE_BASE = os.getenv("BIFROST_PROBE_BASE", "http://shared-bifrost:8080").rstrip("/")
+PROBE_TIMEOUT_S = int(os.getenv("BIFROST_PROBE_TIMEOUT_S", "15"))
+PROBE_TICK_S = int(os.getenv("BIFROST_PROBE_TICK_S", "60"))
+PROBE_VK_ENV = os.getenv("BIFROST_PROBE_VK", "")  # optional override; else read config.db
+
+# (provider/model, kind, tier, period_seconds). tier drives alerting:
+# "critical" lanes page; "fallback" lanes are gauge-only awareness. z.ai is
+# intentionally omitted — it hangs through the gateway (known integration
+# defect) and would stall the probe tick; it's in no active project chain.
+PROBE_LANES = [
+    # --- critical: local + each project's cloud primary (10m) ---
+    ("vllm-local/qwen3-chat", "chat", "critical", 300),
+    ("embed-local/Qwen/Qwen3-Embedding-0.6B", "embed", "critical", 300),
+    ("nvidia-nim/moonshotai/kimi-k2.6", "chat", "critical", 300),   # ADA primary
+    ("nvidia-nim/z-ai/glm-5.1", "chat", "critical", 300),           # Legion reasoning
+    ("groq/openai/gpt-oss-120b", "chat", "critical", 300),          # Zero primary
+    ("moonshot/kimi-k2.6", "chat", "critical", 300),                # compat shim (many callers)
+    # --- fallback: deep lanes + parked/dead, awareness only (1h) ---
+    ("nvidia-nim/qwen/qwen3.5-122b-a10b", "chat", "fallback", 3600, 45),  # 122B: 12-17s, needs longer probe timeout
+    ("cerebras/gpt-oss-120b", "chat", "fallback", 3600),
+    ("mistral/mistral-large-latest", "chat", "fallback", 3600),
+    ("hf-router/moonshotai/Kimi-K2.6", "chat", "fallback", 3600),
+    ("openrouter/openrouter/free", "chat", "fallback", 3600),
+    ("gemini/gemini-3.5-flash", "chat", "fallback", 3600),          # dead key — stays visibly down until rotated
+]
 
 # Histogram buckets in milliseconds — chosen to cover the realistic Bifrost
 # range: ~30 ms for local embed, ~300 ms for vllm-local chat, ~1-3 s for
@@ -104,6 +146,26 @@ exporter_scrape_errors_total = Counter(
     "bifrost_exporter_scrape_errors_total",
     "Total scrape errors hit by the exporter.",
     ["table"],
+)
+
+# ---- Active lane-probe metrics --------------------------------------------
+lane_up = Gauge(
+    "bifrost_lane_up",
+    "1 if the last active probe of this provider/model lane succeeded, else 0.",
+    ["provider", "model", "tier", "kind"],
+)
+lane_probe_latency_ms = Gauge(
+    "bifrost_lane_probe_latency_ms",
+    "Latency of the last active lane probe in milliseconds.",
+    ["provider", "model"],
+)
+lane_probe_last_seconds = Gauge(
+    "bifrost_lane_probe_last_unixtime",
+    "Unix time of the last active probe pass (any lane).",
+)
+lane_probe_enabled = Gauge(
+    "bifrost_lane_probe_enabled",
+    "1 if the active lane prober is running (probe VK resolved), else 0.",
 )
 
 
@@ -279,12 +341,99 @@ class MetricsHandler(BaseHTTPRequestHandler):
         return
 
 
+def _resolve_probe_vk() -> str:
+    """Resolve a virtual-key bearer for probing: explicit env override, else
+    the first active VK's value from config.db. Returns "" if none found."""
+    if PROBE_VK_ENV:
+        return PROBE_VK_ENV
+    if not CONFIG_DB.exists():
+        return ""
+    try:
+        conn = sqlite3.connect(f"file:{CONFIG_DB}?mode=ro", uri=True, timeout=5.0)
+        try:
+            row = conn.execute(
+                "SELECT value FROM governance_virtual_keys "
+                "WHERE is_active=1 AND value LIKE 'sk-bf-%' ORDER BY name LIMIT 1"
+            ).fetchone()
+            return row[0] if row and row[0] else ""
+        finally:
+            conn.close()
+    except Exception:
+        return ""
+
+
+def _probe_lane(model: str, kind: str, vk: str, timeout: int) -> tuple[bool, float]:
+    """Send one tiny request for `model` through the gateway. Returns (ok, latency_ms)."""
+    if kind == "embed":
+        url = f"{PROBE_BASE}/v1/embeddings"
+        payload = {"model": model, "input": "ping"}
+    else:
+        url = f"{PROBE_BASE}/v1/chat/completions"
+        payload = {
+            "model": model,
+            "messages": [{"role": "user", "content": "ping"}],
+            "max_tokens": 4,
+            "temperature": 1.0,
+        }
+    req = urllib.request.Request(
+        url, data=json.dumps(payload).encode(),
+        headers={"Content-Type": "application/json", "Authorization": f"Bearer {vk}"},
+    )
+    t0 = time.time()
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            data = json.loads(r.read())
+        ms = (time.time() - t0) * 1000.0
+        ok = bool(data.get("data") if kind == "embed" else data.get("choices"))
+        return ok, ms
+    except Exception:
+        return False, (time.time() - t0) * 1000.0
+
+
+def _probe_loop() -> None:
+    """Probe each lane on its own period; emit bifrost_lane_up + latency.
+
+    One daemon thread woken every PROBE_TICK_S; each lane is probed only when
+    its period has elapsed (free-tier-friendly). A failed probe sets up=0 so a
+    silently-dead lane becomes visible to Prometheus within its period.
+    """
+    if not PROBE_ENABLED:
+        lane_probe_enabled.set(0)
+        print("lane-prober disabled (BIFROST_LANE_PROBE_ENABLED=0)", flush=True)
+        return
+    last_probe: dict[str, float] = {}
+    while True:
+        vk = _resolve_probe_vk()
+        lane_probe_enabled.set(1 if vk else 0)
+        if not vk:
+            print("lane-prober: no active VK resolved yet; retrying", flush=True)
+            time.sleep(PROBE_TICK_S)
+            continue
+        now = time.time()
+        for lane in PROBE_LANES:
+            model, kind, tier, period = lane[0], lane[1], lane[2], lane[3]
+            timeout = lane[4] if len(lane) > 4 else PROBE_TIMEOUT_S
+            if now - last_probe.get(model, 0.0) < period:
+                continue
+            provider, _, bare = model.partition("/")
+            ok, ms = _probe_lane(model, kind, vk, timeout)
+            lane_up.labels(provider, bare, tier, kind).set(1 if ok else 0)
+            lane_probe_latency_ms.labels(provider, bare).set(round(ms, 1))
+            last_probe[model] = now
+            if not ok:
+                print(f"lane-prober: DOWN {model} ({tier}) after {ms:.0f}ms", flush=True)
+        lane_probe_last_seconds.set(time.time())
+        time.sleep(PROBE_TICK_S)
+
+
 def main() -> None:
     threading.Thread(target=_scrape_loop, name="scrape-loop", daemon=True).start()
+    threading.Thread(target=_probe_loop, name="lane-prober", daemon=True).start()
     server = HTTPServer(("0.0.0.0", PORT), MetricsHandler)
     print(
         f"bifrost-metrics-exporter listening on :{PORT} "
-        f"(logs_db={LOGS_DB}, config_db={CONFIG_DB}, interval={SCRAPE_INTERVAL_S}s)",
+        f"(logs_db={LOGS_DB}, config_db={CONFIG_DB}, interval={SCRAPE_INTERVAL_S}s, "
+        f"lane_probe={'on' if PROBE_ENABLED else 'off'} base={PROBE_BASE})",
         flush=True,
     )
     server.serve_forever()

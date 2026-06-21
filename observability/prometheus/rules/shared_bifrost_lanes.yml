@@ -1,0 +1,63 @@
+# Active lane-health alerts — shared-infra (2026-06-20).
+#
+# The bifrost-metrics exporter actively probes each provider/model lane through
+# the gateway and emits bifrost_lane_up{provider,model,tier,kind}. These rules
+# turn a SILENT lane death into a signal. Motivation: in June 2026 the
+# nvidia-nim provider pool wedged (600s timeout let hung DeepSeek-V4 requests
+# hold slots) and the Gemini key expired — both went undetected for days
+# because the passive metrics only ever saw lanes that were actively called.
+#
+# tier label drives severity:
+#   critical = local model or a per-project cloud PRIMARY -> page (10m)
+#   fallback = deep redundancy / parked lanes -> warn only (1h)
+groups:
+  - name: shared_bifrost_lanes
+    interval: 30s
+    rules:
+      - alert: BifrostCriticalLaneDown
+        expr: bifrost_lane_up{tier="critical"} == 0
+        for: 10m
+        labels:
+          severity: critical
+          component: bifrost
+          ecosystem_project: shared
+        annotations:
+          summary: "Bifrost critical lane {{ $labels.provider }}/{{ $labels.model }} down >10m"
+          description: |
+            Active probe of {{ $labels.provider }}/{{ $labels.model }} (kind={{ $labels.kind }})
+            has failed for 10m. This is the local model or a per-project PRIMARY cloud lane —
+            callers are degraded to fallbacks or failing. Triage:
+              docker logs bifrost-metrics              # probe error
+              python C:/code/shared-infra/bifrost/smoke_all_lanes.py   # full lane map
+            If a provider pool is wedged, restart shared-bifrost (clears pools).
+          runbook_url: "https://internal/runbooks/bifrost-lane-down"
+
+      - alert: BifrostFallbackLaneDown
+        expr: bifrost_lane_up{tier="fallback"} == 0
+        for: 1h
+        labels:
+          severity: warning
+          component: bifrost
+          ecosystem_project: shared
+        annotations:
+          summary: "Bifrost fallback lane {{ $labels.provider }}/{{ $labels.model }} down >1h"
+          description: |
+            Active probe of fallback lane {{ $labels.provider }}/{{ $labels.model }} has failed
+            for 1h. Deep redundancy is reduced (not a user-facing outage). Common causes: expired
+            free-tier key, provider delisted the model, or sustained 429.
+            NOTE: gemini/gemini-3.5-flash will stay down until GEMINI_API_KEY is rotated
+            (interactive Google AI Studio login — operator action).
+
+      - alert: BifrostLaneProberStalled
+        expr: bifrost_lane_probe_enabled == 0 or (time() - bifrost_lane_probe_last_unixtime) > 1800
+        for: 10m
+        labels:
+          severity: warning
+          component: bifrost
+          ecosystem_project: shared
+        annotations:
+          summary: "Bifrost active lane prober disabled or stalled"
+          description: |
+            The active lane prober is disabled (no VK resolved from config.db) or hasn't completed
+            a pass in 30m. Lane-down detection is blind until it recovers. Check
+            `docker logs bifrost-metrics`.
