@@ -79,10 +79,10 @@ PROBE_LANES = [
     # --- critical: local + each project's cloud primary (10m) ---
     ("vllm-local/qwen3-chat", "chat", "critical", 300),
     ("embed-local/Qwen/Qwen3-Embedding-0.6B", "embed", "critical", 300),
-    ("nvidia-nim/moonshotai/kimi-k2.6", "chat", "critical", 300),   # ADA primary
-    ("nvidia-nim/z-ai/glm-5.1", "chat", "critical", 300),           # Legion reasoning
-    ("groq/openai/gpt-oss-120b", "chat", "critical", 300),          # Zero primary
-    ("moonshot/kimi-k2.6", "chat", "critical", 300),                # compat shim (many callers)
+    ("nvidia-nim/moonshotai/kimi-k2.6", "chat", "critical", 300, 40),  # ADA primary (NIM cold-start can hit 25s)
+    ("nvidia-nim/z-ai/glm-5.1", "chat", "critical", 300, 40),          # Legion reasoning (NIM cold-start can hit 25s)
+    ("groq/openai/gpt-oss-120b", "chat", "critical", 300),            # Zero primary (fast)
+    ("moonshot/kimi-k2.6", "chat", "critical", 300, 40),              # compat shim -> NIM (cold-start can hit 25s)
     # --- fallback: deep lanes + parked/dead, awareness only (1h) ---
     ("nvidia-nim/qwen/qwen3.5-122b-a10b", "chat", "fallback", 3600, 45),  # 122B: 12-17s, needs longer probe timeout
     ("cerebras/gpt-oss-120b", "chat", "fallback", 3600),
