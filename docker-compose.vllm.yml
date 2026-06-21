@@ -515,14 +515,19 @@ services:
           curl -sf -X POST http://localhost:8000/v1/chat/completions
           -H 'Content-Type: application/json'
           -d '{"model":"qwen3-chat","messages":[{"role":"user","content":"hi"}],"max_tokens":1}'
-          --max-time 110 > /dev/null
-      interval: 60s
-      timeout: 120s
-      retries: 5
-      # First start: ~17-19 GB AWQ weights + Marlin kernel JIT compile +
-      # warmup-ping above. First boot of Qwen3.6-35B-A3B downloads from HF
-      # (no shared-hf-cache hit yet) → 15-25 min on first run. Cached
-      # restarts ~3-5 min. Bumped to 1800s to cover first-boot pull.
+          --max-time 30 > /dev/null
+      # Faster wedge detection (2026-06-21): the generation ping above catches the
+      # WSL2+Blackwell engine wedge (healthy /health but 0 tok/s generation).
+      # Tightened from 60s/120s/5 + 110s-ping (~7 min to detect) to ~2 min so
+      # vllm-autoheal restarts a wedged engine quickly. A healthy NVFP4 max_tokens=1
+      # reply is <2s; 30s covers queue under load, so only a true wedge (hangs
+      # indefinitely) trips 3 consecutive failures.
+      interval: 30s
+      timeout: 35s
+      retries: 3
+      # First start: ~21 GB NVFP4 weights + CUDA-graph capture + the warmup-ping
+      # above. Cached reload is ~13 min here (RAM-swap during load); first-ever HF
+      # pull is 15-25 min. start_period covers both so load never counts unhealthy.
       start_period: 1800s
     logging:
       driver: json-file

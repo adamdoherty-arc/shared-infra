@@ -1,0 +1,50 @@
+# ADA host-Postgres connection-saturation alerts (2026-06-21).
+#
+# Why this exists: on 2026-06-21 ADA went "unavailable" because host Postgres hit
+# 200/200 connections (asyncpg TooManyConnectionsError). It was downstream of a
+# local-LLM wedge (requests piled up holding DB connections), but ADA's pools
+# (backend DB_POOL_MAX 75 + LANGGRAPH 15 + LangGraph checkpointer + scheduler 46
+# + arq) can collectively approach the cap under load. The exhaustion was SILENT
+# until the outage. These rules catch it early. Metrics come from
+# ada-postgres-exporter (job: ada-postgres-exporter).
+groups:
+  - name: ada_postgres_connections
+    interval: 30s
+    rules:
+      - alert: AdaPostgresConnectionsHigh
+        expr: |
+          (sum by (server) (pg_stat_activity_count))
+          / (max by (server) (pg_settings_max_connections)) > 0.85
+        for: 2m
+        labels:
+          severity: warning
+          component: postgres
+          ecosystem_project: ada
+        annotations:
+          summary: "Host Postgres >85% of max_connections ({{ $labels.server }})"
+          description: |
+            Postgres connection usage on {{ $labels.server }} has exceeded 85% of
+            max_connections for 2m. At 100% ADA goes "unavailable" (asyncpg
+            TooManyConnectionsError). Triage: check connection holders via the
+            exporter — `pg_stat_activity_count` by application_name. Likely cause is
+            a request pile-up (e.g. a slow/wedged LLM lane — see bifrost_lane_up) or
+            an ADA pool growing past its budget. Clearing the trigger or restarting
+            ada-backend releases the pool.
+          runbook_url: "https://internal/runbooks/ada-postgres-exhaustion"
+
+      - alert: AdaPostgresConnectionsCritical
+        expr: |
+          (sum by (server) (pg_stat_activity_count))
+          / (max by (server) (pg_settings_max_connections)) > 0.95
+        for: 1m
+        labels:
+          severity: critical
+          component: postgres
+          ecosystem_project: ada
+        annotations:
+          summary: "Host Postgres >95% of max_connections ({{ $labels.server }}) — ADA outage imminent"
+          description: |
+            Postgres is within 5% of max_connections. ADA will start failing DB
+            queries (TooManyConnectionsError) and report degraded/unavailable.
+            Restart ada-backend to release its pool, and check for a wedged LLM lane
+            (bifrost_lane_up) driving a request pile-up.
