@@ -727,6 +727,32 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
     network_mode: none
 
+  # vLLM wedge monitor (2026-06-24) - restores the 0-tok/s wedge detection the cheap
+  # /health healthcheck traded away, WITHOUT the false-positive restart storm. Reads
+  # vLLM /metrics and restarts vllm-chat ONLY when requests are running but neither
+  # generation_tokens_total NOR prompt_tokens_total advances for ~2 min (load-immune:
+  # a busy/prefilling engine always advances one of them; an idle engine has 0 running).
+  # Stdlib-only script -> stock python:slim image, no pip install. See
+  # vllm_wedge_monitor.py for the full rationale. NOT labeled autoheal (no healthcheck;
+  # must not restart itself).
+  vllm-wedge-monitor:
+    image: python:3.12-slim
+    container_name: vllm-wedge-monitor
+    restart: unless-stopped
+    command: ["python", "-u", "/monitor.py"]
+    environment:
+      VLLM_METRICS_URL: http://host.docker.internal:18801/metrics
+      VLLM_TARGET_CONTAINER: vllm-chat
+      POLL_INTERVAL_S: "30"
+      WEDGE_SAMPLES: "4"
+      STARTUP_GRACE_S: "120"
+      RESTART_COOLDOWN_S: "1800"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./vllm_wedge_monitor.py:/monitor.py:ro
+
 volumes:
   hf-cache:
     name: shared-hf-cache
