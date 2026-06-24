@@ -224,6 +224,14 @@ services:
       # forced "Available KV cache memory" negative on this VRAM-tight shared card.
       # With this off, KV allocates first and graphs capture from the slack.
       VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS: "0"
+      # Wedge experiment (2026-06-21, diagnostic-first): persist Triton's JIT
+      # kernel cache on the hf-cache volume so a cold-compiled GDN/Mamba kernel
+      # survives container restarts — after the first compile, later restarts hit
+      # cache instead of recompiling under live traffic (a #43009 contributor).
+      # Pairs with --compilation-config cudagraph_capture_sizes below. Reversible:
+      # remove this line (cache is just rebuilt). VLLM_DISABLE_COMPILE_CACHE is
+      # intentionally left UNSET so vLLM's own compile cache also persists.
+      TRITON_CACHE_DIR: "/root/.cache/huggingface/.triton"
     # v0.22.1 (2026-06-04): required for the Qwen3.5/3.6 hybrid family —
     # hybrid GDN+full-attention models became first-class in v0.21.0
     # (Model Runner V2, Hybrid Memory Allocator). v0.19.x has the KV
@@ -442,6 +450,7 @@ services:
       --enable-prefix-caching
       --enable-chunked-prefill
       --default-chat-template-kwargs '{"enable_thinking": false}'
+      --compilation-config '{"cudagraph_capture_sizes":[1,2],"cudagraph_num_of_warmups":3}'
       ${VLLM_TOOL_CALL_FLAGS:- }
     ports:
       - "18801:8000"
@@ -501,33 +510,33 @@ services:
     # (bounded) and shows Exited to ops. This is the anti-churn intent preserved
     # with a realistic recovery window for the common transient case.
     restart: "on-failure:10"
-    # Fix-245 (2026-05-20): healthcheck does a /v1/chat/completions ping
-    # alongside /health so the FlashInfer attention kernel JIT-compile path
-    # (which fires on the first real chat request) is warm by the time the
-    # container is marked "healthy". Without this, the first ada-backend
-    # call after restart hits a broken-pipe because Bifrost's client timeout
-    # is shorter than the JIT compile time.
+    # 2026-06-24 (daily-review root-fix): generation-ping healthcheck REMOVED.
+    # History: Fix-245 (2026-05-20) added a /v1/chat/completions ping alongside
+    # /health to detect a 0-tok/s engine wedge (/health 200 but stuck, observed
+    # ONCE 2026-06-12) and warm the FlashInfer JIT path. But a generation-latency
+    # probe CANNOT distinguish "busy under concurrent ADA/Legion/Zero load on a
+    # 97%-full 5090" from "wedged" — any finite timeout false-positives when a real
+    # decode queues ahead of it. BOTH the 2026-06-21 tighten (~2 min) AND the
+    # 2026-06-23 loosen (~3.7 min: 60s ping/65s/x5) STILL stormed: on 2026-06-24 the
+    # autoheal log showed vllm-chat restarted ~17x in 3h (13:18->15:59), each a
+    # ~13-min NVFP4 reload — i.e. the brain loses its reasoning backend for hours/day
+    # and ADA/Legion/Zero see ":18801 flapping". Net: the ping caused FAR more outage
+    # than the single wedge it ever caught.
+    #   Fix: use vLLM's cheap /health for the container healthcheck (load-immune;
+    #   returns non-200 when the AsyncLLMEngine background loop actually dies, which
+    #   is the crash case autoheal must restart). Mirrors llama-cpp-chat above.
+    #   Tradeoff: the rare 0-tok/s-with-200 wedge is no longer auto-restarted by
+    #   autoheal. FOLLOW-UP if it recurs: a /metrics-based monitor that flags
+    #   vllm:num_requests_running>0 while vllm:generation_tokens_total is flat across
+    #   samples (load-immune, unlike a generation ping). JIT warm: first post-restart
+    #   chat may be slightly slow, but restarts are now rare and Bifrost retries.
     healthcheck:
-      test:
-        - "CMD-SHELL"
-        - >
-          curl -sf http://localhost:8000/health > /dev/null &&
-          curl -sf -X POST http://localhost:8000/v1/chat/completions
-          -H 'Content-Type: application/json'
-          -d '{"model":"qwen3-chat","messages":[{"role":"user","content":"hi"}],"max_tokens":1}'
-          --max-time 30 > /dev/null
-      # Faster wedge detection (2026-06-21): the generation ping above catches the
-      # WSL2+Blackwell engine wedge (healthy /health but 0 tok/s generation).
-      # Tightened from 60s/120s/5 + 110s-ping (~7 min to detect) to ~2 min so
-      # vllm-autoheal restarts a wedged engine quickly. A healthy NVFP4 max_tokens=1
-      # reply is <2s; 30s covers queue under load, so only a true wedge (hangs
-      # indefinitely) trips 3 consecutive failures.
+      test: ["CMD", "curl", "-sf", "http://localhost:8000/health"]
       interval: 30s
-      timeout: 35s
-      retries: 3
-      # First start: ~21 GB NVFP4 weights + CUDA-graph capture + the warmup-ping
-      # above. Cached reload is ~13 min here (RAM-swap during load); first-ever HF
-      # pull is 15-25 min. start_period covers both so load never counts unhealthy.
+      timeout: 10s
+      retries: 5
+      # ~21 GB NVFP4 weights + CUDA-graph capture; cached reload ~13 min; first-ever
+      # HF pull 15-25 min. start_period covers load so it never counts unhealthy.
       start_period: 1800s
     logging:
       driver: json-file
