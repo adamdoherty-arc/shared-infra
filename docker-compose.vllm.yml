@@ -134,6 +134,36 @@ services:
     #                       prompt at 256 tokens delta from last cache hit.
     #   --no-mmap      — keep (Windows 9p bind-mount mmap thrashes; see
     #                    2026-05-17 load-time history above).
+    # QWABLE-27B WEDGE TRIAL (2026-06-24, supervise) — completed + rolled back.
+    # Test: ran Mia-AiLab/Qwable-3.6-27b (Q4_K_M GGUF, 15.4 GiB, qwen35 hybrid
+    # arch — same family as the abliterated 35B but 27B dense fine-tuned for
+    # Fable-5-style reasoning) on this llama-cpp-chat container at --parallel 2
+    # --ctx-size 16384 while vllm-chat was stopped to free GPU.
+    # Results:
+    #   GPU: 25 / 32 GiB used (much more headroom than vllm-chat's 30 / 32).
+    #   Single smoke: HTTP 200 in 4.7s, finish=stop, 59.8 tok/s gen, 123 tokens
+    #     (~83 reasoning + ~40 content). content="hello-supervise-test-OK"
+    #     exact. reasoning_content 444 chars CoT (always emitted, system-prompt
+    #     "no thinking" + the /no_think hint were BOTH ignored by the
+    #     fine-tune — Qwable always reasons).
+    #   Concurrency: 4 parallel requests -> 2 immediate + 2 queued, all 200,
+    #     45-49 tok/s per slot, NO WEDGE under load. Confirms vllm-chat's
+    #     running=2 wedge is vLLM-specific (NVFP4 + Qwen3.6-35B-A3B-MoE +
+    #     FlashInfer CUTLASS MoE backend), NOT a hardware or model-family
+    #     wall.
+    # Why not promoted:
+    #   1) Throughput regression: ~50 tok/s gen vs vllm-chat 100-120 (~half).
+    #   2) Output-format break: Qwable always emits reasoning_content first,
+    #      content empty under tight token budgets. Every ADA/Legion/Zero
+    #      consumer reads message.content; would break all chat paths until
+    #      consumers adapt or token budgets are bumped ~3-5x.
+    #   3) Community fine-tune, no benchmark data vs current model on real
+    #      conviction/tool-call workflows.
+    # Follow-on (next-run lead): full quality A/B Qwable vs Qwen3.6-35B-A3B on
+    # ADA conviction prompts with consumer-side reasoning_content handling,
+    # then maintenance-window swap if A/B favors Qwable.
+    # GGUF preserved at c:/code/zero/workspace/llm-models/Qwable-27b_Q4_K_M.gguf
+    # for the re-test (just change --model below and parallel/ctx flags).
     command: >
       --model /models/Huihui-Qwen3.6-35B-A3B-abliterated.Q5_K_M.gguf
       --no-mmap
