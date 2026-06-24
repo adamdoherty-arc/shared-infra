@@ -248,12 +248,12 @@ services:
       # are enabled (no --enforce-eager).
       FLASHINFER_CUDA_ARCH_LIST: "12.0f"
       FLASHINFER_FORCE_SM: "120f"
-      # KV-OOM fix (2026-06-21): don't pre-reserve the conservative CUDA-graph
-      # memory ESTIMATE from the KV budget. Capture sizes are tiny ([1,2,4]) so
-      # actual graph memory is small, but the estimate over-reserved ~3-4GB and
-      # forced "Available KV cache memory" negative on this VRAM-tight shared card.
-      # With this off, KV allocates first and graphs capture from the slack.
-      VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS: "0"
+      # KV-OOM fix (2026-06-21): was a v0.22.1 workaround for its over-reserving
+      # graph estimator. 2026-06-24 supervise v0.23 retry-2: removed because v0.23
+      # has correct graph accounting and the workaround hurts more than helps on
+      # v0.23 (left KV=0.01 GiB at 0.92). Restore this line + drop mem_util to
+      # 0.92 + bump max_num_seqs to 2 if rolling back to v0.22.1.
+      # VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS: "0"
       # Wedge experiment (2026-06-21, diagnostic-first): persist Triton's JIT
       # kernel cache on the hf-cache volume so a cold-compiled GDN/Mamba kernel
       # survives container restarts — after the first compile, later restarts hit
@@ -283,34 +283,36 @@ services:
     #   "Unquantized MoE backend"; candidates to vet: a newer pinned nightly digest,
     #   or v0.23.0-cu129 (CUDA 12.9) once confirmed to carry SM120 NVFP4 MoE.
     #
-    # UPGRADE ATTEMPT 2026-06-24 (supervise wedge-trial): tried v0.23.0-cu129.
-    # FAILED + ROLLED BACK to v0.22.1 ~10 min after attempt.
-    #   Issue 1: at gpu_memory_utilization=0.92 (this box's standard), v0.23
-    #     left "Available KV cache memory: 0.01 GiB" -> engine init refused.
-    #     v0.23 has ~1-2 GiB more activation/working overhead than v0.22.1.
-    #     The startup warning recommended bumping to 0.9384 + re-enabling the
-    #     graph memory profiler (we did both: mem_util 0.95 + removed
-    #     VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=0 workaround).
-    #   Issue 2: v0.23 has a STRICT pre-flight free-memory check (v0.22.1
-    #     didn't). At 0.95 the engine refused to start because free memory
-    #     on the device was 30.2 GiB (host apps using ~7.6 GiB at the time)
-    #     and 0.95 * 31.84 = 30.25 GiB requested > 30.2 GiB free. ValueError
-    #     in v1/worker/utils.py:415 (request_memory).
-    #   ROOT CAUSE: on this 32 GiB 5090 + active host apps (Cursor/Edge/
-    #     Notion/Windows shell extensions taking 7+ GiB), v0.23's stricter
-    #     accounting + higher activation overhead means it doesn't fit at
-    #     the full Qwen3.6-35B-A3B-NVFP4 max_model_len=16384 / max_num_seqs=2
-    #     config that v0.22.1 squeezes in. v0.22.1 worked because (a) it had
-    #     no pre-flight free-mem check and (b) it had smaller activations.
-    #   NEXT TIME: retry v0.23 with one of: (i) max_model_len=8192 (halves
-    #     per-seq KV), (ii) close host GPU consumers first to free 2-3 GiB,
-    #     (iii) max_num_seqs=1 (halves total KV) which would also eliminate
-    #     the running=2 wedge condition entirely. Best path is probably
-    #     (ii) during a quiet host-app window since (i) and (iii) lose
-    #     capability we currently use.
-    # Image vllm/vllm-openai:v0.23.0-cu129 (38.3GB) remains pulled locally
-    # for the next retry.
-    image: vllm/vllm-openai:v0.22.1
+    # v0.23.0-cu129 LANDED 2026-06-24 (supervise wedge-trial). Attempt log:
+    #   #1 @ mem_util=0.92 (the v0.22.1 baseline): KV=0.01 GiB, engine refused.
+    #      v0.23 has ~1 GiB more activation overhead than v0.22.1.
+    #   #2 @ mem_util=0.95: precheck refused (0.95*31.84=30.25 > 30.2 free; v0.23
+    #      added a strict free-mem precheck v0.22.1 lacks). Host apps were using
+    #      ~1.6 GiB at the time.
+    #   #3 @ mem_util=0.94 + max_num_seqs 2->1 + graph profiler re-enabled
+    #      (removed VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=0): KV=0.15 GiB,
+    #      refused — still not enough for one request at max_model_len=16384.
+    #   #4 @ same as #3 + max_model_len 16384->8192: SUCCESS. KV=0.62 GiB
+    #      (24,576 tokens pool, 3x concurrency capacity). Smoke chat: HTTP 200
+    #      in ~1s, content correct. ADA production-router test: cold 11.5s
+    #      (torch.compile warmup), warm 0.6s, content correct, no reasoning-
+    #      content burn.
+    # Config trade-offs (production-acceptable):
+    #   max_model_len:  16384 -> 8192    (prompts >8192 tokens refused; ADA's
+    #                                     conviction/research prompts are <4K
+    #                                     typically).
+    #   max_num_seqs:    2 -> 1          (serializes chat across consumers; net
+    #                                     win because it STRUCTURALLY eliminates
+    #                                     the running=2 wedge condition that
+    #                                     hit clockwork every 30 min on v0.22.1).
+    #   gpu_memory_util: 0.92 -> 0.94    (just under the free-mem precheck).
+    # Wedge-monitor sidecar (vllm-wedge-monitor) is now redundant safety-net
+    # only — at max_num_seqs=1 the wedge condition is structurally impossible.
+    # Leave it running as defense in depth.
+    # ROLLBACK to v0.22.1: restore `image: vllm/vllm-openai:v0.22.1` here +
+    # restore VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS: "0" env above + .env
+    # mem_util=0.92 + max_num_seqs=2 + max_model_len=16384.
+    image: vllm/vllm-openai:v0.23.0-cu129
     container_name: vllm-chat
     # --quantization awq_marlin: fastest AWQ path; falls back to plain awq
     #   kernel if marlin doesn't load cleanly on Blackwell (untested kernel
