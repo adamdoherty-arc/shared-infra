@@ -617,9 +617,17 @@ services:
     #   samples (load-immune, unlike a generation ping). JIT warm: first post-restart
     #   chat may be slightly slow, but restarts are now rare and Bifrost retries.
     healthcheck:
+      # Fix-100670 (2026-06-25 daily-review Run-5): 3rd consecutive day of TOD-correlated
+      # autoheal storms (12:33-15:59 UTC) AFTER the 2026-06-24 generation-ping removal.
+      # /health is the right probe BUT 10s timeout still occasionally exceeds under
+      # concurrent ADA/Legion/Zero load on a 97%-full 5090 (the engine's internal
+      # background-loop check serializes briefly during NVFP4 cache-graph replay).
+      # Bumping timeout 10s -> 25s keeps the wedge-detection intent (a truly-dead
+      # AsyncLLMEngine still won't respond after 25s) while absorbing the legitimate
+      # load-induced spikes. retries: 5 unchanged -- a real wedge fires in <2 min.
       test: ["CMD", "curl", "-sf", "http://localhost:8000/health"]
       interval: 30s
-      timeout: 10s
+      timeout: 25s
       retries: 5
       # ~21 GB NVFP4 weights + CUDA-graph capture; cached reload ~13 min; first-ever
       # HF pull 15-25 min. start_period covers load so it never counts unhealthy.
