@@ -241,7 +241,9 @@ services:
       # the stable Marlin INT4 GEMM — CUTLASS NVFP4 MoE is broken on SM120 (TMA WS
       # grouped-GEMM init failure). Valid: marlin | flashinfer-cutlass |
       # flashinfer-trtllm | cutlass | emulation.
-      VLLM_NVFP4_GEMM_BACKEND: ${VLLM_NVFP4_GEMM_BACKEND:-marlin}
+      # 2026-06-24 (cyankiwi swap): commented out, irrelevant for AWQ-INT4 path.
+      # Restore if rolling back to NVFP4 model.
+      # VLLM_NVFP4_GEMM_BACKEND: ${VLLM_NVFP4_GEMM_BACKEND:-marlin}
       # FlashInfer SM120 targeting (2026-06-21): pin FlashInfer to the RTX 5090's
       # compute capability so its NVFP4/attention kernels JIT for sm_120 instead of
       # erroring ("CUDA error: unknown error" in GDN prefill warmup) when CUDA graphs
@@ -495,9 +497,33 @@ services:
     # hybrid with fp8 KV (recipe; <8192 -> Mamba assertion). FlashInfer SM120 env vars
     # added to environment: above. REVERT: restore the GPTQ command block above +
     # re-add --enforce-eager + set .env VLLM_MAX_MODEL_LEN=8192/GPU_MEM_UTIL=0.92/SEQS=6.
+    # SWAP 2026-06-24 (supervise: peak-perf model review):
+    #   Model: RedHatAI/Qwen3.6-35B-A3B-NVFP4 -> cyankiwi/Qwen3.6-27B-AWQ-INT4
+    #   Why: 35B-A3B-FP8 (the ideal upgrade target) is 34.5 GiB and doesn't fit
+    #     this 32 GiB 5090. 35B-A3B-NVFP4 fits but wedges at running=2
+    #     (vllm#35566 — NVFP4 MoE CUTLASS bug on SM120 across multiple vLLM
+    #     versions). Forcing max_num_seqs=1 worked-around it but killed
+    #     concurrency. Qwen3.6-27B is DENSE (same qwen3_5 arch family — same
+    #     chat template, same qwen3_xml tool parser, same reasoning_parser
+    #     qwen3) so structurally avoids the entire NVFP4 MoE bug class. AWQ-
+    #     Marlin INT4 is the proven-stable Blackwell weight-only path.
+    #   Size: ~19 GiB weights (60% of 32 GiB) -> ~11 GiB free for KV at
+    #     max_num_seqs=4 / max_model_len=16384.
+    #   Tradeoff: dense 27B uses ~9x compute per token vs MoE 3B active, BUT
+    #     restored 4-way concurrency + zero-wedge stability dominates for the
+    #     multi-tenant ADA/Legion/Zero workload.
+    #   Aliases: cleaned 4 -> 3. KEEP Qwen3.5-35B-A3B FIRST (Bifrost VK
+    #     allow-lists match this canonical name; changing it = platform-wide
+    #     403 incident per 2026-06-14). KEEP qwen3-chat (provider mapping
+    #     alias). ADD Qwen3.6-27B (new actual model name). DROP Qwen3.6-35B-A3B
+    #     (no longer accurate). DROP Qwen3-32B-AWQ (April 2026 retired model).
+    #   ROLLBACK: restore --model RedHatAI/Qwen3.6-35B-A3B-NVFP4 + restore the
+    #     4-alias served-model-name + restore VLLM_NVFP4_GEMM_BACKEND env above
+    #     + .env max_num_seqs=1 / max_model_len=8192 / mem_util=0.94 (the
+    #     known-working NVFP4 config). Image stays at v0.23.0-cu129 either way.
     command: >
-      --model RedHatAI/Qwen3.6-35B-A3B-NVFP4
-      --served-model-name Qwen3.5-35B-A3B Qwen3.6-35B-A3B qwen3-chat Qwen3-32B-AWQ
+      --model cyankiwi/Qwen3.6-27B-AWQ-INT4
+      --served-model-name Qwen3.5-35B-A3B qwen3-chat Qwen3.6-27B Qwen3-32B-AWQ Qwen3.6-35B-A3B
       --port 8000
       --host 0.0.0.0
       --dtype bfloat16
