@@ -37,7 +37,13 @@ TARGET = os.environ.get("VLLM_TARGET_CONTAINER", "vllm-chat")
 POLL_S = int(os.environ.get("POLL_INTERVAL_S", "30"))
 WEDGE_N = int(os.environ.get("WEDGE_SAMPLES", "4"))            # 4 x 30s = ~2 min stall
 GRACE_S = int(os.environ.get("STARTUP_GRACE_S", "120"))       # ignore right after (re)start
-RESTART_COOLDOWN_S = int(os.environ.get("RESTART_COOLDOWN_S", "1800"))  # >=30 min between restarts
+# Fix-100787 (2026-06-29): cooldown lowered 1800s -> 600s. The 30-min cooldown was
+# leaving vllm-chat wedged for HOURS because samples 5..N kept incrementing flat
+# without restart firing (cycle-2 incident: 26 consecutive stall samples). 10 min
+# is plenty of headroom between restarts but short enough that a same-day re-wedge
+# gets healed automatically. Per-poll heartbeat below shows the 3 gate conditions
+# so the next cooldown-related blockage is debuggable from the log alone.
+RESTART_COOLDOWN_S = int(os.environ.get("RESTART_COOLDOWN_S", "600"))
 DOCKER_SOCK = os.environ.get("DOCKER_SOCK", "/var/run/docker.sock")
 DOCKER_API = os.environ.get("DOCKER_API_VERSION", "v1.41")
 
@@ -125,9 +131,25 @@ def main() -> None:
             last_gen, last_prompt = gen, prompt
 
             now = time.time()
-            if (flat >= WEDGE_N
-                    and now - epoch > GRACE_S
-                    and now - last_restart > RESTART_COOLDOWN_S):
+            # Fix-100787 (2026-06-29): per-poll heartbeat when at-or-past
+            # threshold. Cycle-2 forensics showed samples 5..26 logged with
+            # flat>=4 but NO "WEDGE DETECTED" — and no diagnostic of why the
+            # 3-gate failed. With this heartbeat, every poll at threshold
+            # logs whether each gate is open/closed, making the next
+            # cooldown-related blockage debuggable from the log alone.
+            since_epoch = now - epoch
+            since_last_restart = now - last_restart
+            gate_flat = flat >= WEDGE_N
+            gate_grace = since_epoch > GRACE_S
+            gate_cooldown = since_last_restart > RESTART_COOLDOWN_S
+            if gate_flat:
+                log(
+                    f"restart-gate: flat={flat}/{WEDGE_N} ({'OPEN' if gate_flat else 'CLOSED'}) "
+                    f"since_epoch={int(since_epoch)}s/{GRACE_S}s ({'OPEN' if gate_grace else 'CLOSED'}) "
+                    f"since_last_restart={int(since_last_restart)}s/{RESTART_COOLDOWN_S}s "
+                    f"({'OPEN' if gate_cooldown else 'CLOSED'})"
+                )
+            if gate_flat and gate_grace and gate_cooldown:
                 log(f"WEDGE DETECTED: {WEDGE_N} consecutive polls with requests running and "
                     f"zero token progress -> restarting {TARGET}")
                 try:

@@ -835,14 +835,24 @@ services:
     restart: unless-stopped
     command: ["python", "-u", "/monitor.py"]
     environment:
-      VLLM_METRICS_URL: http://host.docker.internal:18801/metrics
+      # Reach vLLM container->container on the shared bridge (both on
+      # shared-infra_default), NOT via host.docker.internal:18801. The host
+      # round-trip to vllm-chat's published port resets (RemoteDisconnected) for
+      # a window after every vllm-chat recreate (Docker Desktop NAT settle), which
+      # left this monitor BLIND to 0-tok/s wedges for 11+ h (daily-review 2026-06-25
+      # run 3). Service-name DNS re-resolves immediately after a restart and has no
+      # published-port proxy in the path. vllm-chat listens on 8000 inside the net.
+      VLLM_METRICS_URL: http://vllm-chat:8000/metrics
       VLLM_TARGET_CONTAINER: vllm-chat
       POLL_INTERVAL_S: "30"
       WEDGE_SAMPLES: "4"
       STARTUP_GRACE_S: "120"
-      RESTART_COOLDOWN_S: "1800"
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+      # Fix-100787 (2026-06-29): 1800s -> 600s. The 30-min cooldown left
+      # vllm-chat wedged for HOURS across 25+ consecutive stall samples in
+      # cycle-2 of the stability-watch loop. 10 min is plenty of headroom
+      # between restarts but short enough that a same-day re-wedge is
+      # healed automatically.
+      RESTART_COOLDOWN_S: "600"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./vllm_wedge_monitor.py:/monitor.py:ro
