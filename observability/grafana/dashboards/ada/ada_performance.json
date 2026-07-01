@@ -76,7 +76,7 @@
                         "uid": "P1809F7CD0C7575DA"
                     },
                     "editorMode": "code",
-                    "expr": "sum(rate(ava_http_requests_total[1m]))",
+                    "expr": "sum(rate(ada_http_requests_total[1m]))",
                     "legendFormat": "Total Requests/sec",
                     "range": true,
                     "refId": "A"
@@ -164,8 +164,8 @@
                         "uid": "P1809F7CD0C7575DA"
                     },
                     "editorMode": "code",
-                    "expr": "histogram_quantile(0.95, sum(rate(ava_http_request_duration_seconds_bucket[5m])) by (le))",
-                    "legendFormat": "p95 Latency",
+                    "expr": "histogram_quantile(0.95, sum(rate(ada_http_request_duration_seconds_v2_bucket[5m])) by (le))",
+                    "legendFormat": "p95 Latency (all routes)",
                     "range": true,
                     "refId": "A"
                 }
