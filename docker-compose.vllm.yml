@@ -316,6 +316,14 @@ services:
     # mem_util=0.92 + max_num_seqs=2 + max_model_len=16384.
     image: vllm/vllm-openai:v0.23.0-cu129
     container_name: vllm-chat
+    # 2026-07-02 (zero daily-review run 13): allow ptrace so py-spy can dump the
+    # EngineCore stack DURING a wedge (default caps denied it: "Permission denied"
+    # copying Py_Version). The wedge storm returned with VLLM_MAX_NUM_SEQS=4 (see
+    # .env) — running>=2 + flat tokens + GPU 100%@43C. Next wedge: docker exec
+    # vllm-chat pip install py-spy && py-spy dump --pid <EngineCore pid from
+    # ps -eo pid,args>. Harmless otherwise; remove with the wedge root-cause fix.
+    cap_add:
+      - SYS_PTRACE
     # --quantization awq_marlin: fastest AWQ path; falls back to plain awq
     #   kernel if marlin doesn't load cleanly on Blackwell (untested kernel
     #   path on 5090 — swap to "awq" or "gptq_marlin" if first start fails).
