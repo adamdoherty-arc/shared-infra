@@ -11,7 +11,7 @@
       "id": 1,
       "type": "timeseries",
       "title": "GPU VRAM Headroom (MiB)",
-      "description": "Free VRAM. Alert HeimdallVRAMTight fires when this drops below 500 for 5 min. Sprint 5336.",
+      "description": "Free VRAM. Below 500 MiB for ~5 min risks a KV-cache OOM on the next vllm-chat allocation. Sprint 5336.",
       "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
       "targets": [
         {"expr": "legion_gpu_vram_free_mb", "legendFormat": "free_mb", "refId": "A"}
@@ -54,21 +54,11 @@
       ]
     },
     {
-      "id": 5,
-      "type": "timeseries",
-      "title": "Heimdall Qwen3.6 Findings (last 24h)",
-      "description": "Sprint 5266 ext — the 4 new catalog entries: vision_encoder_stall, endless_thinking, moe_expert_imbalance, kv_fp8_quality_drop.",
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 14},
-      "targets": [
-        {"expr": "sum by (pattern_key) (increase(legion_heimdall_findings_total{pattern_key=~\"qwen36_.*|kv_cache_oom_imminent\"}[5m]))", "legendFormat": "{{pattern_key}}", "refId": "A"}
-      ]
-    },
-    {
       "id": 6,
       "type": "stat",
       "title": "FreeLLM Chain Outcomes (1h)",
       "description": "OpenRouter qwen3-coder:480b route via FreeLLMAPI. Watch for fallback_to_local spikes — they mean the chain isn't healthy.",
-      "gridPos": {"h": 6, "w": 12, "x": 12, "y": 14},
+      "gridPos": {"h": 6, "w": 12, "x": 0, "y": 14},
       "targets": [
         {"expr": "sum by (outcome) (increase(legion_llm_freellm_calls_total[1h]))", "legendFormat": "{{outcome}}", "refId": "A"}
       ]

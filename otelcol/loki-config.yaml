@@ -1,0 +1,50 @@
+# Loki configuration — minimal single-process mode for shared-infra sidecar.
+# Receives logs from otelcol via OTLP (Plan-490).
+# Queryable via Grafana (add Loki datasource at http://loki:3100).
+
+auth_enabled: false
+
+server:
+  http_listen_port: 3100
+  grpc_listen_port: 9096
+  log_level: warn
+
+common:
+  instance_addr: 127.0.0.1
+  path_prefix: /loki
+  storage:
+    filesystem:
+      chunks_directory: /loki/chunks
+      rules_directory: /loki/rules
+  replication_factor: 1
+  ring:
+    kvstore:
+      store: inmemory
+
+schema_config:
+  configs:
+    - from: 2024-01-01
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: loki_index_
+        period: 24h
+
+limits_config:
+  # Accept OTLP log ingest from otelcol.
+  allow_structured_metadata: true
+  # Retention: keep 14 days. A cron can extend this via the compactor.
+  retention_period: 336h
+
+compactor:
+  working_directory: /loki/compactor
+  retention_enabled: true
+  delete_request_store: filesystem
+
+ruler:
+  # Item-2 (2026-07-02): added ada-alertmanager so ADA log-based alert rules
+  # (SyntaxError, db_query_failed) reach the Discord #system-health receiver.
+  # ada-alertmanager joins shared-infra_default network so it's DNS-reachable
+  # from the Loki container as "ada-alertmanager".
+  alertmanager_url: http://shared-alertmanager:9093,http://ada-alertmanager:9093

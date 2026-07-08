@@ -11,7 +11,7 @@ and a built-in admin dashboard.
 **Pinned commit:** `18eb04be990bcdaca842574bf6e00a6968308761` (see `Dockerfile`).
 
 Sibling of `shared-bifrost`:
-- **bifrost** owns the local vLLM transport gateway (port 4445, Qwen3-32B-AWQ on-prem).
+- **bifrost** owns the local vLLM transport gateway (port 4445, Qwen3.5-35B-A3B / cyankiwi/Qwen3.6-27B-AWQ-INT4 on-prem).
 - **freellmapi** owns the cross-provider free-tier fallback chain (port 3001).
 
 They are peers. Consumers (Legion / ADA / Zero) pick one or the other per

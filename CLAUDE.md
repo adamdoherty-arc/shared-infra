@@ -2,7 +2,7 @@
 
 Rules and operational notes for Claude Code working in
 `c:\code\shared-infra\`. This stack hosts the LLM gateway (Bifrost),
-local model containers (llama-cpp-chat + vllm-embed), and other
+local model containers (vllm-chat + vllm-embed), and other
 shared services used by Zero, ADA, and Legion.
 
 ## NO DEFERRING — FIX IT NOW (MANDATORY)
@@ -47,8 +47,9 @@ a checklist with pending items. Finish the job 100%.
 - Auth ENFORCED (`enforce_auth_on_inference: true`). Callers must
   send `Authorization: Bearer sk-bf-...` OR `x-bf-vk: sk-bf-...`
   with a valid virtual key.
-- Active providers (2026-06-11, ALL-FREE): `vllm-local` (Qwen3.6-35B-A3B
-  via stable alias `qwen3-chat`), `embed-local`, `nvidia-nim`, `openrouter`
+- Active providers (2026-06-11, ALL-FREE): `vllm-local` (Qwen3.5-35B-A3B
+  via stable alias `qwen3-chat`; root `cyankiwi/Qwen3.6-27B-AWQ-INT4`, dense
+  AWQ-Marlin INT4), `embed-local`, `nvidia-nim`, `openrouter`
   (:free curated list), `hf-router`, `groq`, `cerebras`, `mistral`,
   `gemini` (flash-only), `zai` (glm-4.7-flash), and `moonshot` — which is
   now a COMPAT SHIM over NVIDIA NIM's free Kimi K2.6 (the paid Moonshot
@@ -103,12 +104,14 @@ UPDATE governance_virtual_key_provider_configs SET allow_all_keys=1
 ```
 (Stop bifrost first, restart after the update.)
 
-### Local chat backend (`llama-cpp-chat`)
+### Local chat backend (`vllm-chat`)
 
-- Host port `18800` → container port `8000`.
-- Model: Qwen3.6-35B-A3B abliterated, GGUF Q4_K_M, bind-mounted
-  read-only from `c:\code\zero\workspace\llm-models\`.
-- Alias `qwen3-chat` → `Qwen3.6-35B-A3B` (Bifrost rewrites at the gateway).
+- Host port `18801` → container port `8000`.
+- Model: `cyankiwi/Qwen3.6-27B-AWQ-INT4` (dense 27B, AWQ-Marlin INT4) on
+  vLLM `v0.23.0-cu129`, ctx 16384. (`llama-cpp-chat` at 18800 was retired
+  2026-05-17 — its block is `profile: retired` in `docker-compose.vllm.yml`.)
+- Served canonical `Qwen3.5-35B-A3B`; alias `qwen3-chat` → `Qwen3.5-35B-A3B`
+  (Bifrost rewrites at the gateway).
 
 ### Local embed backend (`vllm-embed`)
 

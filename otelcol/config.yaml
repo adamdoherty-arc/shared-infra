@@ -1,0 +1,109 @@
+# OpenTelemetry Collector (contrib) — shared-infra sidecar
+# Plan-490: tail-sampled fan-out to Grafana Tempo + Loki for all ADA/Legion/Zero backends.
+#
+# Architecture:
+#   backends (OTLP gRPC 4317 / HTTP 4318)
+#     -> otelcol receivers
+#     -> tail_sampling (5s decision window: errors + slow spans + 10% probabilistic)
+#     -> batch
+#     -> otlp/tempo (shared-tempo:4317 OTLP gRPC)  [spans only]
+#        otlphttp/loki (loki:3100/otlp)            [logs only]
+#
+# Bring up:
+#   docker compose -p shared-infra -f docker-compose.otelcol.yml up -d
+
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  # Tail sampling — decide after 5 seconds when we can see the full trace.
+  # Three sampling policies:
+  #   1. Always keep errors (status_code = ERROR).
+  #   2. Always keep slow spans (latency > 1000ms).
+  #   3. Keep 10% of everything else (probabilistic).
+  tail_sampling:
+    decision_wait: 5s
+    num_traces: 50000
+    expected_new_traces_per_sec: 200
+    policies:
+      - name: errors
+        type: status_code
+        status_code:
+          status_codes: [ERROR]
+      - name: slow-spans
+        type: latency
+        latency:
+          threshold_ms: 1000
+      - name: probabilistic-10pct
+        type: probabilistic
+        probabilistic:
+          sampling_percentage: 10
+
+  # Batch spans/logs before export to reduce round-trips.
+  batch:
+    send_batch_size: 1024
+    timeout: 5s
+
+  # Add resource metadata for Loki label extraction.
+  resource:
+    attributes:
+      - key: host.name
+        value: otelcol
+        action: upsert
+
+exporters:
+  # Grafana Tempo — receives spans via OTLP gRPC (shared-tempo:4317).
+  # Tempo could accept OTLP directly from backends, but we route through otelcol
+  # so tail-sampling fires before Tempo writes a trace block.
+  otlp/tempo:
+    endpoint: shared-tempo:4317
+    tls:
+      insecure: true
+
+  # Loki — OTLP log export (Loki >= 2.9 supports /otlp endpoint).
+  otlphttp/loki:
+    endpoint: http://loki:3100/otlp
+    tls:
+      insecure: true
+
+  # Debug exporter — logs first few spans to collector stdout for smoke tests.
+  debug:
+    verbosity: basic
+    sampling_initial: 5
+    sampling_thereafter: 100
+
+service:
+  extensions: [health_check]
+  pipelines:
+    # Span pipeline: receive -> tail_sample -> batch -> Tempo + debug
+    traces:
+      receivers: [otlp]
+      processors: [tail_sampling, batch]
+      exporters: [otlp/tempo, debug]
+
+    # Log pipeline: receive -> resource -> batch -> Loki
+    # OTLPLogExporter in tracing.py ships structlog records here.
+    logs:
+      receivers: [otlp]
+      processors: [resource, batch]
+      exporters: [otlphttp/loki, debug]
+
+  telemetry:
+    logs:
+      level: warn
+    metrics:
+      readers:
+        - pull:
+            exporter:
+              prometheus:
+                host: 0.0.0.0
+                port: 8888

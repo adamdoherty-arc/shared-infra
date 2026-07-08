@@ -1,0 +1,71 @@
+# OTel Collector + Loki sidecar — Plan-490 (shared-infra)
+#
+# Adds tail-sampled span fan-out (Grafana Tempo) + structured log shipping (Loki)
+# for ALL project backends (ADA / Legion / Zero) that send OTLP.
+#
+# Backends should set:
+#   OTLP_ENDPOINT=http://otelcol:4317   (replaces the old direct-to-Jaeger URL)
+#
+# Bring up (idempotent):
+#   docker compose -p shared-infra -f docker-compose.otelcol.yml up -d
+#
+# Loki query via Grafana:  Settings -> Data Sources -> Add -> Loki -> http://loki:3100
+# Loki direct query:       curl -G "http://localhost:3100/loki/api/v1/query" \
+#                            --data-urlencode 'query={service_name="ada-backend"}'
+# otelcol metrics:         http://localhost:8888/metrics
+
+services:
+  otelcol:
+    image: otel/opentelemetry-collector-contrib:0.154.0   # pinned (was :latest)
+    container_name: otelcol
+    restart: unless-stopped
+    command: ["--config=/etc/otelcol/config.yaml"]
+    volumes:
+      - ./otelcol/config.yaml:/etc/otelcol/config.yaml:ro
+    ports:
+      - "4321:4317"   # OTLP gRPC (host 4321; internal senders use otelcol:4317)
+      - "4322:4318"   # OTLP HTTP (host 4322; internal senders use otelcol:4318)
+      - "8888:8888"   # Collector self-telemetry (Prometheus scrape)
+      - "13133:13133" # Health check extension
+    networks:
+      - shared-infra
+    # depends_on only lists loki (same compose file). shared-tempo lives in
+    # docker-compose.observability.yml — same project (shared-infra) but a
+    # different file, so it can't be named here. restart: unless-stopped above
+    # makes otelcol retry the exporter until shared-tempo:4317 is reachable.
+    depends_on:
+      - loki
+    deploy:
+      resources:
+        limits: { memory: 256M }
+    # No HEALTHCHECK — otelcol-contrib uses a distroless image (no shell/curl).
+    # Liveness is verified by: docker logs otelcol (no "Error: failed to get config"),
+    # and curl http://localhost:13133/ from the host (health_check extension).
+
+  loki:
+    image: grafana/loki:3.7.2   # pinned (was :latest); matches the running build
+    container_name: loki
+    restart: unless-stopped
+    command: ["-config.file=/etc/loki/config.yaml"]
+    volumes:
+      - ./otelcol/loki-config.yaml:/etc/loki/config.yaml:ro
+      - loki-data:/loki
+    ports:
+      - "3100:3100"   # Loki HTTP API + OTLP ingest
+      - "9096:9096"   # Loki gRPC
+    networks:
+      - shared-infra
+    deploy:
+      resources:
+        limits: { memory: 512M }
+    # No HEALTHCHECK — Loki uses a distroless image (no shell/curl/wget).
+    # Liveness: curl http://localhost:3100/ready from host returns "ready" when up.
+
+networks:
+  shared-infra:
+    external: true
+    name: shared-infra_default
+
+volumes:
+  loki-data:
+    name: shared-loki-data

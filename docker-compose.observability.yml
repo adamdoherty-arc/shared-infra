@@ -1,15 +1,16 @@
-# Shared observability stack (Infra-50) — ONE Prometheus + Grafana + Jaeger +
+# Shared observability stack (Infra-50) — ONE Prometheus + Grafana + Tempo +
 # Alertmanager for the WHOLE ecosystem, replacing the duplicated per-project
 # legion-* / ada-* monitoring containers (8 containers -> 4). Lives on
 # shared-infra_default so it scrapes every project backend by container DNS.
 # Per-project datastores (Postgres/Redis/Qdrant/Neo4j) stay isolated.
 #
-# STATUS: CUTOVER COMPLETE (2026-05-27).
-#   - legion + ada prometheus/grafana/jaeger/alertmanager blocks removed from
-#     their compose files; both backends' OTLP exporters repointed to
-#     shared-jaeger:4317.
+# STATUS: CUTOVER COMPLETE (2026-05-27). Jaeger v1 -> Grafana Tempo (2026-07-07).
+#   - legion + ada prometheus/grafana/alertmanager blocks removed from their
+#     compose files; both backends' OTLP exporters point at otelcol, which
+#     tail-samples and forwards spans to shared-tempo:4317.
 #   - This stack owns the final ports: Prometheus 9099, Grafana 3050,
-#     Jaeger 16700/4317/4318, Alertmanager 9095.
+#     Tempo 3200 (query API), Alertmanager 9095. (Jaeger's 16700/4317/4318
+#     retired — host 4317/4318 now free; otelcol ingests on host 4321/4322.)
 #   - Scrapes legion-backend, ada-backend, ada-postgres-exporter (via host),
 #     bifrost-metrics, vllm-chat, vllm-embed. Zero has no Prometheus endpoint
 #     yet (commented in prometheus.yml — re-enable when it mounts prometheus_client).
@@ -68,40 +69,31 @@ services:
       timeout: 5s
       retries: 3
 
-  shared-jaeger:
-    # all-in-one:latest is the exact image Legion ran (badger storage), a proven
-    # drop-in that avoids the Legion-v1 / ADA-v2 schema mismatch. Both backends'
-    # OTLP exporters point here.
-    image: jaegertracing/all-in-one:latest
-    container_name: shared-jaeger
+  shared-tempo:
+    # Grafana Tempo — replaces jaegertracing/all-in-one (Jaeger v1, EOL).
+    # otelcol tail-samples spans and forwards them here over OTLP gRPC
+    # (shared-tempo:4317, internal only — host 4317/4318 are now free). Local
+    # filesystem block store, 48h block retention (matches the old badger TTL).
+    # Config: ./otelcol/tempo.yaml. Query API on :3200 (Grafana Tempo datasource).
+    image: grafana/tempo:2.9.0   # pinned (was jaeger all-in-one:latest); 2.9.0 = current stable
+    container_name: shared-tempo
     restart: unless-stopped
-    # Run as root so badger can create its dirs on the named volume (matches
-    # Legion's proven jaeger config — non-root hits mkdir permission denied).
+    # Run as root so Tempo can create wal/blocks dirs on the fresh named volume
+    # (matches the retired Jaeger config — non-root hits mkdir permission denied).
     user: "0:0"
-    environment:
-      COLLECTOR_OTLP_ENABLED: "true"
-      SPAN_STORAGE_TYPE: badger
-      BADGER_EPHEMERAL: "false"
-      BADGER_DIRECTORY_VALUE: /badger/data
-      BADGER_DIRECTORY_KEY: /badger/key
-      # 2026-06-30 (stability-sweep Stage 1.3): 881 OOM restarts on the 512M
-      # limit. Badger had grown to 1.6G on disk and replays 150 tables every
-      # startup, blowing the heap. Two-part fix: bump RAM to 2G so badger can
-      # load its working set, AND set a 48h span TTL so it stops growing
-      # unboundedly. Pyroscope + Prometheus carry long-term observability;
-      # Jaeger only needs recent traces for live debugging.
-      BADGER_SPAN_STORE_TTL: "48h0m0s"
+    command: ["-config.file=/etc/tempo/tempo.yaml"]
     ports:
-      - "16700:16686"   # Legion's freed Jaeger UI port
-      - "4317:4317"     # OTLP gRPC
-      - "4318:4318"     # OTLP HTTP
+      - "3200:3200"     # Tempo HTTP API (query + /ready) — Grafana + host verify
     volumes:
-      - shared-jaeger-data:/badger
+      - ./otelcol/tempo.yaml:/etc/tempo/tempo.yaml:ro
+      - shared-tempo-data:/var/tempo
     networks:
       - shared-infra
     deploy:
       resources:
-        limits: { memory: 2G }
+        limits: { memory: 1G }
+    # No HEALTHCHECK — grafana/tempo ships without wget/curl (like otelcol/loki).
+    # Liveness: curl http://localhost:3200/ready from host returns "ready" when up.
 
   shared-grafana:
     image: grafana/grafana:latest
@@ -138,4 +130,4 @@ networks:
 volumes:
   shared-prometheus-data:
   shared-grafana-data:
-  shared-jaeger-data:
+  shared-tempo-data:

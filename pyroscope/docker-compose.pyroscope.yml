@@ -1,0 +1,62 @@
+# =============================================================================
+# Grafana Pyroscope — continuous profiling sidecar (Plan-483, 2026-06-16)
+# =============================================================================
+# Bring up:
+#   docker compose -f c:/code/shared-infra/pyroscope/docker-compose.pyroscope.yml up -d
+#
+# UI:     http://localhost:4040
+# Apps:   http://localhost:4040/api/apps  (should list "ada-backend" within 2 min of backend restart)
+# Ingest: http://localhost:4040  (pyroscope SDK pushes to this address)
+#
+# Prerequisites:
+#   - shared-infra_default network exists (brought up by docker-compose.bifrost.yml
+#     or docker-compose.vllm.yml before this file).
+#   - ada-backend has PYROSCOPE_SERVER_ADDRESS=http://shared-pyroscope:4040 in .env
+#     and pyroscope-io>=0.8.8 installed in its image (requirements.docker.txt).
+#
+# Memory budget: 512 MiB hard limit.  On a 47 GB host this is negligible.
+# Data is persisted in the `pyroscope_data` named volume so flame graphs
+# survive container restarts.
+# =============================================================================
+
+services:
+  pyroscope:
+    image: grafana/pyroscope:latest
+    container_name: shared-pyroscope
+    restart: unless-stopped
+    ports:
+      - "4040:4040"
+    volumes:
+      - pyroscope_data:/data
+    networks:
+      - shared
+    healthcheck:
+      # Grafana Pyroscope uses a fully distroless image — no /bin/sh, no wget.
+      # CMD-SHELL fails with "stat /bin/sh: no such file or directory".
+      # Fix (2026-06-16): disable the Docker healthcheck entirely. The /ready
+      # endpoint (http://localhost:4040/ready) IS reachable and returns 200
+      # once the Ingester and Segment Writer finish their 30s warmup window.
+      # External monitoring (Prometheus blackbox / Grafana synthetic) should
+      # poll /ready instead; Docker's HEALTHCHECK mechanism can't exec a shell
+      # in this image.
+      test: ["NONE"]
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 128M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "3"
+
+volumes:
+  pyroscope_data:
+    name: shared-pyroscope-data
+
+networks:
+  shared:
+    external: true
+    name: shared-infra_default

@@ -199,6 +199,56 @@ services:
         max-size: "5m"
         max-file: "2"
 
+  bifrost-autoheal:
+    # Auto-park any Bifrost provider with SUSTAINED auth failures (2026-07-08).
+    # A single dead key (expired / revoked / wrong project) otherwise floods the
+    # gateway forever via the per-minute model-discovery loop (this is exactly
+    # what the Gemini lane did on 2026-07-08 before it was parked by hand).
+    # This sidecar detects that from `docker logs shared-bifrost` and runs the
+    # same 5-step park procedure a human would (snapshot -> move block
+    # config.json->disabled-providers.json -> deregister config.db -> stop +
+    # sync_vk_allowlists + start -> alert). Mirrors the vllm-autoheal /
+    # vllm-wedge-monitor pattern: stock python:3.12-slim, stdlib-only script
+    # over the Docker socket, no image build. See bifrost/auth_autoheal.py for
+    # the full rationale + false-positive guards (active-only, MIN_HITS floor,
+    # protected local lanes never parked).
+    image: python:3.12-slim
+    container_name: bifrost-autoheal
+    depends_on:
+      - bifrost
+    working_dir: /work/bifrost
+    command: ["python", "-u", "/work/bifrost/auth_autoheal.py"]
+    environment:
+      AUTOHEAL_INTERVAL_S: "60"          # poll cadence
+      AUTOHEAL_WINDOW_S: "300"           # lookback window for the hit count
+      AUTOHEAL_MIN_HITS: "6"             # sustained floor before parking
+      AUTOHEAL_DRY_RUN: "false"          # true = detect + log only
+      AUTOHEAL_PROTECTED: "vllm-local,embed-local"   # local lanes never parked
+      # Leave Bifrost's built-in pricing datasheet alone (repo policy in
+      # CLAUDE.md + bifrost/README.md); set true to also purge pricing rows.
+      AUTOHEAL_PURGE_PRICING: "false"
+      AUTOHEAL_BIFROST_CONTAINER: "shared-bifrost"
+      AUTOHEAL_BIFROST_DIR: "/work/bifrost"
+      # Optional Discord alerting; set AUTOHEAL_DISCORD_WEBHOOK in shared-infra/.env
+      AUTOHEAL_DISCORD_WEBHOOK: "${AUTOHEAL_DISCORD_WEBHOOK:-}"
+    volumes:
+      # Docker socket so it can read shared-bifrost's logs + stop/start it.
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Read-WRITE mount of the bifrost dir: it edits config.json /
+      # disabled-providers.json / config.db and writes autoheal.log here.
+      - ./bifrost:/work/bifrost
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          cpus: "0.10"
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
 networks:
   shared:
     name: shared-infra_default

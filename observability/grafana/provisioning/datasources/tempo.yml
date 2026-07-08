@@ -1,0 +1,13 @@
+# Grafana Tempo datasource — trace store that replaced Jaeger v1 (2026-07-07).
+# otelcol tail-samples spans and forwards them to shared-tempo:4317; this points
+# Grafana's Explore/trace views at Tempo's query API. No Jaeger datasource is
+# provisioned (Jaeger was never a Grafana datasource here — its own UI on 16700
+# was retired with the container).
+apiVersion: 1
+datasources:
+  - name: Tempo
+    type: tempo
+    uid: tempo
+    access: proxy
+    url: http://shared-tempo:3200
+    editable: false

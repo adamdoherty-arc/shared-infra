@@ -12,7 +12,7 @@ container removed, service block deleted from `docker-compose.vllm.yml`,
 `litellm/config.yaml` archived to `shared-infra/.deleted-2026-05-14/`.
 
 **Active providers** (as of 2026-06-11, ALL-FREE — no paid providers; verify with `curl localhost:4445/api/governance/virtual-keys`):
-- `vllm-local`  → `vllm-chat:8000`  (Qwen3.5-35B-A3B-GPTQ-Int4 on vLLM v0.22.1, 64K ctx, TOOLS ENABLED via qwen3_xml parser; stable alias `qwen3-chat`, legacy alias `Qwen3-32B-AWQ` — both map to the served model. NVFP4 variant of 3.6 was tried first and retired same-day: FlashInfer NVFP4 kernels crash/hang on WSL2+Blackwell)
+- `vllm-local`  → `vllm-chat:8000`  (cyankiwi/Qwen3.6-27B-AWQ-INT4 — dense 27B, AWQ-Marlin INT4 on vLLM v0.23.0-cu129, 16K ctx, TOOLS ENABLED via qwen3_xml parser; served canonical `Qwen3.5-35B-A3B`, stable alias `qwen3-chat`, legacy aliases `Qwen3-32B-AWQ` / `Qwen3.6-35B-A3B` — all map to the served model. Both the GPTQ-Int4 (MoE) and NVFP4 variants were tried and RETIRED — unstable on sm_120/Blackwell)
 - `embed-local` → `vllm-embed:8001` (Qwen3-Embedding-0.6B)
 - `moonshot`    → **COMPAT SHIM over `https://integrate.api.nvidia.com`** (the paid api.moonshot.ai account was retired 2026-06-11 — Kimi K2.6 is free on NVIDIA NIM. The provider name survives so legacy `moonshot/kimi-*` callers/DB rows keep working; every kimi variant aliases to `moonshotai/kimi-k2.6`)
 - `nvidia-nim`  → `https://integrate.api.nvidia.com` (44 models incl. z-ai/glm-5.1, moonshotai/kimi-k2.6, deepseek-v4-pro/flash, minimax-m2.7, nemotron-3-ultra-550b, qwen3.5-122b/397b, qwen3-next-80b — 40 RPM free. NOTE 2026-06-11: qwen3-coder-480b was DELISTED from the NIM catalog; deepseek-v4-pro/flash time out >170s — registered but not in any chain)
@@ -110,7 +110,7 @@ key-validation failures.
 
 | Provider   | Status                  | Action |
 |------------|-------------------------|--------|
-| vllm-local | ACTIVE                  | Local llama-cpp-chat:8000 — Qwen3.6-35B-A3B (alias `qwen3-chat`) |
+| vllm-local | ACTIVE                  | Local vllm-chat:8000 — Qwen3.5-35B-A3B (root `cyankiwi/Qwen3.6-27B-AWQ-INT4`; alias `qwen3-chat`) |
 | embed-local| ACTIVE                  | Local vllm-embed:8001 — Qwen3-Embedding-0.6B |
 | moonshot   | ACTIVE (verified 200)   | Kimi at `https://api.moonshot.ai`. Models: kimi-k2.6, kimi-k2.5, kimi-k2.6-thinking, moonshot-v1-32k, moonshot-v1-128k. `list_models` is not supported by Moonshot's API — Bifrost falls back to a static datasheet at startup and logs an error line; that error is one-shot and benign. |
 | minimax    | DISABLED (user removed) | Block in `disabled-providers.json`. Key still works upstream — blank `MINIMAX_API_KEY` in shared-infra/.env before re-enabling. |

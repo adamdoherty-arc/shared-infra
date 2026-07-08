@@ -6,7 +6,7 @@ One set of vLLM containers serving Zero, Ada, and Legion. Single model in VRAM p
 
 | Endpoint | Model | Host port | Container port |
 |---|---|---|---|
-| Chat / code (`vllm-chat`) | `Qwen/Qwen3.5-35B-A3B-GPTQ-Int4` on vLLM v0.22.1 — MoE 35B/3B-active, hybrid GDN, 64K ctx, tools enabled, Marlin INT4 kernels. Served names: `Qwen3.5-35B-A3B`, `Qwen3.6-35B-A3B`, `qwen3-chat`, `Qwen3-32B-AWQ` (legacy) | **18801** | 8000 |
+| Chat / code (`vllm-chat`) | `cyankiwi/Qwen3.6-27B-AWQ-INT4` on vLLM v0.23.0-cu129 — dense 27B, AWQ-Marlin INT4 kernels, 16K ctx, tools enabled (`qwen3_xml`). Served names: `Qwen3.5-35B-A3B` (canonical), `qwen3-chat`, `Qwen3.6-27B`, plus legacy `Qwen3-32B-AWQ` / `Qwen3.6-35B-A3B` | **18801** | 8000 |
 | Embedding (`vllm-embed`) | `Qwen/Qwen3-Embedding-0.6B` | 8001 | 8001 |
 | LLM gateway (`shared-bifrost`) | Bifrost v1.5.0 — 11 ALL-FREE providers (see `bifrost/README.md`) | **4445** | 8080 |
 | Free-tier aggregator (`shared-freellmapi`) | ~14 free providers, priority fallback chain | **3015** | 3001 |
@@ -19,7 +19,7 @@ One set of vLLM containers serving Zero, Ada, and Legion. Single model in VRAM p
 - *Huihui-Qwen3.6-35B-A3B GGUF on llama.cpp (2026-04-28→2026-05-17)* — retired for llama.cpp structured-JSON bugs + CUDA regression.
 - *Qwen3-32B-AWQ (2026-04-27→2026-06-11)* — dense 32B Int4, the stable baseline. ~50 tok/s, 12K ctx, tools off. Remains the documented rollback (see compose header).
 - *Qwen3.6-35B-A3B-NVFP4 (2026-06-11, retired same day)* — FlashInfer CUTLASS NVFP4 kernels crash under torch.compile and hang (<1 tok/s then frozen) under eager on this WSL2+Blackwell box. Full attempt log in the compose file.
-- *Qwen3.5-35B-A3B-GPTQ-Int4 (current, 2026-06-11→)* — official Qwen quant on vLLM v0.22.1, **Marlin INT4 kernels** (the family proven on this card since April). MoE 3B-active + hybrid GDN: 64K context at ~1-2 GB KV, tool calling enabled via `qwen3_xml` parser. Field-proven 5090 recipe (131K ctx / 194 tok/s reported upstream).
+- *cyankiwi/Qwen3.6-27B-AWQ-INT4 (current, 2026-06-24→)* — DENSE 27B, **AWQ-Marlin INT4 kernels** on vLLM v0.23.0-cu129, ctx 16384, tool calling enabled via `qwen3_xml` parser. Served canonically as `Qwen3.5-35B-A3B` (+ alias `qwen3-chat`). Dense was chosen to STRUCTURALLY avoid the NVFP4-MoE running=2 wedge on sm_120 (vllm#35566). Both prior paths are RETIRED as unstable on this Blackwell box: *Qwen3.5-35B-A3B-GPTQ-Int4* (MoE, forced `--enforce-eager` → ~9 tok/s + engine wedges) and *Qwen3.6-35B-A3B-NVFP4* (FlashInfer CUTLASS crash / <1 tok/s hang).
 
 ## Start / stop
 
@@ -52,9 +52,9 @@ Each project calls Bifrost with a per-project virtual key and `provider/model` s
 
 ## VRAM budget (5090 / 32 GB)
 
-- vllm-chat (Qwen3.6-35B-A3B NVFP4): ~20 GB weights + ~1-2 GB KV @ 64K (hybrid GDN)
+- vllm-chat (cyankiwi/Qwen3.6-27B-AWQ-INT4, dense AWQ-Marlin INT4): ~19 GB weights + KV @ 16K ctx
 - vllm-embed (Qwen3-Embedding-0.6B): ~1.5 GB
 - cudagraph buffers: ~1-1.5 GB
-- Total pinned: ~25 GB (0.88 util cap on chat, 0.12 on embed)
+- Total pinned: ~26 GB (0.92 util cap on chat, 0.12 on embed)
 
-If KV pressure shows up, lower `--max-model-len` on `vllm-chat` (currently 65536) or reduce `--gpu-memory-utilization` (currently 0.88). Do NOT switch KV off fp8.
+If KV pressure shows up, lower `--max-model-len` on `vllm-chat` (currently 16384) or reduce `--gpu-memory-utilization` (currently 0.92). Do NOT switch KV off fp8.

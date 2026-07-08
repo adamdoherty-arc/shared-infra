@@ -13,10 +13,18 @@ refreshed. Run this after ANY provider/model change in config.json:
 For every VK x every active provider it upserts a row whose allowed_models is
 a verbatim copy of the provider's config_keys.models_json (allow_all_keys=1),
 and deletes PC rows for providers that no longer exist.
+
+DB PATH (2026-07-08): defaults to the Windows host path so existing host
+invocation is unchanged, but honours the BIFROST_CONFIG_DB env var so the
+bifrost-autoheal sidecar (which sees the same file at /work/bifrost/config.db
+inside its container) can reuse this exact sync logic during an auto-park.
 """
+import os
 import sqlite3
 
-db = sqlite3.connect(r"C:/code/shared-infra/bifrost/config.db")
+DB_PATH = os.environ.get("BIFROST_CONFIG_DB", r"C:/code/shared-infra/bifrost/config.db")
+
+db = sqlite3.connect(DB_PATH)
 
 providers = {}
 for prov, models in db.execute("SELECT provider, models_json FROM config_keys"):

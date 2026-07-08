@@ -2,20 +2,23 @@
 # Single instance of each model in VRAM; all three projects point at these endpoints
 # via VLLM_CHAT_BASE_URL / VLLM_EMBED_BASE_URL in their .env files.
 #
-# Chat backend (2026-06-11→): vLLM v0.22.1 serving Qwen3.5-35B-A3B-GPTQ-Int4
-# (official Qwen quant, Marlin INT4 kernels — the proven kernel family on
-# this card). MoE 35B total / 3B active per token + hybrid Gated-DeltaNet
-# attention → much faster than the old dense-32B AND cheap KV (64K context
-# costs ~1-2 GB). Tool calling enabled (qwen3_xml parser). Bifrost forwards
-# `vllm-local/qwen3-chat` (and legacy `Qwen3-32B-AWQ`) here.
-# (Qwen3.6-35B-A3B-NVFP4 was attempted first the same day and retired —
-# FlashInfer NVFP4 kernels crash/hang on this WSL2+Blackwell box; see the
-# attempt log inside the vllm-chat service block.)
+# Chat backend (2026-06-24→): vLLM v0.23.0-cu129 serving
+# cyankiwi/Qwen3.6-27B-AWQ-INT4 — a DENSE 27B, AWQ-Marlin INT4 (the proven
+# Blackwell weight-only kernel on this card), ctx 16384, tool calling enabled
+# (qwen3_xml parser). Served canonical name `Qwen3.5-35B-A3B` (+ stable alias
+# `qwen3-chat`); Bifrost forwards `vllm-local/qwen3-chat` (and legacy
+# `Qwen3-32B-AWQ`) here. Dense 27B was chosen to STRUCTURALLY avoid the
+# NVFP4-MoE running=2 wedge on sm_120 (vllm#35566). Both earlier paths are
+# RETIRED as unstable on this WSL2+Blackwell box: Qwen3.5-35B-A3B-GPTQ-Int4
+# (MoE, forced --enforce-eager -> ~9 tok/s + engine wedges) and
+# Qwen3.6-35B-A3B-NVFP4 (FlashInfer CUTLASS crash/hang). The authoritative
+# live config + full swap history are in the vllm-chat service block below
+# (see "SWAP 2026-06-24").
 #
 # VRAM budget on a 5090 (32 GB):
-#   chat  (Qwen3.5-35B-A3B GPTQ-Int4, vLLM)    ~19 GB weights + KV
+#   chat  (cyankiwi/Qwen3.6-27B-AWQ-INT4, dense AWQ-INT4)  ~19 GB weights + KV
 #   embed (Qwen3-Embedding-0.6B, vLLM)         ~1.5 GB
-#   total                                       ~26 GB pinned (0.88 util cap)
+#   total                                       ~26 GB pinned (0.92 util cap)
 #
 # Model swap history:
 #   - Qwen3.6-35B-A3B-FP8 (March 2026): 34 GiB, OOM on 32 GB. RETIRED.
