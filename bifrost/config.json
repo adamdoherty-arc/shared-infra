@@ -74,10 +74,10 @@
     "nvidia-nim": {
       "keys": [
         {
-          "name": "nvidia-nim-primary",
-          "value": "env.NV_API_KEY",
+          "name": "nvidia-nim-secondary",
+          "value": "env.NV_API_KEY_2",
           "models": [
-            "z-ai/glm-5.1",
+            "z-ai/glm-5.2",
             "moonshotai/kimi-k2.6",
             "minimaxai/minimax-m2.7",
             "nvidia/nemotron-3-ultra-550b-a55b",
@@ -118,11 +118,63 @@
             "meta/llama-3.2-90b-vision-instruct",
             "nvidia/nemotron-nano-12b-v2-vl",
             "meta/llama-3.2-11b-vision-instruct",
-            "nvidia/llama-3.1-nemotron-nano-vl-8b-v1"
+            "nvidia/llama-3.1-nemotron-nano-vl-8b-v1",
+            "deepseek-ai/deepseek-v4-flash"
+          ],
+          "weight": 1.0
+        },
+        {
+          "name": "nvidia-nim-primary",
+          "value": "env.NV_API_KEY",
+          "models": [
+            "z-ai/glm-5.2",
+            "moonshotai/kimi-k2.6",
+            "minimaxai/minimax-m2.7",
+            "nvidia/nemotron-3-ultra-550b-a55b",
+            "mistralai/mistral-large-3-675b-instruct-2512",
+            "qwen/qwen3.5-397b-a17b",
+            "qwen/qwen3.5-122b-a10b",
+            "qwen/qwen3-next-80b-a3b-instruct",
+            "nvidia/nemotron-3-super-120b-a12b",
+            "openai/gpt-oss-120b",
+            "mistralai/mistral-small-4-119b-2603",
+            "stockmark/stockmark-2-100b-instruct",
+            "meta/llama-3.1-70b-instruct",
+            "meta/llama-3.3-70b-instruct",
+            "nvidia/llama-3.3-nemotron-super-49b-v1",
+            "nvidia/llama-3.3-nemotron-super-49b-v1.5",
+            "bytedance/seed-oss-36b-instruct",
+            "nvidia/nemotron-3-nano-30b-a3b",
+            "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
+            "openai/gpt-oss-20b",
+            "meta/llama-4-maverick-17b-128e-instruct",
+            "mistralai/ministral-14b-instruct-2512",
+            "nvidia/nvidia-nemotron-nano-9b-v2",
+            "meta/llama-3.1-8b-instruct",
+            "nvidia/llama-3.1-nemotron-nano-8b-v1",
+            "mistralai/mistral-7b-instruct-v0.3",
+            "mistralai/mixtral-8x7b-instruct-v0.1",
+            "upstage/solar-10.7b-instruct",
+            "google/gemma-3n-e4b-it",
+            "nvidia/nemotron-mini-4b-instruct",
+            "meta/llama-3.2-3b-instruct",
+            "google/gemma-2-2b-it",
+            "google/gemma-3n-e2b-it",
+            "meta/llama-3.2-1b-instruct",
+            "mistralai/mistral-nemotron",
+            "sarvamai/sarvam-m",
+            "stepfun-ai/step-3.5-flash",
+            "stepfun-ai/step-3.7-flash",
+            "meta/llama-3.2-90b-vision-instruct",
+            "nvidia/nemotron-nano-12b-v2-vl",
+            "meta/llama-3.2-11b-vision-instruct",
+            "nvidia/llama-3.1-nemotron-nano-vl-8b-v1",
+            "deepseek-ai/deepseek-v4-flash"
           ],
           "weight": 1.0,
           "aliases": {
-            "glm-5.1": "z-ai/glm-5.1",
+            "glm-5.1": "z-ai/glm-5.2",
+            "glm-5.2": "z-ai/glm-5.2",
             "kimi-k2.6": "moonshotai/kimi-k2.6",
             "kimi-nim": "moonshotai/kimi-k2.6",
             "minimax-m2.7": "minimaxai/minimax-m2.7",
@@ -134,14 +186,16 @@
             "nemotron-super-120b": "nvidia/nemotron-3-super-120b-a12b",
             "nemotron-super-49b": "nvidia/llama-3.3-nemotron-super-49b-v1.5",
             "llama-90b-vision": "meta/llama-3.2-90b-vision-instruct",
-            "nemotron-vl": "nvidia/nemotron-nano-12b-v2-vl"
+            "nemotron-vl": "nvidia/nemotron-nano-12b-v2-vl",
+            "deepseek-v4": "deepseek-ai/deepseek-v4-flash",
+            "deepseek-v4-flash": "deepseek-ai/deepseek-v4-flash"
           }
         }
       ],
       "network_config": {
         "base_url": "https://integrate.api.nvidia.com",
         "default_request_timeout_in_seconds": 120,
-        "max_retries": 2
+        "max_retries": 0
       },
       "custom_provider_config": {
         "base_provider_type": "openai",
@@ -175,10 +229,12 @@
             "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
             "nvidia/nemotron-nano-12b-v2-vl:free",
             "poolside/laguna-m.1:free",
-            "poolside/laguna-xs.2:free",
-            "nex-agi/nex-n2-pro:free",
+            "poolside/laguna-xs-2.1:free",
             "openrouter/owl-alpha",
-            "openrouter/free"
+            "openrouter/free",
+            "cohere/north-mini-code:free",
+            "tencent/hy3:free",
+            "nousresearch/hermes-3-llama-3.1-405b:free"
           ],
           "weight": 1.0,
           "aliases": {
@@ -188,7 +244,10 @@
             "qwen3-next-80b-free": "qwen/qwen3-next-80b-a3b-instruct:free",
             "gpt-oss-120b-free": "openai/gpt-oss-120b:free",
             "llama-3.3-70b-free": "meta-llama/llama-3.3-70b-instruct:free",
-            "or-auto-free": "openrouter/free"
+            "or-auto-free": "openrouter/free",
+            "north-code-free": "cohere/north-mini-code:free",
+            "hy3-free": "tencent/hy3:free",
+            "hermes-405b-free": "nousresearch/hermes-3-llama-3.1-405b:free"
           }
         }
       ],
@@ -225,7 +284,10 @@
             "zai-org/GLM-5.1",
             "openai/gpt-oss-120b",
             "openai/gpt-oss-20b",
-            "meta-llama/Llama-3.1-8B-Instruct"
+            "meta-llama/Llama-3.1-8B-Instruct",
+            "moonshotai/Kimi-K2.7-Code",
+            "Qwen/Qwen3-Coder-480B-A35B-Instruct",
+            "deepseek-ai/DeepSeek-V4-Flash"
           ],
           "weight": 1.0,
           "aliases": {
@@ -233,14 +295,17 @@
             "minimax-m2.7-hf": "MiniMaxAI/MiniMax-M2.7",
             "qwen3-coder-hf": "Qwen/Qwen3-Coder-Next",
             "gemma-4-31b-hf": "google/gemma-4-31B-it",
-            "glm-5.1-hf": "zai-org/GLM-5.1"
+            "glm-5.1-hf": "zai-org/GLM-5.1",
+            "kimi-code-hf": "moonshotai/Kimi-K2.7-Code",
+            "qwen3-coder-480b-hf": "Qwen/Qwen3-Coder-480B-A35B-Instruct",
+            "deepseek-v4-hf": "deepseek-ai/DeepSeek-V4-Flash"
           }
         }
       ],
       "network_config": {
         "base_url": "https://router.huggingface.co",
         "default_request_timeout_in_seconds": 120,
-        "max_retries": 2
+        "max_retries": 0
       },
       "custom_provider_config": {
         "base_provider_type": "openai",
@@ -262,7 +327,8 @@
           "value": "env.CEREBRAS_API_KEY",
           "models": [
             "gpt-oss-120b",
-            "zai-glm-4.7"
+            "zai-glm-4.7",
+            "gemma-4-31b"
           ],
           "weight": 1.0
         }
@@ -295,9 +361,15 @@
             "openai/gpt-oss-120b",
             "openai/gpt-oss-20b",
             "qwen/qwen3-32b",
-            "llama-3.1-8b-instant"
+            "llama-3.1-8b-instant",
+            "qwen/qwen3.6-27b",
+            "meta-llama/llama-4-scout-17b-16e-instruct"
           ],
-          "weight": 1.0
+          "weight": 1.0,
+          "aliases": {
+            "qwen3.6-groq": "qwen/qwen3.6-27b",
+            "llama4-scout-groq": "meta-llama/llama-4-scout-17b-16e-instruct"
+          }
         }
       ],
       "network_config": {
@@ -356,6 +428,23 @@
       "_comment": "COMPAT SHIM (2026-06-11): provider name kept for the many legacy `moonshot/kimi-*` callers across ADA/Legion/Zero (code + DB rows), but the upstream is NVIDIA NIM's FREE Kimi K2.6 serving â€” the paid api.moonshot.ai account was retired. Aliases fold every legacy Kimi variant into moonshotai/kimi-k2.6 (NIM's model id). Remove this block once all projects emit nvidia-nim/moonshotai/kimi-k2.6 natively.",
       "keys": [
         {
+          "name": "moonshot-compat-nim-2",
+          "value": "env.NV_API_KEY_2",
+          "models": [
+            "kimi-k2.6",
+            "kimi-k2.5",
+            "kimi-k2.6-thinking",
+            "kimi-k2-thinking"
+          ],
+          "weight": 1.0,
+          "aliases": {
+            "kimi-k2.6": "moonshotai/kimi-k2.6",
+            "kimi-k2.5": "moonshotai/kimi-k2.6",
+            "kimi-k2.6-thinking": "moonshotai/kimi-k2.6",
+            "kimi-k2-thinking": "moonshotai/kimi-k2.6"
+          }
+        },
+        {
           "name": "moonshot-compat-nim",
           "value": "env.NV_API_KEY",
           "models": [
@@ -376,7 +465,7 @@
       "network_config": {
         "base_url": "https://integrate.api.nvidia.com",
         "default_request_timeout_in_seconds": 120,
-        "max_retries": 2
+        "max_retries": 0
       },
       "custom_provider_config": {
         "base_provider_type": "openai",

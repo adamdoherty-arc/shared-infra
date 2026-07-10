@@ -50,6 +50,10 @@ services:
       # restore the provider block to bifrost/config.json (Bifrost won't
       # pick up new env vars without a container restart).
       NV_API_KEY: ${NV_API_KEY:-}
+      # 2026-07-09: second NIM key (developer account) for rotation. Bifrost
+      # round-robins across keys defined on the nvidia-nim provider block by
+      # `weight`; failing key gets its budget skipped for subsequent calls.
+      NV_API_KEY_2: ${NV_API_KEY_2:-}
       # 2026-05-27: re-enabled OpenRouter + added NVIDIA NIM + HF Router provider
       # blocks in config.json. See those provider entries for the model catalogues.
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}

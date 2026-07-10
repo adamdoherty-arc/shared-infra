@@ -15,10 +15,10 @@ container removed, service block deleted from `docker-compose.vllm.yml`,
 - `vllm-local`  → `vllm-chat:8000`  (cyankiwi/Qwen3.6-27B-AWQ-INT4 — dense 27B, AWQ-Marlin INT4 on vLLM v0.23.0-cu129, 16K ctx, TOOLS ENABLED via qwen3_xml parser; served canonical `Qwen3.5-35B-A3B`, stable alias `qwen3-chat`, legacy aliases `Qwen3-32B-AWQ` / `Qwen3.6-35B-A3B` — all map to the served model. Both the GPTQ-Int4 (MoE) and NVFP4 variants were tried and RETIRED — unstable on sm_120/Blackwell)
 - `embed-local` → `vllm-embed:8001` (Qwen3-Embedding-0.6B)
 - `moonshot`    → **COMPAT SHIM over `https://integrate.api.nvidia.com`** (the paid api.moonshot.ai account was retired 2026-06-11 — Kimi K2.6 is free on NVIDIA NIM. The provider name survives so legacy `moonshot/kimi-*` callers/DB rows keep working; every kimi variant aliases to `moonshotai/kimi-k2.6`)
-- `nvidia-nim`  → `https://integrate.api.nvidia.com` (44 models incl. z-ai/glm-5.1, moonshotai/kimi-k2.6, deepseek-v4-pro/flash, minimax-m2.7, nemotron-3-ultra-550b, qwen3.5-122b/397b, qwen3-next-80b — 40 RPM free. NOTE 2026-06-11: qwen3-coder-480b was DELISTED from the NIM catalog; deepseek-v4-pro/flash time out >170s — registered but not in any chain)
-- `openrouter`  → `https://openrouter.ai/api` (17 `:free` models incl. nemotron-3-ultra-550b (1M ctx), qwen3-coder (1M ctx), qwen3-next-80b, gemma-4-31b/26b-a4b, gpt-oss-120b/20b, poolside laguna, plus `openrouter/free` auto-router. $10 lifetime topup applied 2026-06-11 → 1,000 free req/day. KNOWN ISSUE: `qwen/qwen3-coder:free` returns 404 until the account's privacy setting "allow free endpoints that may train on inputs" is enabled)
-- `hf-router`   → `https://router.huggingface.co` (DeepSeek, Kimi, MiniMax, Qwen, GLM, gpt-oss — ~100K free credits/month, thin; use as deep fallback only)
-- `groq` / `cerebras` / `mistral` — perpetual free tiers (gpt-oss-120b at 200K TPD on groq; ~1M tok/day on cerebras; ~1B tok/month on mistral — incl `mistral-large-latest` + `magistral-medium-latest` added 2026-06-11 and verified through the gateway; magistral returns content as a parts-array, callers must join text parts)
+- `nvidia-nim`  → `https://integrate.api.nvidia.com` (43 models incl. z-ai/glm-5.1, moonshotai/kimi-k2.6, deepseek-v4-flash, minimax-m2.7, nemotron-3-ultra-550b, qwen3.5-122b/397b, qwen3-next-80b — 40 RPM free. NOTE 2026-06-11: qwen3-coder-480b was DELISTED from the NIM catalog; deepseek-v4-pro still times out >170s (not in any chain) but deepseek-v4-flash was verified working 2026-07-08 and added — codestral-22b-instruct/starcoder2-15b/deepseek-coder-6.7b are LISTED in the catalog but 404 "not found for account", not actually deployed)
+- `openrouter`  → `https://openrouter.ai/api` (19 `:free` models incl. nemotron-3-ultra-550b (1M ctx), qwen3-coder (1M ctx), qwen3-next-80b, gemma-4-31b/26b-a4b, gpt-oss-120b/20b, poolside laguna, cohere/north-mini-code, tencent/hy3, nousresearch/hermes-3-405b, plus `openrouter/free` auto-router. $10 lifetime topup applied 2026-06-11 → 1,000 free req/day. UPDATE 2026-07-08: the old "404 needs privacy toggle" note for `qwen/qwen3-coder:free` no longer reproduces — current behavior is transient 429 upstream rate-limiting via the "Venice" backing provider (retry_after 3-30s), which Bifrost's existing retry/fallback already absorbs. `nex-agi/nex-n2-pro:free` was removed — OpenRouter delisted it from free tier (paid-only now); `poolside/laguna-xs.2:free` renamed upstream to `laguna-xs-2.1:free`, updated)
+- `hf-router`   → `https://router.huggingface.co` (13 models: DeepSeek, Kimi (incl. dedicated Kimi-K2.7-Code), MiniMax, Qwen (incl. Qwen3-Coder-480B), GLM, gpt-oss — ~100K free credits/month, thin; use as deep fallback only)
+- `groq` / `cerebras` / `mistral` — perpetual free tiers (gpt-oss-120b at 200K TPD on groq; ~1M tok/day on cerebras; ~1B tok/month on mistral — incl `mistral-large-latest` + `magistral-medium-latest` added 2026-06-11 and verified through the gateway; magistral returns content as a parts-array, callers must join text parts). Added 2026-07-08: groq gained `qwen/qwen3.6-27b` + `meta-llama/llama-4-scout-17b-16e-instruct`; cerebras gained `gemma-4-31b`; mistral's `codestral-latest` is the dedicated coder.
 - `gemini`      → FLASH-ONLY (gemini-3.5-flash, gemini-3-flash-preview, 3.1-flash-lite — 1,500 req/day free. Pro previews are billing-gated since ~May 2026 and were removed)
 - `zai`         → `https://api.z.ai` (glm-4.7-flash, 203K ctx, perpetually free. Uses `request_path_overrides` to hit `/api/paas/v4/chat/completions` — Z.ai doesn't serve the standard `/v1` path)
 
@@ -41,16 +41,20 @@ valid virtual key, OR the equivalent `x-bf-vk: sk-bf-...` header.
 
 ## Virtual keys
 
-Three virtual keys exist, one per project. Each has all 3 providers
-allowed with `allow_all_keys=true` so they can route to vllm-local,
-embed-local, and moonshot. Created via the governance API on
-2026-05-14:
+Six virtual keys exist (as of 2026-07-09), created via the governance API.
+Each has all providers allowed with `allow_all_keys=true` so it can route to
+vllm-local, embed-local, moonshot, nvidia-nim, and the other free lanes. After
+any VK add or provider/model change, run `sync_vk_allowlists.py` (stop -> sync
+-> start) so the per-VK allowlists mirror `config_keys` verbatim.
 
-| Project | Virtual key name | Where the key lives |
+| Project     | Virtual key name    | Where the key lives |
 |---|---|---|
-| ADA     | `ada-prod`      | `C:\code\ADA\.env` → `BIFROST_GATEWAY_KEY=sk-bf-...` |
-| Zero    | `zero-prod`     | `C:\code\zero\.env` → `VLLM_API_KEY` + `ZERO_BIFROST_API_KEY` |
-| Legion  | `legion-prod`   | `C:\code\Legion\.env` + `Legion\backend\.env` → `BIFROST_API_KEY` |
+| ADA         | `ada-prod`          | `C:\code\ADA\.env` -> `BIFROST_GATEWAY_KEY=sk-bf-...` |
+| Zero        | `zero-prod`         | `C:\code\zero\.env` -> `VLLM_API_KEY` + `ZERO_BIFROST_API_KEY` |
+| Legion      | `legion-prod`       | `C:\code\Legion\.env` + `Legion\backend\.env` -> `BIFROST_API_KEY` |
+| FortressOS  | `fortressos-prod`   | FortressOS project config |
+| Claude Code | `claude-code-local` | Local Claude Code / MCP sessions |
+| Hermes      | `hermes-prod`       | `~/.hermes/config.yaml` -> `model.api_key` (sk-bf-...); added 2026-07-09 when Hermes moved onto Bifrost |
 
 Rotate by hitting the governance API:
 ```

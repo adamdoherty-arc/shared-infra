@@ -9,3 +9,22 @@ nssm-stdout-*.log
 
 # Migration archives (bifrost migration 2026-05-14)
 .deleted-2026-05-14/
+
+# Bifrost runtime SQLite. The request-log DB is huge (tens of GB) and the
+# -wal/-shm sidecars are transient. config.db (the VK/provider mirror) IS
+# tracked intentionally; its wal/shm sidecars are not.
+bifrost/logs.db
+bifrost/logs.db-wal
+bifrost/logs.db-shm
+bifrost/config.db-wal
+bifrost/config.db-shm
+
+# Ad-hoc timestamped config backups (config.json.bak.*, config.db.bak.*)
+bifrost/*.bak.*
+
+# Archived corrupt DBs set aside for possible later recovery (logs.db.corrupt-*)
+bifrost/*.corrupt-*
+
+# Python bytecode
+__pycache__/
+*.pyc
