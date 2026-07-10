@@ -26,6 +26,7 @@ restart) so the stock python:slim image needs no pip install.
 """
 from __future__ import annotations
 
+import json
 import os
 import socket
 import time
@@ -80,13 +81,14 @@ def parse(metrics: str) -> tuple[float, float, float]:
 
 
 class _UnixHTTPConnection(HTTPConnection):
-    def __init__(self, sock_path: str) -> None:
+    def __init__(self, sock_path: str, timeout: float = 70) -> None:
         super().__init__("localhost")
         self._sock_path = sock_path
+        self._timeout = timeout
 
     def connect(self) -> None:
         s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        s.settimeout(70)
+        s.settimeout(self._timeout)
         s.connect(self._sock_path)
         self.sock = s
 
@@ -100,6 +102,70 @@ def docker_restart(name: str) -> int:
         return resp.status
     finally:
         conn.close()
+
+
+# --- py-spy auto-capture (daily-review run 17, 2026-07-10) --------------------
+# The single-request engine freeze (running=1, both token counters flat) keeps
+# recurring under seqs=1 (07-04, 07-08, and a 6-wedge burst 07-09) — seqs=1 caps
+# the RATE but does not eliminate it. The ONLY path to the kernel/engine root
+# cause is a stack of the EngineCore process DURING the freeze. That was said to
+# be "armed" via CAP_SYS_PTRACE on vllm-chat, but was never actually usable:
+# py-spy was never installed AND nobody is present at 03:58Z. This grabs the
+# dump AUTOMATICALLY in the ~2-min detection window BEFORE the restart wipes it,
+# so every future wedge leaves an EngineCore stack in this container's log.
+# Fully guarded: any failure/timeout logs and falls through to the (unchanged)
+# restart — it can never delay the heal.
+PYSPY_ON_WEDGE = os.environ.get("PYSPY_ON_WEDGE", "1") == "1"
+PYSPY_TIMEOUT_S = int(os.environ.get("PYSPY_DUMP_TIMEOUT_S", "60"))
+_PYSPY_CMD = (
+    "command -v py-spy >/dev/null 2>&1 || pip install -q py-spy >/dev/null 2>&1; "
+    "pid=$(ps -eo pid,args | grep -i EngineCore | grep -v grep "
+    "| awk '{print $1}' | head -1); "
+    "[ -n \"$pid\" ] && py-spy dump --pid \"$pid\" --nonblocking 2>&1 "
+    "|| echo 'py-spy: no EngineCore pid found'"
+)
+
+
+def _docker_exec_capture(name: str, cmd: list[str], timeout: int) -> str:
+    """Run cmd inside container `name` via the Docker Exec API and return its
+    combined output. Tty:true gives a raw (un-multiplexed) stream. Bounded by
+    the socket timeout so a hung exec can never delay the caller."""
+    conn = _UnixHTTPConnection(DOCKER_SOCK)
+    try:
+        body = json.dumps({
+            "AttachStdout": True, "AttachStderr": True, "Tty": True, "Cmd": cmd,
+        }).encode()
+        conn.request("POST", f"/{DOCKER_API}/containers/{name}/exec", body=body,
+                     headers={"Content-Type": "application/json"})
+        exec_id = json.loads(conn.getresponse().read()).get("Id")
+    finally:
+        conn.close()
+    if not exec_id:
+        return "py-spy: exec create returned no Id"
+    conn = _UnixHTTPConnection(DOCKER_SOCK, timeout)
+    try:
+        conn.request("POST", f"/{DOCKER_API}/exec/{exec_id}/start",
+                     body=json.dumps({"Detach": False, "Tty": True}).encode(),
+                     headers={"Content-Type": "application/json"})
+        return conn.getresponse().read(65536).decode("utf-8", "replace")
+    finally:
+        conn.close()
+
+
+def capture_pyspy_dump(name: str) -> None:
+    """Best-effort EngineCore stack dump into this monitor's log, before the
+    restart. Never raises."""
+    if not PYSPY_ON_WEDGE:
+        return
+    try:
+        out = _docker_exec_capture(name, ["sh", "-lc", _PYSPY_CMD], PYSPY_TIMEOUT_S)
+    except Exception as e:  # noqa: BLE001
+        log(f"py-spy capture failed: {e!r} (restart proceeds)")
+        return
+    log(f"py-spy EngineCore dump BEGIN ({name}) >>>>>")
+    for line in (out or "(empty)").splitlines():
+        print(f"[wedge-monitor:pyspy] {line}", flush=True)
+    log("py-spy EngineCore dump END <<<<<")
 
 
 def main() -> None:
@@ -152,6 +218,7 @@ def main() -> None:
             if gate_flat and gate_grace and gate_cooldown:
                 log(f"WEDGE DETECTED: {WEDGE_N} consecutive polls with requests running and "
                     f"zero token progress -> restarting {TARGET}")
+                capture_pyspy_dump(TARGET)  # stack the frozen EngineCore before we wipe it
                 try:
                     status = docker_restart(TARGET)
                     log(f"restart {TARGET} -> HTTP {status}")
