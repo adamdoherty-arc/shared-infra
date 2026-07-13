@@ -60,11 +60,19 @@ def _connect_rw() -> sqlite3.Connection:
 
 
 def _count_stale(conn: sqlite3.Connection) -> int:
-    """Count rows older than RETENTION_DAYS (uses epoch-seconds timestamp column)."""
+    """Count rows older than RETENTION_DAYS.
+
+    Bifrost's logs.timestamp column is SQLite type ``datetime`` (ISO text,
+    e.g. ``'2026-07-13 04:22:54'``).  Comparing it against
+    ``strftime('%s', ...)`` (epoch-seconds text like ``'1783229054'``) is a
+    lexicographic text comparison — ISO strings starting with ``'2'`` are
+    always textually greater than epoch strings starting with ``'1'``, so the
+    predicate never matched and nothing was ever pruned.  Use
+    ``datetime('now', ?)`` so both sides are ISO strings.
+    """
     cur = conn.cursor()
     cur.execute(
-        "SELECT COUNT(*) FROM logs "
-        "WHERE timestamp < strftime('%s', 'now', ?)",
+        "SELECT COUNT(*) FROM logs WHERE timestamp < datetime('now', ?)",
         (f"-{RETENTION_DAYS} days",),
     )
     row = cur.fetchone()
@@ -77,7 +85,7 @@ def _delete_batch(conn: sqlite3.Connection) -> int:
     cur.execute(
         "DELETE FROM logs WHERE ROWID IN "
         "(SELECT ROWID FROM logs "
-        " WHERE timestamp < strftime('%s', 'now', ?) "
+        " WHERE timestamp < datetime('now', ?) "
         " LIMIT ?)",
         (f"-{RETENTION_DAYS} days", BATCH_SIZE),
     )

@@ -173,8 +173,13 @@ services:
 
   bifrost-logs-pruner:
     # Nightly pruner for Bifrost logs.db.  Without retention the file
-    # grows without bound (reached 8.3 GB corrupt on 2026-06-11).
-    # Runs DELETE + VACUUM at 03:00 UTC, keeping 7 days of rows.
+    # grows without bound (reached 8.3 GB corrupt on 2026-06-11, 11.95 GB
+    # on 2026-07-13 — headed for the 26 GB corruption threshold).
+    # Runs DELETE + VACUUM at 03:00 UTC.  Retention dropped from 7d to 2d
+    # on 2026-07-13: LLM traffic grew to ~4.5 GB/day (140K rows/day at 32.5
+    # KB/row average of full request+response payload), so 7d retention
+    # would sustain a 30 GB DB that will corrupt at ~26 GB.  2d keeps the
+    # DB at ~9 GB steady-state, with a comfortable margin.
     # Mounts bifrost/ read-WRITE so it can modify logs.db directly.
     # No network access needed — pure local SQLite operation.
     build:
@@ -189,7 +194,7 @@ services:
       - ./bifrost:/data
     environment:
       BIFROST_LOGS_DB: "/data/logs.db"
-      LOGS_RETENTION_DAYS: "7"
+      LOGS_RETENTION_DAYS: "2"
       PRUNE_HOUR_UTC: "3"
     deploy:
       resources:
