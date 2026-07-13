@@ -1,0 +1,83 @@
+# Bifrost logs.db size alerts — Perf-503b Wave 3b Workstream 4 (2026-07-13).
+#
+# logs.db is Bifrost's SQLite request-log (telemetry only — model, latency,
+# cost, error_details, virtual_key_name; completely separate from the
+# tracked config.db). Without bounds it grows until SQLite refuses to open
+# it: it hit 8.3 GB / corrupt on 2026-06-11 and reached a "malformed database
+# disk image" corruption on 2026-07-09 at 26 GB (see
+# reference-bifrost-logs-db-corruption memory). The bifrost-logs-pruner
+# sidecar runs nightly DELETE + VACUUM (retention dropped 7d -> 2d same day
+# as this alert, in the Wave 0 hotfix) to keep it bounded at ~9 GB
+# steady-state, but until this file there was NO Prometheus alert on the
+# metric — the only way to notice bloat was manually curling
+# bifrost_logs_db_bytes. This closes that visibility gap.
+#
+# Exported by bifrost-metrics (backend/bifrost-metrics-exporter/exporter.py)
+# as a plain gauge in bytes; scraped by both shared-prometheus (job
+# bifrost-metrics, container DNS) and ada-prometheus (job bifrost, via
+# host.docker.internal:9102) — this rule fires on either since the metric
+# name carries no job-specific label requirement.
+#
+# Thresholds:
+#   Warn (5 GB / 30m)     — comfortably above the ~9 GB steady-state ceiling
+#                            isn't hit yet, but a stuck pruner or a spike in
+#                            traffic is worth a look before it compounds.
+#   Critical (15 GB / 5m) — past the pruner's intended steady-state and
+#                            closing in on the ~26 GB corruption threshold
+#                            observed on 2026-07-09. Page now — this is a
+#                            "check the pruner + consider the documented
+#                            stop/archive/recreate runbook" alert, not a
+#                            slow-trend one.
+groups:
+  - name: bifrost_logs_db
+    interval: 30s
+    rules:
+      - alert: BifrostLogsDbSizeWarn
+        expr: bifrost_logs_db_bytes > 5 * 1024 * 1024 * 1024
+        for: 30m
+        labels:
+          severity: warning
+          component: bifrost
+          ecosystem_project: shared
+        annotations:
+          summary: "Bifrost logs.db above 5 GB for 30m"
+          description: |
+            bifrost_logs_db_bytes = {{ $value | humanize1024 }}B, above the 5 GB
+            warn threshold for 30 minutes. Steady-state should be ~9 GB with
+            2d retention; this is early warning territory, not yet urgent.
+            Check the nightly pruner is actually running:
+              docker logs bifrost-logs-pruner --tail 50
+            Expect a "[pruner] done: total_deleted=... size_after=..." line
+            once per day around 03:00 UTC. If missing, the pruner may be
+            stuck on a write-lock timeout (Bifrost holding the lock past its
+            120s busy_timeout) — check bifrost-logs-pruner logs for
+            "write lock timeout" and consider a manual run:
+              docker run --rm -e RUN_ONCE=1 -v ./bifrost:/data shared-infra/bifrost-logs-pruner:1.0
+          runbook_url: "https://internal/runbooks/bifrost-logs-db-size"
+
+      - alert: BifrostLogsDbSizeCritical
+        expr: bifrost_logs_db_bytes > 15 * 1024 * 1024 * 1024
+        for: 5m
+        labels:
+          severity: critical
+          component: bifrost
+          ecosystem_project: shared
+        annotations:
+          summary: "Bifrost logs.db above 15 GB for 5m — approaching corruption threshold"
+          description: |
+            bifrost_logs_db_bytes = {{ $value | humanize1024 }}B, above 15 GB for 5
+            minutes. logs.db corrupted at ~26 GB on 2026-07-09
+            ("database disk image is malformed" on ANY row read, even
+            sqlite_master) — this is now in the danger zone. Act now:
+              1. docker logs bifrost-logs-pruner --tail 100   # confirm it's stuck, not just slow
+              2. Manual prune: docker run --rm -e RUN_ONCE=1 -v ./bifrost:/data shared-infra/bifrost-logs-pruner:1.0
+              3. If logs.db is already corrupt (any query errors even on
+                 sqlite_master), follow the documented recovery: stop
+                 bifrost-autoheal, bifrost-metrics, bifrost-logs-pruner,
+                 shared-bifrost -> mv logs.db logs.db.corrupt-<date> (+ -wal/-shm)
+                 -> start shared-bifrost (recreates a fresh logs.db) -> start
+                 the sidecars back up.
+            This is telemetry only (not config.db) — data loss on the
+            archive-and-recreate path is acceptable; do not let this state
+            persist waiting for a "safer" option.
+          runbook_url: "https://internal/runbooks/bifrost-logs-db-size"

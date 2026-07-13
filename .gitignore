@@ -24,6 +24,12 @@ bifrost/*.bak.*
 
 # Archived corrupt DBs set aside for possible later recovery (logs.db.corrupt-*)
 bifrost/*.corrupt-*
+# 2026-07-13 (Perf-503b Wave 3b W4): a concurrent archive-and-recreate run used
+# a bifrost/archive/ subdirectory instead of the flat bifrost/*.corrupt-<date>
+# convention above — that pattern is NOT recursive, so bifrost/archive/ was
+# untracked-but-NOT-ignored (git status showed it as a stageable 20+ GB
+# directory). Cover both conventions.
+bifrost/archive/
 
 # Python bytecode
 __pycache__/

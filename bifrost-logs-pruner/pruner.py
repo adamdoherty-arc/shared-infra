@@ -4,7 +4,12 @@ Bifrost writes every inference request to a SQLite database at
 /app/data/logs.db.  Without pruning, this file grows without bound
 (it reached 8.3 GB / corrupt on 2026-06-11 before being deleted
 manually).  This sidecar runs a DELETE + VACUUM every night at 03:00
-UTC to keep the table bounded at a configurable retention window.
+UTC to keep the table bounded at a configurable retention window, then
+best-effort TRUNCATEs the WAL file (2026-07-13: -wal alone reached
+9.76 GB — VACUUM's PASSIVE autocheckpoint reclaims data into the main
+file but never shrinks -wal on disk; only a TRUNCATE-mode checkpoint
+does, and that needs a momentary exclusive lock a busy Bifrost rarely
+leaves open — hence the retry loop below).
 
 Locking strategy:
   logs.db is in WAL mode (confirmed 2026-06-16).  WAL mode allows
@@ -152,6 +157,58 @@ def _prune_once() -> None:
                     print(f"[pruner] VACUUM skipped (lock contention): {exc!r}", flush=True)
             else:
                 print("[pruner] no rows deleted — VACUUM skipped", flush=True)
+
+            # WAL-mode gotcha (found 2026-07-13, logs.db hygiene workstream):
+            # VACUUM writes its rewritten pages through the WAL like any other
+            # transaction. A PASSIVE checkpoint (SQLite's default autocheckpoint,
+            # fires every ~1000 WAL pages) reclaims that data into the main file
+            # but does NOT shrink logs.db-wal on disk — only a TRUNCATE-mode
+            # checkpoint does, and TRUNCATE needs a momentary exclusive lock that
+            # a continuously-writing Bifrost rarely leaves open. Left unaddressed,
+            # -wal grew to 9.76 GB (bigger than the 11.95 GB main file) with zero
+            # visibility, because bifrost_logs_db_bytes only measured logs.db
+            # itself. Best-effort: try a few times with short backoffs — succeeds
+            # whenever Bifrost happens to be between writes, harmless no-op
+            # (busy=1) otherwise. Never blocks Bifrost — busy_timeout still caps
+            # the wait, and TRUNCATE failing just leaves the WAL as-is.
+            wal_reclaimed = False
+            wal_cur = conn.cursor()
+            for attempt in range(1, 6):
+                try:
+                    wal_cur.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                    busy, log_frames, checkpointed = wal_cur.fetchone()
+                    if busy == 0:
+                        print(
+                            f"[pruner] wal_checkpoint(TRUNCATE) succeeded on "
+                            f"attempt {attempt} (frames={log_frames}, "
+                            f"checkpointed={checkpointed})",
+                            flush=True,
+                        )
+                        wal_reclaimed = True
+                        break
+                    print(
+                        f"[pruner] wal_checkpoint(TRUNCATE) attempt {attempt} "
+                        f"busy (frames={log_frames}, checkpointed={checkpointed}) "
+                        "— Bifrost mid-write, retrying",
+                        flush=True,
+                    )
+                except sqlite3.OperationalError as exc:
+                    print(
+                        f"[pruner] wal_checkpoint(TRUNCATE) attempt {attempt} "
+                        f"error: {exc!r}",
+                        flush=True,
+                    )
+                time.sleep(3)
+            if not wal_reclaimed:
+                wal_mb = _file_mb(LOGS_DB.with_name(LOGS_DB.name + "-wal"))
+                print(
+                    f"[pruner] wal_checkpoint(TRUNCATE) did not complete after "
+                    f"5 attempts — logs.db-wal stays at {wal_mb:.1f} MB on disk "
+                    "(data itself is safely checkpointed into logs.db; this "
+                    "only affects on-disk WAL file size, not correctness). "
+                    "Will retry tomorrow.",
+                    flush=True,
+                )
         finally:
             conn.close()
     except Exception as exc:
