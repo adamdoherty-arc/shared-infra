@@ -456,6 +456,48 @@
         "concurrency": 2,
         "buffer_size": 50
       }
+    },
+    "github-models": {
+      "keys": [
+        {
+          "name": "github-models-primary",
+          "value": "env.GITHUB_MODELS_TOKEN",
+          "models": [
+            "openai/gpt-4.1",
+            "openai/gpt-4.1-mini",
+            "openai/gpt-4.1-nano",
+            "openai/gpt-4o",
+            "openai/gpt-4o-mini",
+            "deepseek/deepseek-r1",
+            "deepseek/deepseek-v3-0324",
+            "meta/llama-3.3-70b-instruct",
+            "microsoft/phi-4"
+          ],
+          "weight": 1.0,
+          "aliases": {
+            "gpt-4.1": "openai/gpt-4.1",
+            "gpt-4o-mini": "openai/gpt-4o-mini",
+            "deepseek-r1-gh": "deepseek/deepseek-r1"
+          }
+        }
+      ],
+      "network_config": {
+        "base_url": "https://models.github.ai/inference",
+        "default_request_timeout_in_seconds": 120,
+        "max_retries": 1
+      },
+      "custom_provider_config": {
+        "base_provider_type": "openai",
+        "allowed_requests": {
+          "list_models": false,
+          "chat_completion": true,
+          "chat_completion_stream": true
+        }
+      },
+      "concurrency_and_buffer_size": {
+        "concurrency": 2,
+        "buffer_size": 50
+      }
     }
   }
 }
