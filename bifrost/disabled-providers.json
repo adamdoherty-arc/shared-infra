@@ -1,11 +1,11 @@
 {
   "_README": [
     "Provider blocks parked here so they can be re-enabled without losing the",
-    "exact known-good config. As of 2026-06-11 the active set in bifrost/",
+    "exact known-good config. As of 2026-07-13 the active set in bifrost/",
     "config.json is: vllm-local + embed-local + nvidia-nim + openrouter +",
-    "hf-router + cerebras + groq + mistral + gemini (flash-only) + zai.",
-    "ALL-FREE stack — no paid providers. Everything else is shaped here for",
-    "fast restoration.",
+    "hf-router + cerebras + groq + mistral + zai. (gemini + moonshot both",
+    "parked — see below.) ALL-FREE stack — no paid providers. Everything",
+    "else is shaped here for fast restoration.",
     "",
     "Status (2026-06-11):",
     "  moonshot   — PARKED 2026-06-11. Was the only PAID provider. Kimi K2.6",
@@ -15,10 +15,33 @@
     "               billing/auto-recharge. Restore this block + key + compose",
     "               passthrough to re-enable.",
     "  anthropic  — env empty; user disabled intentionally.",
-    "  gemini     — ACTIVE again since 2026-05-31 but FLASH-ONLY as of",
-    "               2026-06-11: gemini-3.x Pro previews are billing-gated",
-    "               (no free API tier since ~May 2026). The wildcard block",
-    "               below re-enables Pro IF billing is ever added.",
+    "",
+    "Status (2026-07-13, Perf-503b-W3b — VK/provider health sweep):",
+    "  moonshot-nim-compat — PARKED 2026-07-13. This is a SEPARATE block from",
+    "               the paid 'moonshot' above — it's the free NIM-compat shim",
+    "               that lived in config.json as provider name 'moonshot' from",
+    "               2026-06-11 to 2026-07-13. Parked because NVIDIA NIM 404s",
+    "               moonshotai/kimi-k2.6 with 'Function ... Not found for",
+    "               account' on BOTH API keys despite it being listed in",
+    "               /v1/models — confirmed upstream NVIDIA bug, not a config",
+    "               problem. nvidia-nim/moonshotai/kimi-k2.6 was LEFT ACTIVE",
+    "               in the nvidia-nim provider block itself (NIM's own catalog",
+    "               still lists it); if NVIDIA redeploys the function it just",
+    "               starts working again with zero config change. See the",
+    "               moonshot-nim-compat block's own _comment for the exact",
+    "               restore steps + a re-verify curl.",
+    "  gemini     — was ACTIVE since 2026-05-31 (FLASH-ONLY as of 2026-06-11:",
+    "               gemini-3.x Pro previews are billing-gated, no free API",
+    "               tier since ~May 2026). PARKED 2026-07-08 — GEMINI_API_KEY",
+    "               invalid/expired, was flooding logs at ~4 warn/min. The",
+    "               'gemini' block below in this file IS the exact known-good",
+    "               flash-only config that was live (verified 2026-07-13 — its",
+    "               models[] matches config.json.bak.parkgemini-20260708 byte",
+    "               for byte). Restore: refresh GEMINI_API_KEY at",
+    "               https://aistudio.google.com/apikey, copy the block below",
+    "               back into config.json's providers, run",
+    "               sync_vk_allowlists.py, restart. The wildcard block below",
+    "               re-enables Pro IF billing is ever added.",
     "  minimax    — key still active upstream as of 2026-05-14 but user wants",
     "               it disabled. Either blank MINIMAX_API_KEY in shared-infra/",
     "               .env or revoke at MiniMax dashboard before restoring.",
@@ -101,6 +124,61 @@
       "concurrency_and_buffer_size": {
         "concurrency": 8,
         "buffer_size": 200
+      }
+    },
+    "moonshot-nim-compat": {
+      "_comment": "PARKED 2026-07-13 (Perf-503b-W3b) — NOT the same block as 'moonshot' above (that's the retired PAID api.moonshot.ai account). This was the free NIM-compat-shim provider named 'moonshot' in config.json from 2026-06-11 to 2026-07-13, routing legacy `moonshot/kimi-*` callers to NVIDIA NIM's moonshotai/kimi-k2.6. Parked because NVIDIA NIM now 404s that model with 'Function 23d4f03a-b8a6-4adb-a183-7daa083a09cc: Not found for account' on BOTH NV_API_KEY and NV_API_KEY_2 despite it still being listed in GET /v1/models — confirmed via direct curl to integrate.api.nvidia.com, bypassing Bifrost entirely, so this is an upstream NVIDIA catalog/serving-function bug, not a Bifrost or key problem. nvidia-nim/moonshotai/kimi-k2.6 itself was left ACTIVE in config.json's nvidia-nim provider block (NIM's own catalog still lists it — if NVIDIA redeploys the function it starts working again automatically with zero config change). TO RESTORE this compat-shim block: rename the key back to 'moonshot', copy it into config.json's `providers` object (in place of where it was, before `zai`), run sync_vk_allowlists.py, restart shared-bifrost. Re-verify first: curl -s -X POST https://integrate.api.nvidia.com/v1/chat/completions -H 'Authorization: Bearer '$NV_API_KEY -d '{\"model\":\"moonshotai/kimi-k2.6\",\"messages\":[{\"role\":\"user\",\"content\":\"ping\"}],\"max_tokens\":4}' — expect HTTP 200, not 404.",
+      "keys": [
+        {
+          "name": "moonshot-compat-nim-2",
+          "value": "env.NV_API_KEY_2",
+          "models": [
+            "kimi-k2.6",
+            "kimi-k2.5",
+            "kimi-k2.6-thinking",
+            "kimi-k2-thinking"
+          ],
+          "weight": 1.0,
+          "aliases": {
+            "kimi-k2.6": "moonshotai/kimi-k2.6",
+            "kimi-k2.5": "moonshotai/kimi-k2.6",
+            "kimi-k2.6-thinking": "moonshotai/kimi-k2.6",
+            "kimi-k2-thinking": "moonshotai/kimi-k2.6"
+          }
+        },
+        {
+          "name": "moonshot-compat-nim",
+          "value": "env.NV_API_KEY",
+          "models": [
+            "kimi-k2.6",
+            "kimi-k2.5",
+            "kimi-k2.6-thinking",
+            "kimi-k2-thinking"
+          ],
+          "weight": 1.0,
+          "aliases": {
+            "kimi-k2.6": "moonshotai/kimi-k2.6",
+            "kimi-k2.5": "moonshotai/kimi-k2.6",
+            "kimi-k2.6-thinking": "moonshotai/kimi-k2.6",
+            "kimi-k2-thinking": "moonshotai/kimi-k2.6"
+          }
+        }
+      ],
+      "network_config": {
+        "base_url": "https://integrate.api.nvidia.com",
+        "default_request_timeout_in_seconds": 120,
+        "max_retries": 0
+      },
+      "custom_provider_config": {
+        "base_provider_type": "openai",
+        "allowed_requests": {
+          "chat_completion": true,
+          "chat_completion_stream": true
+        }
+      },
+      "concurrency_and_buffer_size": {
+        "concurrency": 4,
+        "buffer_size": 100
       }
     },
     "anthropic": {

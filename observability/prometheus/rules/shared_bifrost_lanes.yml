@@ -47,6 +47,14 @@ groups:
             free-tier key, provider delisted the model, or sustained 429.
             NOTE: gemini/gemini-3.5-flash will stay down until GEMINI_API_KEY is rotated
             (interactive Google AI Studio login — operator action).
+            NOTE (2026-07-13): nvidia-nim/moonshotai/kimi-k2.6 + moonshot/kimi-k2.6 are down
+            with a confirmed upstream NVIDIA NIM catalog/serving-function bug (model listed
+            in /v1/models, 404s "Function ... Not found for account" on both API keys when
+            called) — not fixable from our side; re-test directly against
+            integrate.api.nvidia.com before re-promoting to critical tier.
+            hf-router/moonshotai/Kimi-K2.6 is down because the shared HF account depleted its
+            monthly included credits (402 on every hf-router model, not kimi-specific) —
+            resets on the next monthly billing cycle.
 
       - alert: BifrostLaneProberStalled
         expr: bifrost_lane_probe_enabled == 0 or (time() - bifrost_lane_probe_last_unixtime) > 1800

@@ -6,9 +6,9 @@ GATEWAY = "http://localhost:4445/v1/chat/completions"
 VK = "sk-bf-2aec7863-1e4f-433c-8677-6919166737d1"
 
 MODELS = [
-    "moonshot/kimi-k2.6",                                  # compat shim -> NIM
-    "nvidia-nim/moonshotai/kimi-k2.6",
-    "nvidia-nim/z-ai/glm-5.1",
+    "moonshot/kimi-k2.6",                                  # PARKED 2026-07-13 — compat shim -> NIM kimi-k2.6, see disabled-providers.json
+    "nvidia-nim/moonshotai/kimi-k2.6",                     # KNOWN DOWN 2026-07-13 — NVIDIA 404s "Function ... Not found for account" despite being listed in /v1/models
+    "nvidia-nim/z-ai/glm-5.2",                             # RENAMED 2026-07-13 (was z-ai/glm-5.1, upstream retired that id)
     "nvidia-nim/deepseek-ai/deepseek-v4-pro",
     "nvidia-nim/deepseek-ai/deepseek-v4-flash",
     "nvidia-nim/qwen/qwen3-next-80b-a3b-instruct",
@@ -17,13 +17,13 @@ MODELS = [
     "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
     "openrouter/google/gemma-4-26b-a4b-it:free",
     "openrouter/openrouter/free",
-    "gemini/gemini-3-flash-preview",
-    "gemini/gemini-3.5-flash",
+    "gemini/gemini-3-flash-preview",                       # PARKED 2026-07-08 — GEMINI_API_KEY expired, provider removed from config.json (expect 400 config-not-found)
+    "gemini/gemini-3.5-flash",                             # PARKED 2026-07-08 — same as above
     "groq/openai/gpt-oss-120b",
     "cerebras/gpt-oss-120b",
     "mistral/mistral-small-latest",
     "zai/glm-4.7-flash",
-    "hf-router/moonshotai/Kimi-K2.6",
+    "hf-router/moonshotai/Kimi-K2.6",                      # KNOWN DOWN 2026-07-13 — HF account depleted monthly credits (402 account-wide, resets monthly)
 ]
 
 for model in MODELS:

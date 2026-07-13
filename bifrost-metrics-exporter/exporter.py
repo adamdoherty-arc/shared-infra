@@ -79,15 +79,23 @@ PROBE_LANES = [
     # --- critical: local + each project's cloud primary (10m) ---
     ("vllm-local/qwen3-chat", "chat", "critical", 300),
     ("embed-local/Qwen/Qwen3-Embedding-0.6B", "embed", "critical", 300),
-    ("nvidia-nim/moonshotai/kimi-k2.6", "chat", "critical", 300, 40),  # ADA primary (NIM cold-start can hit 25s)
-    ("nvidia-nim/z-ai/glm-5.1", "chat", "critical", 300, 40),          # Legion reasoning (NIM cold-start can hit 25s)
+    ("nvidia-nim/z-ai/glm-5.2", "chat", "critical", 300, 40),          # Legion reasoning (NIM cold-start can hit 25s). RENAMED 2026-07-13: upstream retired z-ai/glm-5.1, glm-5.2 is the live model (config.json alias `glm-5.1` still resolves for old callers)
     ("groq/openai/gpt-oss-120b", "chat", "critical", 300),            # Zero primary (fast)
-    ("moonshot/kimi-k2.6", "chat", "critical", 300, 40),              # compat shim -> NIM (cold-start can hit 25s)
     # --- fallback: deep lanes + parked/dead, awareness only (1h) ---
+    # kimi-k2.6 DOWNGRADED critical->fallback 2026-07-13 (Perf-503b-W3b): confirmed via
+    # direct NVIDIA NIM API call (bypassing Bifrost, both NV_API_KEY + NV_API_KEY_2) that
+    # moonshotai/kimi-k2.6 404s "Function '23d4f03a...': Not found for account" even though
+    # it's still listed in GET /v1/models — same "listed but not deployed" pattern already
+    # documented for codestral-22b/starcoder2-15b/deepseek-coder-6.7b in bifrost/README.md.
+    # This is an NVIDIA-side catalog/serving-function bug, not a Bifrost or config issue —
+    # paging every 10m for something we cannot fix is alert fatigue. Re-promote to critical
+    # once NVIDIA redeploys the function (re-test: curl integrate.api.nvidia.com directly).
+    ("nvidia-nim/moonshotai/kimi-k2.6", "chat", "fallback", 3600, 40),  # ADA primary — DOWN upstream at NVIDIA, not actionable here
+    ("moonshot/kimi-k2.6", "chat", "fallback", 3600, 40),               # compat shim -> NIM, same upstream outage
     ("nvidia-nim/qwen/qwen3.5-122b-a10b", "chat", "fallback", 3600, 45),  # 122B: 12-17s, needs longer probe timeout
     ("cerebras/gpt-oss-120b", "chat", "fallback", 3600),
     ("mistral/mistral-large-latest", "chat", "fallback", 3600),
-    ("hf-router/moonshotai/Kimi-K2.6", "chat", "fallback", 3600),
+    ("hf-router/moonshotai/Kimi-K2.6", "chat", "fallback", 3600),   # HF account-wide monthly credits depleted 2026-07-13 (402 on every hf-router model, not kimi-specific); resets monthly
     ("openrouter/openrouter/free", "chat", "fallback", 3600),
     ("gemini/gemini-3.5-flash", "chat", "fallback", 3600),          # dead key — stays visibly down until rotated
 ]

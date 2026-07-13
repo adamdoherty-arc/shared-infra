@@ -44,10 +44,10 @@ curl http://localhost:3015/              # freellmapi dashboard
 
 Each project calls Bifrost with a per-project virtual key and `provider/model` strings (see `bifrost/README.md` for the VK table and calling convention). The canonical local model name in ALL project configs is **`vllm-local/qwen3-chat`** — a gateway alias that maps to whatever vllm-chat currently serves, so local model swaps never require project redeploys.
 
-**Per-project cloud affinity (2026-06-11)** — keeps the three projects off each other's free rate limits:
-- **Legion** → NVIDIA NIM: `z-ai/glm-5.1` (reasoning + code), `qwen3-next-80b` (fast)
-- **ADA** → Kimi K2.6 free via NIM (`nvidia-nim/moonshotai/kimi-k2.6`; the `moonshot/` provider name is a compat shim over NIM — paid Moonshot retired 2026-06-11)
-- **Zero** → Gemini Flash (`gemini-3-flash-preview`, 1,500 RPD) + Groq `gpt-oss-120b` (200K TPD)
+**Per-project cloud affinity (2026-06-11, model IDs updated 2026-07-13)** — keeps the three projects off each other's free rate limits:
+- **Legion** → NVIDIA NIM: `z-ai/glm-5.2` (reasoning + code — renamed upstream from `glm-5.1` 2026-07-13, alias kept in config.json), `qwen3-next-80b` (fast)
+- **ADA** → Kimi K2.6 free via NIM (`nvidia-nim/moonshotai/kimi-k2.6`; the `moonshot/` provider name was a compat shim over NIM, PARKED 2026-07-13 — paid Moonshot retired 2026-06-11). **KNOWN DOWN 2026-07-13**: NVIDIA 404s this model ("Function ... Not found for account") despite listing it in `/v1/models` — an upstream NIM bug, not fixable from our side; ADA falls back to local vLLM / groq in the meantime.
+- **Zero** → Gemini Flash (`gemini-3-flash-preview`, 1,500 RPD) + Groq `gpt-oss-120b` (200K TPD). **gemini provider PARKED 2026-07-08** (expired `GEMINI_API_KEY`) — Zero's affinity currently resolves to Groq + local vLLM until the key is rotated.
 - Everyone → local vLLM first, `freellm/auto` emergency tail.
 
 ## VRAM budget (5090 / 32 GB)

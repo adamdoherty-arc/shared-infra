@@ -424,61 +424,6 @@
         "buffer_size": 100
       }
     },
-    "moonshot": {
-      "_comment": "COMPAT SHIM (2026-06-11): provider name kept for the many legacy `moonshot/kimi-*` callers across ADA/Legion/Zero (code + DB rows), but the upstream is NVIDIA NIM's FREE Kimi K2.6 serving â€” the paid api.moonshot.ai account was retired. Aliases fold every legacy Kimi variant into moonshotai/kimi-k2.6 (NIM's model id). Remove this block once all projects emit nvidia-nim/moonshotai/kimi-k2.6 natively.",
-      "keys": [
-        {
-          "name": "moonshot-compat-nim-2",
-          "value": "env.NV_API_KEY_2",
-          "models": [
-            "kimi-k2.6",
-            "kimi-k2.5",
-            "kimi-k2.6-thinking",
-            "kimi-k2-thinking"
-          ],
-          "weight": 1.0,
-          "aliases": {
-            "kimi-k2.6": "moonshotai/kimi-k2.6",
-            "kimi-k2.5": "moonshotai/kimi-k2.6",
-            "kimi-k2.6-thinking": "moonshotai/kimi-k2.6",
-            "kimi-k2-thinking": "moonshotai/kimi-k2.6"
-          }
-        },
-        {
-          "name": "moonshot-compat-nim",
-          "value": "env.NV_API_KEY",
-          "models": [
-            "kimi-k2.6",
-            "kimi-k2.5",
-            "kimi-k2.6-thinking",
-            "kimi-k2-thinking"
-          ],
-          "weight": 1.0,
-          "aliases": {
-            "kimi-k2.6": "moonshotai/kimi-k2.6",
-            "kimi-k2.5": "moonshotai/kimi-k2.6",
-            "kimi-k2.6-thinking": "moonshotai/kimi-k2.6",
-            "kimi-k2-thinking": "moonshotai/kimi-k2.6"
-          }
-        }
-      ],
-      "network_config": {
-        "base_url": "https://integrate.api.nvidia.com",
-        "default_request_timeout_in_seconds": 120,
-        "max_retries": 0
-      },
-      "custom_provider_config": {
-        "base_provider_type": "openai",
-        "allowed_requests": {
-          "chat_completion": true,
-          "chat_completion_stream": true
-        }
-      },
-      "concurrency_and_buffer_size": {
-        "concurrency": 4,
-        "buffer_size": 100
-      }
-    },
     "zai": {
       "keys": [
         {
