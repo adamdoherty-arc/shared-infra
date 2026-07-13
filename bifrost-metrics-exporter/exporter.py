@@ -264,7 +264,7 @@ def _scrape_config() -> None:
         exporter_scrape_errors_total.labels(table="config").inc()
         return
     try:
-        conn = sqlite3.connect(f"file:{CONFIG_DB}?mode=ro", uri=True, timeout=5.0)
+        conn = sqlite3.connect(f"file:{CONFIG_DB}?mode=ro&immutable=1", uri=True, timeout=5.0)
         try:
             cur = conn.cursor()
             cur.execute("SELECT COUNT(*) FROM config_providers")
@@ -349,7 +349,9 @@ def _resolve_probe_vk() -> str:
     if not CONFIG_DB.exists():
         return ""
     try:
-        conn = sqlite3.connect(f"file:{CONFIG_DB}?mode=ro", uri=True, timeout=5.0)
+        conn = sqlite3.connect(
+            f"file:{CONFIG_DB}?mode=ro&immutable=1", uri=True, timeout=5.0
+        )
         try:
             row = conn.execute(
                 "SELECT value FROM governance_virtual_keys "
