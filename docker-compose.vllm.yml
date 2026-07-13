@@ -532,22 +532,53 @@ services:
     #     4-alias served-model-name + restore VLLM_NVFP4_GEMM_BACKEND env above
     #     + .env max_num_seqs=1 / max_model_len=8192 / mem_util=0.94 (the
     #     known-working NVFP4 config). Image stays at v0.23.0-cu129 either way.
+    # SWAP 2026-07-13 (shared-infra LLM review: cyankiwi/Qwen3.6-27B-AWQ-INT4 -> openai/gpt-oss-20b):
+    #   WHY: the dense 27B AWQ was wedge-safe only at max_num_seqs=1 (serialized
+    #     ALL chat across ADA/Legion/Zero — the box's running>=2 concurrency-wedge
+    #     bug hit both the NVFP4 MoE AND this dense model). gpt-oss-20b was
+    #     evaluated on THIS exact box (v0.23.0-cu129, SM120, WSL2) and empirically
+    #     BEAT the wedge: it sustained max_num_seqs=4 for a 3-min soak (running=4,
+    #     ~2900-3200 gen-tokens/30s, 0 wedge samples, GPU 100% WITH tokens flowing)
+    #     where every prior model deadlocked within minutes at running>=2. It is
+    #     also smaller (~14 GiB MXFP4 vs ~19 GiB), gives 28x KV headroom at 32768
+    #     ctx, has NATIVE agentic tool-calling (single- AND multi-turn verified
+    #     clean, no harmony-token leak / null-content bug), and warm latency 0.10s.
+    #   KERNEL: SM120 has no native/Triton MXFP4 MoE path in v0.23.0 (vLLM PR
+    #     #41028 unmerged), so gpt-oss rides the MARLIN MXFP4 fallback ("Using
+    #     'MARLIN' Mxfp4 MoE backend" at boot). The SM121 Marlin wrong-first-token
+    #     null-output bug (#37030) did NOT reproduce here (output verified correct).
+    #     Do NOT set VLLM_USE_FLASHINFER_MOE_MXFP4_MXFP8=1 — it FORCES the
+    #     FlashInfer-TRTLLM backend which errors on SM120 ("kernel does not support
+    #     current device cuda"). Leave it unset so Marlin is auto-selected.
+    #   PARSERS: gpt-oss uses the harmony format -> --tool-call-parser openai +
+    #     --reasoning-parser openai_gptoss (NOT qwen3_xml/qwen3). Set via .env
+    #     VLLM_TOOL_CALL_FLAGS. Prefix caching MUST be off (--no-enable-prefix-caching,
+    #     per the official GPT-OSS_Blackwell recipe). No --dtype / --limit-mm /
+    #     enable_thinking / cudagraph_capture_sizes overrides (all Qwen-specific;
+    #     gpt-oss auto-detects dtype + captures the full graph-size range).
+    #   CONCURRENCY: .env VLLM_MAX_NUM_SEQS raised 1 -> 2 (conservative production
+    #     start; validated clean at 4 during the review, raise after a longer soak).
+    #   ALIASES: KEEP "Qwen3.5-35B-A3B" FIRST (Bifrost VK allow-lists + provider
+    #     alias map resolve to this canonical name; changing it = platform-wide 403
+    #     per 2026-06-14). ADD gpt-oss-20b as an honest direct name.
+    #   ROLLBACK (proven-stable prior model): restore this block to --model
+    #     cyankiwi/Qwen3.6-27B-AWQ-INT4 + --dtype bfloat16 + --max-num-batched-tokens
+    #     2304 + --limit-mm-per-prompt + --enable-prefix-caching +
+    #     --default-chat-template-kwargs enable_thinking:false + the [1,2] compilation
+    #     -config, AND set .env VLLM_TOOL_CALL_FLAGS back to qwen3_xml/qwen3 +
+    #     VLLM_MAX_NUM_SEQS=1. Weights for both are cached; rollback is a recreate.
     command: >
-      --model cyankiwi/Qwen3.6-27B-AWQ-INT4
-      --served-model-name Qwen3.5-35B-A3B qwen3-chat Qwen3.6-27B Qwen3-32B-AWQ Qwen3.6-35B-A3B
+      --model openai/gpt-oss-20b
+      --served-model-name Qwen3.5-35B-A3B qwen3-chat gpt-oss-20b Qwen3.6-27B Qwen3-32B-AWQ Qwen3.6-35B-A3B
       --port 8000
       --host 0.0.0.0
-      --dtype bfloat16
       --max-model-len ${VLLM_MAX_MODEL_LEN:-16384}
       --gpu-memory-utilization ${VLLM_GPU_MEM_UTIL:-0.92}
       --max-num-seqs ${VLLM_MAX_NUM_SEQS:-2}
-      --max-num-batched-tokens 2304
-      --limit-mm-per-prompt '{"image":0,"video":0}'
+      --max-num-batched-tokens 8192
       --kv-cache-dtype fp8
-      --enable-prefix-caching
+      --no-enable-prefix-caching
       --enable-chunked-prefill
-      --default-chat-template-kwargs '{"enable_thinking": false}'
-      --compilation-config '{"cudagraph_capture_sizes":[1,2],"cudagraph_num_of_warmups":3}'
       ${VLLM_TOOL_CALL_FLAGS:- }
     ports:
       - "18801:8000"
