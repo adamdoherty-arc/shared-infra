@@ -567,18 +567,40 @@ services:
     #     --default-chat-template-kwargs enable_thinking:false + the [1,2] compilation
     #     -config, AND set .env VLLM_TOOL_CALL_FLAGS back to qwen3_xml/qwen3 +
     #     VLLM_MAX_NUM_SEQS=1. Weights for both are cached; rollback is a recreate.
+    # SWAP-BACK 2026-07-17 (daily-review run 23: executed the rollback above):
+    #   WHY: the promotion's core rationale (concurrency, seqs=2-4) was FALSIFIED
+    #     2026-07-14 — the running>=2 wedge is NOT model-specific on this box
+    #     (whole-VM GPU-KMD wedge under gpt-oss@seqs=2, host reboot required;
+    #     .env gate: re-raise ONLY with a kernel root-cause fix). At the mandated
+    #     seqs=1, gpt-oss reasons on EVERY request (~10-60s+ service at ~16 tok/s
+    #     Marlin-MXFP4) and cannot serve ADA's market-hours arrival rate (~8/min):
+    #     measured 2026-07-17 ~13:00Z — 777 completions/h through Bifrost, MEDIAN
+    #     latency 2388s, max 6463s, queue 4-5 deep for 2h+; direct pong 216s.
+    #     Qwen3.6-27B-AWQ-INT4 with enable_thinking:false serves the same load at
+    #     ~2-5s/request (weeks of production pre-07-13). Also retires the
+    #     reasoning-starvation class (small-max_tokens callers got content:null)
+    #     at the source; consumer-side guards from that era stay armed harmlessly.
+    #   COST accepted: back to the ~1/day single-request wedge (auto-healed ~2-3
+    #     min by vllm-wedge-monitor, which since 9c0f4a4 auto-captures a py-spy
+    #     EngineCore stack on every wedge — the root-cause read we still want).
+    #   ALIASES: list kept IDENTICAL (incl. gpt-oss-20b) — clients may have
+    #     adopted any name in the 07-13..07-17 window; removing one = 403/404s.
     command: >
-      --model openai/gpt-oss-20b
+      --model cyankiwi/Qwen3.6-27B-AWQ-INT4
       --served-model-name Qwen3.5-35B-A3B qwen3-chat gpt-oss-20b Qwen3.6-27B Qwen3-32B-AWQ Qwen3.6-35B-A3B
       --port 8000
       --host 0.0.0.0
+      --dtype bfloat16
       --max-model-len ${VLLM_MAX_MODEL_LEN:-16384}
       --gpu-memory-utilization ${VLLM_GPU_MEM_UTIL:-0.92}
-      --max-num-seqs ${VLLM_MAX_NUM_SEQS:-2}
-      --max-num-batched-tokens 8192
+      --max-num-seqs ${VLLM_MAX_NUM_SEQS:-1}
+      --max-num-batched-tokens 2304
+      --limit-mm-per-prompt '{"image":0,"video":0}'
       --kv-cache-dtype fp8
-      --no-enable-prefix-caching
+      --enable-prefix-caching
       --enable-chunked-prefill
+      --default-chat-template-kwargs '{"enable_thinking": false}'
+      --compilation-config '{"cudagraph_capture_sizes":[1,2],"cudagraph_num_of_warmups":3}'
       ${VLLM_TOOL_CALL_FLAGS:- }
     ports:
       - "18801:8000"
