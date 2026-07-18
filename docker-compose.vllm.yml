@@ -735,6 +735,15 @@ services:
     shm_size: "2gb"
     deploy:
       resources:
+        # Perf-999937 W10A I1 (2026-07-18): vllm-embed had neither a memory nor
+        # a CPU ceiling despite occasional restart history — a runaway embed
+        # call had no bulkhead. Steady-state is ~2.4 GiB RSS for the 0.6B
+        # pooling model + workspace; 8G leaves 2x headroom. cpus: 2.0 matches
+        # vllm-chat's cap (Fix-100418 followup) — inference here is GPU-bound,
+        # the CPU work is just the FastAPI server + tokenizer.
+        limits:
+          memory: 8G
+          cpus: "2.0"
         reservations:
           devices:
             - driver: nvidia
