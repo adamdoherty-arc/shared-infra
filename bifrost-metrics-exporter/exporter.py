@@ -177,67 +177,97 @@ lane_probe_enabled = Gauge(
 )
 
 
-def _read_cursor() -> int:
+def _looks_like_timestamp(val: str) -> bool:
+    """True if `val` looks like a `logs.timestamp` value (e.g.
+    '2026-07-18 04:32:05.671726134+00:00'), not a legacy bare-integer ROWID
+    cursor from the pre-Fix-1000157 exporter. Deliberately loose — we only
+    need to reject old cursor.txt content left over from before the
+    ROWID -> timestamp migration (2026-07-18)."""
+    return len(val) >= 10 and val[4] == "-" and val[7] == "-"
+
+
+def _read_cursor() -> str:
     try:
-        return int(CURSOR_FILE.read_text().strip())
+        val = CURSOR_FILE.read_text().strip()
+        if val and not _looks_like_timestamp(val):
+            # Legacy ROWID cursor (e.g. "4554392") from before Fix-1000157.
+            # A bare digit string text-compares as LESS than any real
+            # 'YYYY-...' timestamp ('4' > '2' lexically is backwards: SQLite
+            # would evaluate `timestamp > '4554392'` as FALSE for every row,
+            # since '2026-...' < '4554392' lexically) -- i.e. reusing it
+            # verbatim would silently re-break scraping the same way the
+            # ROWID cursor did after VACUUM. Treat as "no cursor" so the
+            # caller re-bootstraps cleanly.
+            return ""
+        return val
     except Exception:
-        return -1
+        return ""
 
 
-def _write_cursor(cursor_id: int) -> None:
+def _write_cursor(cursor_ts: str) -> None:
     STATE_DIR.mkdir(parents=True, exist_ok=True)
-    CURSOR_FILE.write_text(str(cursor_id))
+    CURSOR_FILE.write_text(cursor_ts)
 
 
-def _bootstrap_cursor() -> int:
-    """First-run cursor: jump to the current MAX(ROWID) so we don't ingest
-    months of historical rows. Prometheus rate()/increase() only needs
-    deltas from "now" forward; historical aggregates can still be
-    queried directly against logs.db with SQL when needed.
+def _bootstrap_cursor() -> str:
+    """First-run (or post-migration) cursor: jump to the current
+    MAX(timestamp) so we don't ingest months of historical rows. Prometheus
+    rate()/increase() only needs deltas from "now" forward; historical
+    aggregates can still be queried directly against logs.db with SQL when
+    needed.
     """
     if not LOGS_DB.exists():
-        return 0
+        return ""
     try:
         conn = sqlite3.connect(f"file:{LOGS_DB}?mode=ro", uri=True, timeout=5.0)
         try:
             cur = conn.cursor()
-            cur.execute("SELECT COALESCE(MAX(ROWID), 0) FROM logs")
-            return int(cur.fetchone()[0])
+            cur.execute("SELECT COALESCE(MAX(timestamp), '') FROM logs")
+            return str(cur.fetchone()[0] or "")
         finally:
             conn.close()
     except Exception:
-        return 0
+        return ""
 
 
-def _scrape_logs(cursor_rowid: int) -> int:
-    """Pull new rows from logs.db.logs and emit counters. Returns max ROWID seen.
+def _scrape_logs(cursor_ts: str) -> str:
+    """Pull new rows from logs.db.logs and emit counters. Returns max
+    `timestamp` value seen (as a string; the column is ISO-ish text).
 
-    The `id` column on logs is a UUID varchar so we can't use it as a
-    monotonic cursor — use SQLite's implicit ROWID instead. ROWID is
-    auto-incrementing INTEGER, always present unless the table is
-    WITHOUT ROWID (the logs table is not).
+    Fix-1000157 (2026-07-18): this used to cursor on SQLite's implicit
+    ROWID. The `id` column on `logs` is a UUID varchar (no INTEGER PRIMARY
+    KEY), and per SQLite docs VACUUM "may reset the ROWID values" for
+    exactly that shape of table. bifrost-logs-pruner runs DELETE + VACUUM
+    every night (03:00 UTC) whenever it deletes any stale rows -- which is
+    every night under real traffic -- so the ROWID cursor got silently
+    renumbered out from under the exporter: cursor > new MAX(ROWID) forever,
+    "no new rows" logged on every scrape indefinitely (confirmed stuck for
+    9+ hours straight during this investigation; likely stuck since the
+    2026-07-13 mega-prune). `timestamp` is a column VALUE written once per
+    row and is untouched by VACUUM's physical page reshuffling, so cursoring
+    on it is immune to this failure mode by construction.
     """
     if not LOGS_DB.exists():
         exporter_scrape_errors_total.labels(table="logs").inc()
-        return cursor_rowid
-    max_rowid = cursor_rowid
+        return cursor_ts
+    max_ts = cursor_ts
     try:
         conn = sqlite3.connect(f"file:{LOGS_DB}?mode=ro", uri=True, timeout=5.0)
         try:
             cur = conn.cursor()
             cur.execute(
                 """
-                SELECT ROWID, object_type, provider, model, status, latency,
+                SELECT timestamp, object_type, provider, model, status, latency,
                        prompt_tokens, completion_tokens, cost
                 FROM logs
-                WHERE ROWID > ?
-                ORDER BY ROWID ASC
+                WHERE timestamp > ?
+                ORDER BY timestamp ASC
                 LIMIT 5000
                 """,
-                (cursor_rowid,),
+                (cursor_ts,),
             )
             for row in cur.fetchall():
-                row_rowid, obj_type, provider, model, status, latency, p_tok, c_tok, cost = row
+                row_ts, obj_type, provider, model, status, latency, p_tok, c_tok, cost = row
                 provider = provider or "unknown"
                 model = model or ""
                 status = status or "unknown"
@@ -257,13 +287,13 @@ def _scrape_logs(cursor_rowid: int) -> int:
                         cost_total.labels(provider, model).inc(float(cost))
                     except (TypeError, ValueError):
                         pass
-                if isinstance(row_rowid, int) and row_rowid > max_rowid:
-                    max_rowid = row_rowid
+                if isinstance(row_ts, str) and row_ts > max_ts:
+                    max_ts = row_ts
         finally:
             conn.close()
     except Exception:
         exporter_scrape_errors_total.labels(table="logs").inc()
-    return max_rowid
+    return max_ts
 
 
 def _scrape_config() -> None:
@@ -287,16 +317,16 @@ def _scrape_config() -> None:
 
 def _scrape_loop() -> None:
     cursor = _read_cursor()
-    if cursor < 0:
+    if not cursor:
         cursor = _bootstrap_cursor()
         _write_cursor(cursor)
         print(
-            f"scrape-loop bootstrapped at MAX(ROWID)={cursor} "
+            f"scrape-loop bootstrapped at MAX(timestamp)={cursor!r} "
             f"(historical rows skipped; only forward deltas exported)",
             flush=True,
         )
     else:
-        print(f"scrape-loop resuming from cursor={cursor}", flush=True)
+        print(f"scrape-loop resuming from cursor={cursor!r}", flush=True)
     iteration = 0
     while True:
         iteration += 1
@@ -304,10 +334,10 @@ def _scrape_loop() -> None:
             new_cursor = _scrape_logs(cursor)
             if new_cursor != cursor:
                 _write_cursor(new_cursor)
-                advanced = new_cursor - cursor
+                prev_cursor = cursor
                 cursor = new_cursor
                 print(
-                    f"scrape #{iteration}: cursor advanced by {advanced} to {cursor}",
+                    f"scrape #{iteration}: cursor advanced from {prev_cursor!r} to {cursor!r}",
                     flush=True,
                 )
             else:

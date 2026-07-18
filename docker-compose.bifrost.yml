@@ -87,16 +87,36 @@ services:
           # provider model caches; 512M was undersized for the 5-project
           # traffic (ADA + Legion + Zero each backend + scheduler probing
           # /v1/models every ~8s). The bifrost-metrics sidecar's stalled
-          # cursor (no new rows in 9000+ scrapes as of 2026-06-15 20:00) is
-          # consistent with logs.db write-buffer pressure under tight memory.
+          # cursor (no new rows in 9000+ scrapes as of 2026-06-15 20:00) was
+          # GUESSED here as "logs.db write-buffer pressure under tight
+          # memory" — Fix-1000157 (2026-07-18) found the REAL cause: logs.id
+          # is a UUID varchar (no INTEGER PRIMARY KEY), so bifrost-logs-
+          # pruner's nightly DELETE+VACUUM renumbers the table's implicit
+          # ROWID per SQLite semantics, permanently stranding the exporter's
+          # persisted ROWID cursor above the new (smaller) max ROWID. Not a
+          # memory issue at all — fixed in bifrost-metrics-exporter/exporter.py
+          # by switching the cursor to the `timestamp` column (VACUUM-immune).
           # Fix-100418 followup (2026-06-16): 20h uptime hit 97% of 1G again
           # (999.4 MiB), same one-allocation-from-OOMKill posture. Same
           # workload — bifrost just needs more headroom under sustained
           # multi-project load. Bumped 1G -> 2G; CPU also doubled to 1.0
           # since the metrics export + provider-discovery loops are CPU-
           # light but were ceiling-clipped under spikes.
+          # Fix-1000157 (2026-07-18): CPU doubled again, 1.0 -> 2.0. Container
+          # startup log showed "maxprocs: Updating GOMAXPROCS=1: determined
+          # from CPU quota" — the Go runtime had exactly ONE OS thread/P to
+          # service HTTP request handling, JSON marshaling, AND the
+          # synchronous per-request SQLite write into logs.db (32.5 KB/row
+          # avg: full raw_request/raw_response/input_history text blobs).
+          # A slow write (logs.db is bind-mounted from the Windows host
+          # filesystem — measured ~3x slower fsync latency than the
+          # container's native overlay fs) had no second P to fall back on,
+          # so it could stall concurrent request dispatch. Cheap, safe,
+          # reversible; does not touch the vLLM engine's own seqs=1 GPU-KMD
+          # wedge mitigation (see docker-compose.vllm.yml — that is a
+          # separate, already deeply-diagnosed hardware/kernel issue).
           memory: 2G
-          cpus: "1.0"
+          cpus: "2.0"
     restart: unless-stopped
     healthcheck:
       # Keep Docker health focused on gateway liveness. Bifrost's aggregate

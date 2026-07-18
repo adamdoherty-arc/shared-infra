@@ -28,7 +28,7 @@
       "network_config": {
         "base_url": "http://vllm-chat:8000",
         "default_request_timeout_in_seconds": 600,
-        "max_retries": 2
+        "max_retries": 1
       },
       "custom_provider_config": {
         "base_provider_type": "openai",
@@ -39,7 +39,7 @@
         }
       },
       "concurrency_and_buffer_size": {
-        "concurrency": 4,
+        "concurrency": 1,
         "buffer_size": 100
       }
     },
