@@ -253,6 +253,13 @@ services:
       # are enabled (no --enforce-eager).
       FLASHINFER_CUDA_ARCH_LIST: "12.0f"
       FLASHINFER_FORCE_SM: "120f"
+      # Sampler backend (2026-07-20, daily-review run 25): the residual single-request
+      # wedge was pyspy-captured frozen in the token-SAMPLING kernel (_sample ->
+      # sample_tokens, NOT queue.get) while this box logs "Using FlashInfer for top-p &
+      # top-k sampling". Route sampling through the native PyTorch sampler to dodge the
+      # FlashInfer sampling-kernel hang on SM120. Attention backend is untouched.
+      # Set VLLM_USE_FLASHINFER_SAMPLER=1 in .env + recreate to roll back.
+      VLLM_USE_FLASHINFER_SAMPLER: ${VLLM_USE_FLASHINFER_SAMPLER:-1}
       # KV-OOM fix (2026-06-21): was a v0.22.1 workaround for its over-reserving
       # graph estimator. 2026-06-24 supervise v0.23 retry-2: removed because v0.23
       # has correct graph accounting and the workaround hurts more than helps on
