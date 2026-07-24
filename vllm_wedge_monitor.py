@@ -45,6 +45,16 @@ GRACE_S = int(os.environ.get("STARTUP_GRACE_S", "120"))       # ignore right aft
 # gets healed automatically. Per-poll heartbeat below shows the 3 gate conditions
 # so the next cooldown-related blockage is debuggable from the log alone.
 RESTART_COOLDOWN_S = int(os.environ.get("RESTART_COOLDOWN_S", "600"))
+# Fix-1000282 (2026-07-24): a fetch_metrics() exception (DNS/connect failure to
+# METRICS_URL) used to unconditionally reset `flat` to 0 every poll, so a
+# vllm-chat that's unreachable (crashed, network partition, name-resolution
+# failure post-recreate) could NEVER accumulate to a restart -- the monitor
+# went blind exactly when the wedge signal mattered most. This tracks
+# consecutive-unreachable polls on its OWN counter (default 2x WEDGE_N, i.e.
+# ~4 min of true unreachability) so a short DNS blip during a normal restart
+# doesn't over-fire, but a genuinely stuck/unreachable vllm-chat still gets
+# healed instead of silently sitting dark forever.
+UNREACHABLE_SAMPLES = int(os.environ.get("UNREACHABLE_SAMPLES", str(WEDGE_N * 2)))
 DOCKER_SOCK = os.environ.get("DOCKER_SOCK", "/var/run/docker.sock")
 DOCKER_API = os.environ.get("DOCKER_API_VERSION", "v1.41")
 
@@ -170,10 +180,12 @@ def capture_pyspy_dump(name: str) -> None:
 
 def main() -> None:
     log(f"start: metrics={METRICS_URL} target={TARGET} poll={POLL_S}s "
-        f"wedge={WEDGE_N} samples grace={GRACE_S}s cooldown={RESTART_COOLDOWN_S}s")
+        f"wedge={WEDGE_N} samples grace={GRACE_S}s cooldown={RESTART_COOLDOWN_S}s "
+        f"unreachable={UNREACHABLE_SAMPLES} samples")
     last_gen: float | None = None
     last_prompt: float | None = None
     flat = 0
+    unreachable = 0
     last_restart = 0.0
     epoch = time.time()  # (re)start grace anchor
 
@@ -194,6 +206,9 @@ def main() -> None:
                 if flat:
                     log(f"cleared after {flat} stall sample(s): running={running:.0f} progressed={progressed}")
                 flat = 0
+            if unreachable:
+                log(f"metrics reachable again after {unreachable} unreachable poll(s)")
+                unreachable = 0
             last_gen, last_prompt = gen, prompt
 
             now = time.time()
@@ -229,9 +244,35 @@ def main() -> None:
                 last_gen = last_prompt = None
                 epoch = now  # re-grace after restart so the reload doesn't read as a wedge
         except Exception as e:  # noqa: BLE001 - metrics unreachable = loading/down (that is /health's job)
-            log(f"poll skipped ({e!r}) - metrics unreachable; resetting stall counter")
-            flat = 0
-            last_gen = last_prompt = None
+            # Fix-1000282 (2026-07-24): unreachable metrics is ALSO a wedge signal
+            # (a truly-stuck/dead vllm-chat can stop answering /metrics entirely) and
+            # must accumulate on its own counter instead of resetting `flat` every
+            # poll -- the old behavior meant sustained unreachability could NEVER
+            # trip the stall-wedge branch above, leaving the monitor blind exactly
+            # when detection mattered most. `flat` is deliberately preserved here
+            # (not reset) so a metrics blip during an active stall streak doesn't
+            # erase real progress toward that gate either.
+            unreachable += 1
+            log(f"poll UNREACHABLE {unreachable}/{UNREACHABLE_SAMPLES} ({e!r}) - "
+                f"preserving stall counter (flat={flat})")
+            now = time.time()
+            gate_unreachable = unreachable >= UNREACHABLE_SAMPLES
+            gate_grace = (now - epoch) > GRACE_S
+            gate_cooldown = (now - last_restart) > RESTART_COOLDOWN_S
+            if gate_unreachable and gate_grace and gate_cooldown:
+                log(f"WEDGE DETECTED (unreachable): {unreachable} consecutive polls could not "
+                    f"reach {METRICS_URL} -> restarting {TARGET}")
+                capture_pyspy_dump(TARGET)  # best-effort; likely 'no EngineCore pid' if engine is truly gone
+                try:
+                    status = docker_restart(TARGET)
+                    log(f"restart {TARGET} -> HTTP {status}")
+                except Exception as exc:  # noqa: BLE001
+                    log(f"restart FAILED: {exc!r}")
+                last_restart = now
+                unreachable = 0
+                flat = 0
+                last_gen = last_prompt = None
+                epoch = now
         time.sleep(POLL_S)
 
 

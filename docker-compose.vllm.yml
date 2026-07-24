@@ -913,6 +913,15 @@ services:
     image: python:3.12-slim
     container_name: vllm-wedge-monitor
     restart: unless-stopped
+    # Fix-1000282 (2026-07-24): eliminate the startup DNS race. Without this,
+    # a (re)creation of vllm-wedge-monitor before vllm-chat's DNS entry is live
+    # produced gaierror/ConnectionRefused streaks that used to blindly reset the
+    # stall counter every poll (see vllm_wedge_monitor.py UNREACHABLE_SAMPLES).
+    # service_started (not service_healthy) is enough here -- the monitor's own
+    # STARTUP_GRACE_S already tolerates vllm-chat still warming up.
+    depends_on:
+      vllm-chat:
+        condition: service_started
     command: ["python", "-u", "/monitor.py"]
     environment:
       # Reach vLLM container->container on the shared bridge (both on
@@ -933,6 +942,9 @@ services:
       # between restarts but short enough that a same-day re-wedge is
       # healed automatically.
       RESTART_COOLDOWN_S: "600"
+      # Fix-1000282 (2026-07-24): unreachable-metrics wedge gate (2x WEDGE_SAMPLES
+      # ~= 4 min of true unreachability before restarting -- see vllm_wedge_monitor.py).
+      UNREACHABLE_SAMPLES: "8"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./vllm_wedge_monitor.py:/monitor.py:ro
