@@ -264,6 +264,31 @@ services:
       AUTOHEAL_BIFROST_DIR: "/work/bifrost"
       # Optional Discord alerting; set AUTOHEAL_DISCORD_WEBHOOK in shared-infra/.env
       AUTOHEAL_DISCORD_WEBHOOK: "${AUTOHEAL_DISCORD_WEBHOOK:-}"
+      # ── synthetic completion probe (2026-07-29) ──────────────────────────
+      # The auth pass above only reads log lines, so it is blind to the
+      # pool-exhaustion hang: on 2026-07-25 and again on 2026-07-29 the gateway
+      # held every completion open indefinitely (>180s, and 4.9h in the first
+      # incident) while vLLM answered a direct call in seconds and
+      # /health/liveliness kept returning 200. Nothing in the mesh noticed,
+      # because liveliness cannot tell "up" from "can actually complete".
+      # This probe sends a real 1-token completion down the local vLLM lane each
+      # pass and restarts the gateway after PROBE_FAIL_STREAK consecutive
+      # failures -- but only when the upstream is healthy, so an upstream outage
+      # never flaps the gateway.
+      AUTOHEAL_PROBE: "true"
+      # MUST be provider/model. A bare name 400s at the router, which the probe
+      # counts as "responsive" -- it would then pass forever without ever
+      # exercising the completion path.
+      AUTOHEAL_PROBE_MODEL: "vllm-local/qwen3-chat"
+      AUTOHEAL_PROBE_PROVIDER: "vllm-local"
+      AUTOHEAL_PROBE_BASE: "http://shared-bifrost:8080"
+      AUTOHEAL_PROBE_UPSTREAM_URL: "http://vllm-chat:8000/v1/models"
+      AUTOHEAL_PROBE_TIMEOUT_S: "45"       # healthy local completions run 0.3-24s
+      AUTOHEAL_PROBE_FAIL_STREAK: "3"      # ~3 min of confirmed hang before acting
+      AUTOHEAL_PROBE_COOLDOWN_S: "1800"    # never restart-loop
+      # Virtual key is read live from config.db (read-only, existing mount);
+      # set a name here only to pin a specific one.
+      AUTOHEAL_PROBE_VK: "${AUTOHEAL_PROBE_VK:-}"
     volumes:
       # Docker socket so it can read shared-bifrost's logs + stop/start it.
       - /var/run/docker.sock:/var/run/docker.sock

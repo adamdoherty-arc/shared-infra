@@ -84,6 +84,41 @@ BIFROST_CONTAINER = os.environ.get("AUTOHEAL_BIFROST_CONTAINER", "shared-bifrost
 STOP_TIMEOUT_S = int(os.environ.get("AUTOHEAL_STOP_TIMEOUT_S", "60"))
 DISCORD_WEBHOOK = os.environ.get("AUTOHEAL_DISCORD_WEBHOOK", "").strip()
 
+# ── hang detection (synthetic completion probe) ─────────────────────────────
+# The auth pass above only reads LOG LINES. On 2026-07-25 the gateway exhausted
+# its upstream connection pool and held every completion for ~4.9 hours (127 in
+# one 10-minute window, durations past 17,700,000 ms and climbing) while vLLM
+# itself sat idle at running=1/waiting=0 and answered a DIRECT call in 9.1s.
+# It logged no auth failures, so this sidecar saw a "clean poll" throughout, and
+# /health/liveliness kept returning 200 -- so every health check in the mesh
+# (all three projects route through this gateway) reported green while the thing
+# was functionally dead. A restart fixed it instantly.
+#
+# Liveliness cannot see that class of failure: the only thing that proves a
+# gateway can complete a request is completing a request. So we send a real
+# 1-token completion through the local vLLM lane on each pass.
+PROBE_ENABLED = os.environ.get("AUTOHEAL_PROBE", "true").lower() in ("1", "true", "yes")
+PROBE_BASE = os.environ.get("AUTOHEAL_PROBE_BASE", "http://shared-bifrost:8080").rstrip("/")
+# MUST be provider/model. A bare model name is rejected by the router with
+# 400 "provider is required in model field", which this probe would (correctly)
+# classify as "responsive" -- so a bare name yields a probe that passes forever
+# without ever exercising the completion path it exists to test.
+PROBE_MODEL = os.environ.get("AUTOHEAL_PROBE_MODEL", "vllm-local/qwen3-chat")
+PROBE_PROVIDER = os.environ.get("AUTOHEAL_PROBE_PROVIDER", "vllm-local")
+# Healthy local completions measured 10-24s after the 2026-07-25 restart, so 45s
+# is ~2x headroom. A hang runs to hours, not to 46 seconds -- this threshold is
+# not trying to be a latency SLO, only to separate "slow" from "never".
+PROBE_TIMEOUT_S = int(os.environ.get("AUTOHEAL_PROBE_TIMEOUT_S", "45"))
+PROBE_FAIL_STREAK = int(os.environ.get("AUTOHEAL_PROBE_FAIL_STREAK", "3"))
+PROBE_COOLDOWN_S = int(os.environ.get("AUTOHEAL_PROBE_COOLDOWN_S", "1800"))
+# Checked BEFORE any restart: if the upstream is down too, restarting the gateway
+# fixes nothing and would just flap it against an outage it did not cause.
+PROBE_UPSTREAM_URL = os.environ.get("AUTOHEAL_PROBE_UPSTREAM_URL", "http://vllm-chat:8000/v1/models")
+PROBE_VK_NAME = os.environ.get("AUTOHEAL_PROBE_VK", "").strip()  # "" = auto-pick an active VK
+
+_probe_streak = 0
+_probe_last_restart = 0.0
+
 BIFROST_DIR = os.environ.get("AUTOHEAL_BIFROST_DIR", "/work/bifrost")
 CONFIG_JSON = os.environ.get("AUTOHEAL_CONFIG_JSON", os.path.join(BIFROST_DIR, "config.json"))
 DISABLED_JSON = os.environ.get("AUTOHEAL_DISABLED_JSON", os.path.join(BIFROST_DIR, "disabled-providers.json"))
@@ -241,6 +276,136 @@ def count_auth_failures(logs_text: str, kmap: dict) -> dict:
         if prov:
             counts[prov] = counts.get(prov, 0) + 1
     return counts
+
+
+def probe_vk() -> str | None:
+    """A virtual key that can reach PROBE_PROVIDER, read live from config.db.
+
+    Read-only, and reuses the mount this sidecar already has -- so the probe adds
+    no new secret plumbing and cannot drift from the gateway's real key set.
+    """
+    try:
+        db = sqlite3.connect(f"file:{CONFIG_DB}?mode=ro", uri=True, timeout=10)
+    except Exception as e:  # noqa: BLE001
+        log(f"probe: cannot open config.db read-only ({e!r})")
+        return None
+    try:
+        if PROBE_VK_NAME:
+            row = db.execute(
+                "SELECT value FROM governance_virtual_keys WHERE name=? AND is_active=1",
+                (PROBE_VK_NAME,),
+            ).fetchone()
+            if not row:
+                log(f"probe: VK '{PROBE_VK_NAME}' not found or inactive; falling back to auto-pick")
+            else:
+                return row[0]
+        row = db.execute(
+            "SELECT k.value FROM governance_virtual_keys k "
+            "JOIN governance_virtual_key_provider_configs c ON c.virtual_key_id = k.id "
+            "WHERE k.is_active=1 AND c.provider=? ORDER BY k.name LIMIT 1",
+            (PROBE_PROVIDER,),
+        ).fetchone()
+        return row[0] if row else None
+    except Exception as e:  # noqa: BLE001
+        log(f"probe: VK lookup failed ({e!r})")
+        return None
+    finally:
+        db.close()
+
+
+def upstream_healthy() -> bool:
+    try:
+        with urllib.request.urlopen(PROBE_UPSTREAM_URL, timeout=10) as r:
+            return 200 <= r.status < 300
+    except Exception as e:  # noqa: BLE001
+        log(f"probe: upstream {PROBE_UPSTREAM_URL} unreachable ({e!r})")
+        return False
+
+
+def synthetic_completion(vk: str) -> tuple[bool, str]:
+    """Return (gateway_responded, detail).
+
+    A 4xx counts as RESPONDED: an auth or governance rejection means the gateway
+    is processing requests, which is the only thing this probe is asking. Only a
+    timeout, a connection error or a 5xx indicate the pool-exhaustion hang.
+    """
+    body = json.dumps({
+        "model": PROBE_MODEL,
+        "messages": [{"role": "user", "content": "ok"}],
+        "max_tokens": 1,
+        "temperature": 0,
+    }).encode()
+    req = urllib.request.Request(
+        f"{PROBE_BASE}/v1/chat/completions",
+        data=body,
+        headers={"Content-Type": "application/json", "Authorization": f"Bearer {vk}"},
+    )
+    t0 = time.time()
+    try:
+        with urllib.request.urlopen(req, timeout=PROBE_TIMEOUT_S) as r:
+            r.read()
+            return True, f"HTTP {r.status} in {time.time() - t0:.1f}s"
+    except urllib.error.HTTPError as e:
+        dt = time.time() - t0
+        if 500 <= e.code < 600:
+            return False, f"HTTP {e.code} in {dt:.1f}s"
+        return True, f"HTTP {e.code} in {dt:.1f}s (responsive; not a hang)"
+    except Exception as e:  # noqa: BLE001  (timeout, conn refused, reset)
+        return False, f"{type(e).__name__} after {time.time() - t0:.1f}s"
+
+
+def restart_gateway(detail: str) -> None:
+    log(f"HANG: {BIFROST_CONTAINER} failed {PROBE_FAIL_STREAK} consecutive completion probes -> restarting")
+    try:
+        log(f"docker stop {BIFROST_CONTAINER} -> HTTP {docker_stop(BIFROST_CONTAINER)}")
+    finally:
+        log(f"docker start {BIFROST_CONTAINER} -> HTTP {docker_start(BIFROST_CONTAINER)}")
+    _alert(
+        f"restarted {BIFROST_CONTAINER}: {PROBE_FAIL_STREAK} consecutive synthetic completions failed "
+        f"({detail}) while {PROBE_UPSTREAM_URL} was healthy - the pool-exhaustion hang that "
+        f"/health/liveliness cannot see."
+    )
+
+
+def check_hang(dry: bool) -> bool:
+    """One completion-probe pass. Returns True if a restart happened (or would in dry mode)."""
+    global _probe_streak, _probe_last_restart
+    vk = probe_vk()
+    if not vk:
+        log(f"probe: no active virtual key for provider '{PROBE_PROVIDER}'; skipping hang check")
+        return False
+    ok, detail = synthetic_completion(vk)
+    if ok:
+        if _probe_streak:
+            log(f"probe: recovered after {_probe_streak} failure(s) - {detail}")
+        _probe_streak = 0
+        log(f"probe: gateway completes ({detail})")
+        return False
+
+    _probe_streak += 1
+    log(f"probe: FAILED {_probe_streak}/{PROBE_FAIL_STREAK} - {detail}")
+    if _probe_streak < PROBE_FAIL_STREAK:
+        return False
+    if not upstream_healthy():
+        log("probe: upstream is ALSO down - this is an upstream outage, not a gateway hang; not restarting")
+        _alert(
+            f"{BIFROST_CONTAINER} cannot complete ({detail}) AND {PROBE_UPSTREAM_URL} is unreachable. "
+            f"Upstream outage - gateway left alone."
+        )
+        _probe_streak = 0
+        return False
+    since = time.time() - _probe_last_restart
+    if _probe_last_restart and since < PROBE_COOLDOWN_S:
+        log(f"probe: within {PROBE_COOLDOWN_S}s cooldown ({since:.0f}s since last restart); not restarting again")
+        return False
+    if dry:
+        log(f"DRY-RUN: WOULD restart {BIFROST_CONTAINER} ({detail}) - no action taken")
+        _probe_streak = 0
+        return True
+    _probe_last_restart = time.time()
+    _probe_streak = 0
+    restart_gateway(detail)
+    return True
 
 
 def parkworthy(counts: dict, active: dict) -> dict:
@@ -403,6 +568,11 @@ def run_once(dry: bool) -> int:
     """One detection pass. Returns number of providers parked (or that WOULD be
     parked in dry mode). Never raises - a transient docker/sqlite error is logged
     and treated as 'nothing to do'."""
+    if PROBE_ENABLED:
+        try:
+            check_hang(dry)
+        except Exception as e:  # noqa: BLE001
+            log(f"probe error ({e!r}); auth pass continues")
     try:
         active = load_active_providers()
         kmap = key_provider_map()
@@ -432,14 +602,21 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="Bifrost auth-autoheal sidecar")
     ap.add_argument("--once", action="store_true", help="single detection pass then exit")
     ap.add_argument("--dry-run", action="store_true", help="detect + log only, never park")
+    ap.add_argument("--probe-only", action="store_true",
+                    help="run only the synthetic completion probe once, then exit")
     args = ap.parse_args()
     dry = args.dry_run or DRY_RUN
 
     log(
         f"start: container={BIFROST_CONTAINER} interval={INTERVAL_S}s window={WINDOW_S}s "
         f"min_hits={MIN_HITS} dry_run={dry} protected={sorted(PROTECTED)} "
-        f"discord={'on' if DISCORD_WEBHOOK else 'off'}"
+        f"discord={'on' if DISCORD_WEBHOOK else 'off'} "
+        f"probe={'on' if PROBE_ENABLED else 'off'} probe_model={PROBE_MODEL} "
+        f"probe_timeout={PROBE_TIMEOUT_S}s probe_streak={PROBE_FAIL_STREAK}"
     )
+    if args.probe_only:
+        check_hang(dry)
+        return
     if args.once:
         n = run_once(dry)
         log(f"--once done: {n} provider(s) {'would be ' if dry else ''}parked")

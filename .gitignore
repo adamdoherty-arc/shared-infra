@@ -34,3 +34,6 @@ bifrost/archive/
 # Python bytecode
 __pycache__/
 *.pyc
+
+# autoheal runtime alert trail (written by bifrost-autoheal)
+bifrost/autoheal.log
