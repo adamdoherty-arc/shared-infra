@@ -105,15 +105,41 @@ PROBE_BASE = os.environ.get("AUTOHEAL_PROBE_BASE", "http://shared-bifrost:8080")
 # without ever exercising the completion path it exists to test.
 PROBE_MODEL = os.environ.get("AUTOHEAL_PROBE_MODEL", "vllm-local/qwen3-chat")
 PROBE_PROVIDER = os.environ.get("AUTOHEAL_PROBE_PROVIDER", "vllm-local")
-# Healthy local completions measured 10-24s after the 2026-07-25 restart, so 45s
-# is ~2x headroom. A hang runs to hours, not to 46 seconds -- this threshold is
-# not trying to be a latency SLO, only to separate "slow" from "never".
-PROBE_TIMEOUT_S = int(os.environ.get("AUTOHEAL_PROBE_TIMEOUT_S", "45"))
+# This threshold is NOT a latency SLO. It only has to separate "slow" from
+# "never", because the failure it exists for runs to HOURS.
+#
+# 45s was tried first, on the theory that healthy local completions run 10-24s.
+# They don't, reliably: an hour of probe history right after a restart recorded
+# 0.3s, 13.3s, 19.9s, 21.2s, 32.5s and 36.6s successes interleaved with 45s
+# timeouts -- so 45s sat inside the normal spread and the probe kept reaching its
+# restart condition on a gateway that was merely slow. Only the cooldown stopped
+# it restart-looping. 120s is well clear of the observed spread and still catches
+# a real hang in ~6 minutes (120s x 3 consecutive failures).
+PROBE_TIMEOUT_S = int(os.environ.get("AUTOHEAL_PROBE_TIMEOUT_S", "120"))
 PROBE_FAIL_STREAK = int(os.environ.get("AUTOHEAL_PROBE_FAIL_STREAK", "3"))
 PROBE_COOLDOWN_S = int(os.environ.get("AUTOHEAL_PROBE_COOLDOWN_S", "1800"))
-# Checked BEFORE any restart: if the upstream is down too, restarting the gateway
-# fixes nothing and would just flap it against an outage it did not cause.
-PROBE_UPSTREAM_URL = os.environ.get("AUTOHEAL_PROBE_UPSTREAM_URL", "http://vllm-chat:8000/v1/models")
+# "alert" (default) or "restart".
+#
+# Detection is unambiguously safe and is the whole point: nothing in the mesh
+# could previously see a gateway that answers /health/liveliness with 200 while
+# completing nothing. The RESTART is deliberately not the default, because the
+# 2026-07-29 investigation found the recurring stall is a CAPACITY problem, not
+# a leak: vllm-chat runs max_num_seqs=1 and Bifrost's vllm-local lane is
+# concurrency=1, so a single long generation (a 651-second completion was logged
+# from ada-backend while vLLM healthily produced 54 tok/s) blocks the lane for
+# every project. Restarting there aborts real in-flight work and buys ~15 minutes
+# before the next long request does it again -- which is exactly the "restart
+# fixed it" pattern the last two incidents recorded.
+#
+# Set AUTOHEAL_PROBE_ACTION=restart once the lane concurrency is settled.
+PROBE_ACTION = os.environ.get("AUTOHEAL_PROBE_ACTION", "alert").strip().lower()
+# Checked BEFORE any restart, by COMPLETING a request straight against the
+# upstream. If the upstream cannot complete either, the lane is saturated or the
+# upstream is down -- restarting the gateway fixes neither and would abort real
+# in-flight work.
+PROBE_UPSTREAM_BASE = os.environ.get("AUTOHEAL_PROBE_UPSTREAM_BASE", "http://vllm-chat:8000").rstrip("/")
+PROBE_UPSTREAM_MODEL = os.environ.get("AUTOHEAL_PROBE_UPSTREAM_MODEL", "qwen3-chat")
+PROBE_UPSTREAM_TIMEOUT_S = int(os.environ.get("AUTOHEAL_PROBE_UPSTREAM_TIMEOUT_S", "60"))
 PROBE_VK_NAME = os.environ.get("AUTOHEAL_PROBE_VK", "").strip()  # "" = auto-pick an active VK
 
 _probe_streak = 0
@@ -313,13 +339,42 @@ def probe_vk() -> str | None:
         db.close()
 
 
-def upstream_healthy() -> bool:
+def upstream_healthy() -> tuple[bool, str]:
+    """Can the UPSTREAM complete, bypassing the gateway entirely?
+
+    This is the discriminator, and a /v1/models check is not good enough for it.
+    vllm-chat runs with max_num_seqs=1 ("Maximum concurrency for 32,768 tokens
+    per request: 1.26x"), and Bifrost's vllm-local lane is concurrency=1 to
+    match, so ONE long generation legitimately occupies the whole lane -- a 651
+    SECOND completion was observed in the gateway log while vLLM was healthily
+    producing 54 tok/s. During that window /v1/models answers instantly and the
+    gateway cannot complete, which looks exactly like a hang and is not one.
+    Restarting there would abort a real request that was working.
+
+    What separated the genuine 2026-07-25 hang was that a DIRECT call to vLLM
+    returned in 9.1s while the gateway held for hours. So probe the upstream the
+    same way we probe the gateway: if the upstream completes quickly and the
+    gateway cannot, the gateway is at fault. If the upstream is busy too, the
+    lane is saturated and a restart fixes nothing.
+    """
+    body = json.dumps({
+        "model": PROBE_UPSTREAM_MODEL,
+        "messages": [{"role": "user", "content": "ok"}],
+        "max_tokens": 1,
+        "temperature": 0,
+    }).encode()
+    req = urllib.request.Request(
+        f"{PROBE_UPSTREAM_BASE}/v1/chat/completions",
+        data=body,
+        headers={"Content-Type": "application/json"},
+    )
+    t0 = time.time()
     try:
-        with urllib.request.urlopen(PROBE_UPSTREAM_URL, timeout=10) as r:
-            return 200 <= r.status < 300
+        with urllib.request.urlopen(req, timeout=PROBE_UPSTREAM_TIMEOUT_S) as r:
+            r.read()
+            return True, f"upstream completed in {time.time() - t0:.1f}s"
     except Exception as e:  # noqa: BLE001
-        log(f"probe: upstream {PROBE_UPSTREAM_URL} unreachable ({e!r})")
-        return False
+        return False, f"upstream {type(e).__name__} after {time.time() - t0:.1f}s"
 
 
 def synthetic_completion(vk: str) -> tuple[bool, str]:
@@ -362,7 +417,7 @@ def restart_gateway(detail: str) -> None:
         log(f"docker start {BIFROST_CONTAINER} -> HTTP {docker_start(BIFROST_CONTAINER)}")
     _alert(
         f"restarted {BIFROST_CONTAINER}: {PROBE_FAIL_STREAK} consecutive synthetic completions failed "
-        f"({detail}) while {PROBE_UPSTREAM_URL} was healthy - the pool-exhaustion hang that "
+        f"({detail}) while the upstream completed fine - the gateway-side hang that "
         f"/health/liveliness cannot see."
     )
 
@@ -386,18 +441,33 @@ def check_hang(dry: bool) -> bool:
     log(f"probe: FAILED {_probe_streak}/{PROBE_FAIL_STREAK} - {detail}")
     if _probe_streak < PROBE_FAIL_STREAK:
         return False
-    if not upstream_healthy():
-        log("probe: upstream is ALSO down - this is an upstream outage, not a gateway hang; not restarting")
+    up_ok, up_detail = upstream_healthy()
+    if not up_ok:
+        log(f"probe: {up_detail} - the lane is saturated or the upstream is down, "
+            f"not a gateway hang; not restarting")
         _alert(
-            f"{BIFROST_CONTAINER} cannot complete ({detail}) AND {PROBE_UPSTREAM_URL} is unreachable. "
-            f"Upstream outage - gateway left alone."
+            f"{BIFROST_CONTAINER} cannot complete ({detail}) and neither can the upstream "
+            f"({up_detail}). Saturation or upstream outage - gateway left alone."
         )
         _probe_streak = 0
         return False
+    log(f"probe: {up_detail} while the gateway cannot - the gateway is at fault")
     since = time.time() - _probe_last_restart
     if _probe_last_restart and since < PROBE_COOLDOWN_S:
         log(f"probe: within {PROBE_COOLDOWN_S}s cooldown ({since:.0f}s since last restart); not restarting again")
         return False
+    if PROBE_ACTION != "restart":
+        log(f"probe: ACTION=alert - {BIFROST_CONTAINER} cannot complete but the upstream can; "
+            f"alerting without restarting (set AUTOHEAL_PROBE_ACTION=restart to auto-heal)")
+        _alert(
+            f"{BIFROST_CONTAINER} failed {PROBE_FAIL_STREAK} consecutive completion probes "
+            f"({detail}) while the upstream completed fine ({up_detail}). Gateway-side stall - "
+            f"NOT restarted (ACTION=alert). Most likely the vllm-local lane (concurrency=1) is "
+            f"held by a long generation."
+        )
+        _probe_last_restart = time.time()  # reuse the cooldown to rate-limit alerts
+        _probe_streak = 0
+        return True
     if dry:
         log(f"DRY-RUN: WOULD restart {BIFROST_CONTAINER} ({detail}) - no action taken")
         _probe_streak = 0
