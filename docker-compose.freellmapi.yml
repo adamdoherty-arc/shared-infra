@@ -45,13 +45,38 @@ services:
       PORT: "3001"
       HOST: "0.0.0.0"
       NODE_ENV: "production"
+      # Fix-BugZero-Wave7-ProdError (2026-07-30): `DATABASE_PATH` is DEAD --
+      # the pinned upstream commit's server/dist/db/index.js:initDb() is
+      # always called with zero args (server/dist/index.js:7), so it always
+      # falls back to its hardcoded default `path.resolve(__dirname,
+      # '../../data/freeapi.db')` == `/app/server/data/freeapi.db`. This env
+      # var is never read anywhere in the built server bundle (verified via
+      # `docker exec shared-freellmapi grep -rn DATABASE_PATH server/dist`
+      # returning zero hits). Left here (rather than deleted outright) as a
+      # forward-compat no-op in case a future upstream bump starts reading
+      # it, but the volume mount below is what ACTUALLY matters -- see that
+      # comment for the real bug this uncovered (persistence was silently
+      # broken: the named volume was mounted at the wrong path and every
+      # admin-configured key / fallback-chain edit / analytics history lived
+      # only in the container's ephemeral writable layer).
       DATABASE_PATH: "/data/freellmapi.db"
       # AES-256-GCM key for the in-DB provider-key vault. Required.
       ENCRYPTION_KEY: ${FREELLMAPI_ENCRYPTION_KEY:?FREELLMAPI_ENCRYPTION_KEY missing — see freellmapi/.env.example}
     volumes:
-      # SQLite database lives at /data/freellmapi.db. Named volume so we
-      # survive `down + up` without losing keys / chain config / analytics.
-      - freellmapi-data:/data
+      # Fix-BugZero-Wave7-ProdError (2026-07-30): the SQLite database
+      # ACTUALLY lives at /app/server/data/freeapi.db (see DATABASE_PATH
+      # comment above) -- NOT /data/freellmapi.db. This named volume was
+      # mounted at /data, a path the app never wrote to, so it was 100%
+      # dead: every `docker compose down && up` (image rebuild, host
+      # migration, volume prune) would have silently reset every
+      # dashboard-configured provider key, fallback-chain reorder/disable,
+      # and all request/analytics history back to the built-in seed
+      # defaults -- with zero error, zero warning, because the app was
+      # always "successfully" writing to its own ephemeral layer instead.
+      # Existing live data was migrated into this volume in-place
+      # (docker cp shared-freellmapi:/app/server/data/. -> volume) before
+      # this mount-path fix landed, so no data was lost switching it over.
+      - freellmapi-data:/app/server/data
     deploy:
       resources:
         limits:
