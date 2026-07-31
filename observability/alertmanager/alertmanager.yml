@@ -8,6 +8,30 @@ route:
   repeat_interval: 4h
   receiver: 'default'
   routes:
+    # 2026-07-31 (Legion daily-review Run 34): service-down alerts must NOT
+    # be delivered through legion-backend alone.
+    #
+    # Every route below this one ends at 'legion-webhook' -- a single
+    # webhook on legion-backend:8005, which then fans out to Discord and
+    # persists to legion_alerts. That makes legion-backend a single point of
+    # failure for the ENTIRE platform's alerting: ADA's alerts, Legion's
+    # alerts and the shared bifrost lane alerts all exit through it. When
+    # legion-backend is the thing that is down, the alert saying so is
+    # POSTed to the dead process and dropped. The alerting is circular
+    # exactly when it matters most.
+    #
+    # Demonstrated on 2026-07-31: legion-backend crash-looped, Prometheus
+    # recorded up == 0 throughout, and nothing reached Discord.
+    #
+    # This route must stay FIRST -- ServiceDown carries tier: ecosystem, so
+    # the route below would otherwise match it and pin it to the very
+    # webhook that cannot answer.
+    - matchers:
+        - alertname=~"ServiceDown|LegionBackendTargetMissing|AdaBackendTargetMissing"
+      receiver: 'service-down-redundant'
+      repeat_interval: 30m
+      continue: false
+
     # S56 (2026-05-19): ecosystem-tier route — 15-min repeat keeps the
     # legion_alerts audit trail dense enough that "when exactly was X
     # firing?" stays answerable. Discord rate-limited by group_interval.
@@ -44,3 +68,31 @@ receivers:
         # Discord without an additional code change.
         send_resolved: false
         max_alerts: 50
+
+  # 2026-07-31 (Legion daily-review Run 34): the redundant sink for
+  # service-down alerts. Alertmanager treats each webhook_config in a
+  # receiver as an INDEPENDENT integration -- one failing (or hanging, or
+  # connection-refused) does not suppress the other -- so listing both
+  # backends means a down backend cannot silence the alert about itself.
+  #
+  # ada-backend is used as the second sink rather than a native
+  # discord_configs block on purpose: this stack has a Discord BOT TOKEN
+  # (DISCORD_ENABLED / DISCORD_BOT_TOKEN) but no Discord WEBHOOK URL, and
+  # discord_configs requires a webhook URL. Minting one is an interactive
+  # step in the Discord UI that only the operator can do. ADA's bridge is
+  # already a working Discord fan-out, needs no new credential, and is on
+  # the same shared-infra_default network as this alertmanager (verified
+  # reachable: POST -> 200 {"status":"ok"}).
+  #
+  # Duplicate Discord messages are expected while BOTH backends are healthy.
+  # That is the intended trade for this alert class only -- a service being
+  # down should be loud, and it is scoped to three alertnames, not the other
+  # 89 rules.
+  - name: 'service-down-redundant'
+    webhook_configs:
+      - url: 'http://legion-backend:8005/api/webhooks/alertmanager'
+        send_resolved: false
+        max_alerts: 20
+      - url: 'http://ada-backend:8003/api/discord/webhook/alertmanager-bridge'
+        send_resolved: false
+        max_alerts: 20

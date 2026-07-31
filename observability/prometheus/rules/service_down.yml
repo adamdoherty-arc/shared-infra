@@ -1,0 +1,84 @@
+# Service-down alerting (2026-07-31, Legion daily-review Run 34).
+#
+# WHY THIS FILE EXISTS
+# --------------------
+# Before this file, the shared Prometheus carried 89 alert rules across ADA,
+# Legion and shared-bifrost, and exactly ONE of them (`BifrostGatewayDown`,
+# ada_bifrost.yml) tested whether a service was actually answering. Every
+# other rule was expressed over an application metric that the monitored
+# process itself exports -- legion_daemon_restarts_total, ada_agent_*,
+# legion_project_heartbeat_age_seconds, and so on.
+#
+# That makes the monitoring self-referential: when a backend dies it stops
+# exporting, its series go absent, and a PromQL comparison over an absent
+# series returns "no data" rather than firing. So the harder a process
+# fails, the quieter the alerting gets -- the exact inverse of what you
+# want.
+#
+# Found the honest way: legion-backend crash-looped on 2026-07-31 (an
+# ImportError from a truncated app/models/project.py). Prometheus faithfully
+# recorded up{job="legion-backend"} == 0 for the whole window. Not one alert
+# fired, because no rule was watching `up`.
+#
+# `up` is synthesised BY Prometheus per scrape, not by the target, so it is
+# the one signal that survives the target being dead. It is the correct --
+# and was the missing -- foundation of this stack's alerting.
+
+groups:
+  - name: service_down
+    interval: 30s
+    rules:
+      # Generic and deliberately job-agnostic: this fires for every current
+      # AND future scrape target without anyone remembering to add a rule.
+      # Enumerating jobs here is how the gap above reappears.
+      - alert: ServiceDown
+        expr: up == 0
+        for: 2m
+        labels:
+          severity: critical
+          tier: ecosystem
+        annotations:
+          summary: "{{ $labels.job }} is DOWN ({{ $labels.instance }})"
+          description: >-
+            Prometheus has failed to scrape {{ $labels.job }} at
+            {{ $labels.instance }} for 2 minutes (up == 0). The process is
+            not accepting connections -- typically a crash loop, an OOM
+            kill, or a container that exited. Check
+            `docker logs {{ $labels.job }} --tail 100` for an import-time
+            traceback before assuming a resource problem.
+          runbook: >-
+            A crash loop that survives a restart is almost always a bad
+            edit on a bind-mounted path, not infrastructure. Confirm with
+            `git status` in the project repo before restarting anything.
+
+      # `up == 0` only fires while the target is still CONFIGURED. If a
+      # scrape config is renamed, dropped, or the file fails to load, the
+      # series vanishes entirely and `up == 0` goes quiet -- silence that
+      # reads identically to health. absent() is the guard for that case,
+      # and it is why these two are enumerated by name even though the rule
+      # above is generic.
+      - alert: LegionBackendTargetMissing
+        expr: absent(up{job="legion-backend"})
+        for: 10m
+        labels:
+          severity: critical
+          tier: ecosystem
+        annotations:
+          summary: "legion-backend scrape target has DISAPPEARED from Prometheus"
+          description: >-
+            No up{job="legion-backend"} series exists at all. This is not
+            the backend being down (that is ServiceDown) -- it means the
+            scrape config itself is gone or Prometheus failed to load it.
+            Alerting for this target is blind until it returns.
+
+      - alert: AdaBackendTargetMissing
+        expr: absent(up{job="ada-backend"})
+        for: 10m
+        labels:
+          severity: critical
+          tier: ecosystem
+        annotations:
+          summary: "ada-backend scrape target has DISAPPEARED from Prometheus"
+          description: >-
+            No up{job="ada-backend"} series exists at all. The scrape config
+            is gone or failed to load; alerting for this target is blind.
