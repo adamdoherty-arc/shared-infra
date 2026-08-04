@@ -237,6 +237,13 @@ services:
   # don't fight. After Bifrost is flipped to point at this service and
   # llama-cpp-chat is retired, bump gpu-util to 0.85 in a follow-up.
   vllm-chat:
+    # 2026-08-04: this service had NO restart directive, so it defaulted to a
+    # policy that does not survive a host/daemon restart. On 2026-08-01 a host
+    # restart killed all 10 shared containers at once; the ones with
+    # unless-stopped came straight back, and the two without stayed dead for
+    # three days before anyone noticed. vllm-chat was one host reboot away from
+    # the same silent outage, and every ADA LLM call routes through it.
+    restart: unless-stopped
     environment:
       HF_TOKEN: ${HF_TOKEN}
       # ACTIVE (2026-06-21 NVFP4 swap): selects the FP4 GEMM backend now that the
@@ -324,7 +331,13 @@ services:
     # ROLLBACK to v0.22.1: restore `image: vllm/vllm-openai:v0.22.1` here +
     # restore VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS: "0" env above + .env
     # mem_util=0.92 + max_num_seqs=2 + max_model_len=16384.
-    image: vllm/vllm-openai:v0.23.0-cu129
+    # UPGRADE 2026-07-23: v0.23.0 -> v0.25.1-cu129 (operator-requested). Gains
+    # the SM120 decode-throughput fixes in 0.24/0.25. max_num_seqs STAYS 1 (the
+    # host-reboot concurrency wedge is unchanged — see .env). Validated post-swap:
+    # completion + streaming + tool-calling (qwen3_xml) + XGrammar structured
+    # output all green on the qwen3_5 hybrid arch. ROLLBACK: set image back to
+    # v0.23.0-cu129 (still cached locally) + force-recreate vllm-chat.
+    image: vllm/vllm-openai:v0.25.1-cu129
     container_name: vllm-chat
     # 2026-07-02 (zero daily-review run 13): allow ptrace so py-spy can dump the
     # EngineCore stack DURING a wedge (default caps denied it: "Permission denied"
