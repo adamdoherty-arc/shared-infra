@@ -657,6 +657,178 @@
         "concurrency": 2,
         "buffer_size": 50
       }
+    },
+    "siliconflow": {
+      "keys": [
+        {
+          "name": "siliconflow_api_key-primary",
+          "value": "env.SILICONFLOW_API_KEY",
+          "models": [],
+          "weight": 1.0
+        }
+      ],
+      "network_config": {
+        "base_url": "https://api.siliconflow.com",
+        "default_request_timeout_in_seconds": 120,
+        "max_retries": 2
+      },
+      "custom_provider_config": {
+        "base_provider_type": "openai",
+        "request_path_overrides": {
+          "chat_completion": "/v1/chat/completions",
+          "chat_completion_stream": "/v1/chat/completions"
+        },
+        "allowed_requests": {
+          "chat_completion": true,
+          "chat_completion_stream": true,
+          "list_models": false
+        }
+      },
+      "concurrency_and_buffer_size": {
+        "concurrency": 2,
+        "buffer_size": 50
+      }
+    },
+    "sealion": {
+      "keys": [
+        {
+          "name": "sealion_api_key-primary",
+          "value": "env.SEALION_API_KEY",
+          "models": [
+            "aisingapore/Gemma-SEA-LION-v4-27B-IT",
+            "aisingapore/Qwen-SEA-LION-v4.5-27B-IT",
+            "aisingapore/Llama-SEA-LION-v3-70B-IT"
+          ],
+          "weight": 1.0
+        }
+      ],
+      "network_config": {
+        "base_url": "https://api.sea-lion.ai",
+        "default_request_timeout_in_seconds": 120,
+        "max_retries": 2
+      },
+      "custom_provider_config": {
+        "base_provider_type": "openai",
+        "request_path_overrides": {
+          "chat_completion": "/v1/chat/completions",
+          "chat_completion_stream": "/v1/chat/completions"
+        },
+        "allowed_requests": {
+          "chat_completion": true,
+          "chat_completion_stream": true,
+          "list_models": false
+        }
+      },
+      "concurrency_and_buffer_size": {
+        "concurrency": 2,
+        "buffer_size": 50
+      }
+    },
+    "bazaarlink": {
+      "keys": [
+        {
+          "name": "bazaarlink_api_key-primary",
+          "value": "env.BAZAARLINK_API_KEY",
+          "models": [
+            "deepseek/deepseek-v4-flash:free",
+            "qwen/qwen3.7-flash:free"
+          ],
+          "weight": 1.0
+        }
+      ],
+      "network_config": {
+        "base_url": "https://bazaarlink.ai",
+        "default_request_timeout_in_seconds": 120,
+        "max_retries": 2
+      },
+      "custom_provider_config": {
+        "base_provider_type": "openai",
+        "request_path_overrides": {
+          "chat_completion": "/api/v1/chat/completions",
+          "chat_completion_stream": "/api/v1/chat/completions"
+        },
+        "allowed_requests": {
+          "chat_completion": true,
+          "chat_completion_stream": true,
+          "list_models": false
+        }
+      },
+      "concurrency_and_buffer_size": {
+        "concurrency": 2,
+        "buffer_size": 50
+      }
+    },
+    "aion": {
+      "keys": [
+        {
+          "name": "aion_api_key-primary",
+          "value": "env.AION_API_KEY",
+          "models": [
+            "aion-labs/aion-3.0-mini",
+            "aion-labs/aion-3.0",
+            "aion-labs/aion-2.5"
+          ],
+          "weight": 1.0
+        }
+      ],
+      "network_config": {
+        "base_url": "https://api.aionlabs.ai",
+        "default_request_timeout_in_seconds": 120,
+        "max_retries": 2
+      },
+      "custom_provider_config": {
+        "base_provider_type": "openai",
+        "request_path_overrides": {
+          "chat_completion": "/v1/chat/completions",
+          "chat_completion_stream": "/v1/chat/completions"
+        },
+        "allowed_requests": {
+          "chat_completion": true,
+          "chat_completion_stream": true,
+          "list_models": false
+        }
+      },
+      "concurrency_and_buffer_size": {
+        "concurrency": 2,
+        "buffer_size": 50
+      }
+    },
+    "api-airforce": {
+      "keys": [
+        {
+          "name": "api_airforce_api_key-primary",
+          "value": "env.API_AIRFORCE_API_KEY",
+          "models": [
+            "codestral-latest",
+            "mistral-medium-latest",
+            "qwen3-30b-a3b-fp8",
+            "minimax-m2.5",
+            "ministral-8b-latest"
+          ],
+          "weight": 1.0
+        }
+      ],
+      "network_config": {
+        "base_url": "https://api.airforce",
+        "default_request_timeout_in_seconds": 120,
+        "max_retries": 2
+      },
+      "custom_provider_config": {
+        "base_provider_type": "openai",
+        "request_path_overrides": {
+          "chat_completion": "/v1/chat/completions",
+          "chat_completion_stream": "/v1/chat/completions"
+        },
+        "allowed_requests": {
+          "chat_completion": true,
+          "chat_completion_stream": true,
+          "list_models": false
+        }
+      },
+      "concurrency_and_buffer_size": {
+        "concurrency": 1,
+        "buffer_size": 50
+      }
     }
   }
 }

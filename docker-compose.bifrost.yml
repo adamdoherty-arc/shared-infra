@@ -72,6 +72,18 @@ services:
       # Llama-3.3-70B via models.github.ai). Token from `gh auth token`. Free
       # tier is LOW rate-limit, so ADA only wires it as a deep fallback tail.
       GITHUB_MODELS_TOKEN: ${GITHUB_MODELS_TOKEN:-}
+      # 2026-08-03: free providers sourced from OmniRoute's tos-rated catalog.
+      # Each key was validated with a real completion before being wired. NB
+      # these must be listed HERE, not just in .env — this service passes keys
+      # explicitly rather than via env_file, and `docker restart` does not
+      # re-read .env, so a new provider needs `compose up -d` to recreate.
+      SILICONFLOW_API_KEY: ${SILICONFLOW_API_KEY:-}
+      SEALION_API_KEY: ${SEALION_API_KEY:-}
+      BAZAARLINK_API_KEY: ${BAZAARLINK_API_KEY:-}
+      AION_API_KEY: ${AION_API_KEY:-}
+      # api.airforce enforces a GLOBAL 1 req/min cap — provider concurrency is
+      # pinned to 1 in config.json and it is a deep fallback rung only.
+      API_AIRFORCE_API_KEY: ${API_AIRFORCE_API_KEY:-}
       # 2026-07-31: freellmapi aggregator (86 models across cloudflare/google/
       # cerebras/groq/nvidia/sambanova/mistral/openrouter). Auth is a single
       # bearer token; the FREELLM_BEARER_TOKEN env var is set in shared-infra/.env
