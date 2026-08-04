@@ -392,47 +392,6 @@
         "buffer_size": 100
       }
     },
-    "mistral": {
-      "keys": [
-        {
-          "name": "mistral-primary",
-          "value": "env.MISTRAL_API_KEY",
-          "models": [
-            "mistral-large-latest",
-            "mistral-medium-latest",
-            "mistral-small-latest",
-            "codestral-latest",
-            "magistral-medium-latest",
-            "magistral-small-latest",
-            "devstral-medium-latest",
-            "devstral-latest",
-            "ministral-8b-latest",
-            "ministral-3b-latest",
-            "pixtral-12b-2409",
-            "mistral-embed",
-            "codestral-2508"
-          ],
-          "weight": 1.0
-        }
-      ],
-      "network_config": {
-        "base_url": "https://api.mistral.ai",
-        "default_request_timeout_in_seconds": 120,
-        "max_retries": 2
-      },
-      "custom_provider_config": {
-        "base_provider_type": "openai",
-        "allowed_requests": {
-          "list_models": false,
-          "chat_completion": true,
-          "chat_completion_stream": true
-        }
-      },
-      "concurrency_and_buffer_size": {
-        "concurrency": 4,
-        "buffer_size": 100
-      }
-    },
     "zai": {
       "keys": [
         {
