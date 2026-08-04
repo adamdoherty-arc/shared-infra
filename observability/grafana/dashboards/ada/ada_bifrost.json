@@ -28,7 +28,7 @@
     {
       "type": "stat",
       "title": "Gateway up",
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
       "gridPos": {"h": 4, "w": 4, "x": 0, "y": 1},
       "targets": [{"expr": "up{job=\"bifrost\"}"}],
       "fieldConfig": {"defaults": {"mappings": [{"type": "value", "options": {"0": {"text": "DOWN", "color": "red"}, "1": {"text": "UP", "color": "green"}}}]}}
@@ -36,21 +36,21 @@
     {
       "type": "stat",
       "title": "Active providers",
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
       "gridPos": {"h": 4, "w": 4, "x": 4, "y": 1},
       "targets": [{"expr": "bifrost_active_providers"}]
     },
     {
       "type": "stat",
       "title": "Active virtual keys",
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
       "gridPos": {"h": 4, "w": 4, "x": 8, "y": 1},
       "targets": [{"expr": "bifrost_active_virtual_keys"}]
     },
     {
       "type": "stat",
       "title": "Logs DB size",
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
       "gridPos": {"h": 4, "w": 4, "x": 12, "y": 1},
       "targets": [{"expr": "bifrost_logs_db_bytes"}],
       "fieldConfig": {"defaults": {"unit": "bytes"}}
@@ -58,7 +58,7 @@
     {
       "type": "stat",
       "title": "Scrape errors (5m)",
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
       "gridPos": {"h": 4, "w": 4, "x": 16, "y": 1},
       "targets": [{"expr": "sum(increase(bifrost_exporter_scrape_errors_total[5m]))"}],
       "fieldConfig": {"defaults": {"thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": 0}, {"color": "red", "value": 1}]}}}
@@ -66,7 +66,7 @@
     {
       "type": "stat",
       "title": "Requests (5m)",
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
       "gridPos": {"h": 4, "w": 4, "x": 20, "y": 1},
       "targets": [{"expr": "sum(increase(bifrost_requests_total[5m]))"}]
     },
@@ -79,7 +79,7 @@
     {
       "type": "timeseries",
       "title": "p50 / p95 / p99 latency (all providers)",
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
       "gridPos": {"h": 8, "w": 12, "x": 0, "y": 6},
       "targets": [
         {"expr": "histogram_quantile(0.5, sum by (le) (rate(bifrost_request_latency_ms_bucket[5m])))", "legendFormat": "p50"},
@@ -91,7 +91,7 @@
     {
       "type": "timeseries",
       "title": "p95 latency by provider",
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
       "gridPos": {"h": 8, "w": 12, "x": 12, "y": 6},
       "targets": [
         {"expr": "histogram_quantile(0.95, sum by (le, provider) (rate(bifrost_request_latency_ms_bucket[5m])))", "legendFormat": "{{provider}}"}
@@ -101,7 +101,7 @@
     {
       "type": "heatmap",
       "title": "Latency heatmap",
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
       "gridPos": {"h": 8, "w": 24, "x": 0, "y": 14},
       "targets": [{"expr": "sum by (le) (rate(bifrost_request_latency_ms_bucket[5m]))", "format": "heatmap"}]
     },
@@ -114,7 +114,7 @@
     {
       "type": "timeseries",
       "title": "Request rate by provider + type",
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
       "gridPos": {"h": 8, "w": 12, "x": 0, "y": 23},
       "targets": [
         {"expr": "sum by (provider, request_type) (rate(bifrost_requests_total[1m]))", "legendFormat": "{{provider}} / {{request_type}}"}
@@ -124,7 +124,7 @@
     {
       "type": "timeseries",
       "title": "Prompt tokens / sec by model",
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
       "gridPos": {"h": 8, "w": 12, "x": 12, "y": 23},
       "targets": [
         {"expr": "sum by (model, provider) (rate(bifrost_prompt_tokens_total[1m]))", "legendFormat": "{{provider}}/{{model}}"}
@@ -134,7 +134,7 @@
     {
       "type": "timeseries",
       "title": "Completion tokens / sec by model",
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
       "gridPos": {"h": 8, "w": 12, "x": 0, "y": 31},
       "targets": [
         {"expr": "sum by (model, provider) (rate(bifrost_completion_tokens_total[1m]))", "legendFormat": "{{provider}}/{{model}}"}
@@ -144,7 +144,7 @@
     {
       "type": "timeseries",
       "title": "Cost USD / 5min (cloud only)",
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
       "gridPos": {"h": 8, "w": 12, "x": 12, "y": 31},
       "targets": [
         {"expr": "sum by (model, provider) (increase(bifrost_cost_usd_total[5m]))", "legendFormat": "{{provider}}/{{model}}"}
@@ -160,7 +160,7 @@
     {
       "type": "table",
       "title": "Tokens by model (last 1h)",
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
       "gridPos": {"h": 8, "w": 12, "x": 0, "y": 40},
       "targets": [
         {"expr": "sum by (provider, model) (increase(bifrost_prompt_tokens_total[1h]))", "instant": true, "format": "table", "legendFormat": "prompt"},
@@ -173,7 +173,7 @@
     {
       "type": "stat",
       "title": "Time since last successful scrape",
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
       "gridPos": {"h": 4, "w": 6, "x": 12, "y": 40},
       "targets": [{"expr": "time() - bifrost_exporter_last_scrape_unixtime"}],
       "fieldConfig": {"defaults": {"unit": "s", "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": 0}, {"color": "amber", "value": 60}, {"color": "red", "value": 300}]}}}
@@ -181,7 +181,7 @@
     {
       "type": "stat",
       "title": "Total cost USD (cumulative)",
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
       "gridPos": {"h": 4, "w": 6, "x": 18, "y": 40},
       "targets": [{"expr": "sum(bifrost_cost_usd_total)"}],
       "fieldConfig": {"defaults": {"unit": "currencyUSD"}}

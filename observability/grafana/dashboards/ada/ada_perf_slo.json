@@ -19,7 +19,7 @@
       "type": "timeseries",
       "title": "p95 latency by route (top 15)",
       "gridPos": {"h": 10, "w": 24, "x": 0, "y": 0},
-      "datasource": {"type": "prometheus", "uid": "P1809F7CD0C7575DA"},
+      "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
       "fieldConfig": {
         "defaults": {
           "unit": "s",
@@ -52,7 +52,7 @@
       "type": "timeseries",
       "title": "p95 latency by route — 5xx only",
       "gridPos": {"h": 10, "w": 12, "x": 0, "y": 10},
-      "datasource": {"type": "prometheus", "uid": "P1809F7CD0C7575DA"},
+      "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
       "fieldConfig": {"defaults": {"unit": "s"}},
       "targets": [
         {
@@ -68,7 +68,7 @@
       "type": "timeseries",
       "title": "Request rate by route (top 10)",
       "gridPos": {"h": 10, "w": 12, "x": 12, "y": 10},
-      "datasource": {"type": "prometheus", "uid": "P1809F7CD0C7575DA"},
+      "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
       "fieldConfig": {"defaults": {"unit": "reqps"}},
       "targets": [
         {
@@ -85,7 +85,7 @@
       "title": "Live p95 vs SLO budget (evaluated last 15m)",
       "gridPos": {"h": 14, "w": 24, "x": 0, "y": 20},
       "description": "One row per path_template. `p95_ms_live` is the observed p95 across the last 15m; consult /api/system/slo for the per-route budget.",
-      "datasource": {"type": "prometheus", "uid": "P1809F7CD0C7575DA"},
+      "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
       "targets": [
         {
           "refId": "P95",

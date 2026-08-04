@@ -1,0 +1,289 @@
+{
+    "annotations": {
+        "list": [
+            {
+                "builtIn": 1,
+                "datasource": {"type": "grafana", "uid": "-- Grafana --"},
+                "enable": true,
+                "hide": true,
+                "iconColor": "rgba(0, 211, 255, 1)",
+                "name": "Annotations & Alerts",
+                "type": "dashboard"
+            }
+        ]
+    },
+    "description": "Plan-479 Perf-151: pg_stat_statements top-N query hotspots for ADA. Surfaces ada_pg_stat_top_{mean_ms, calls, total_ms} exposed by backend/infrastructure/system_metrics_exporter.py at GET /metrics. Query hashes are stable substr(md5(query),0,16) — look them up via mcp postgres call query --json '{\"sql\":\"SELECT LEFT(query,200) FROM pg_stat_statements WHERE substr(md5(query),1,16) = $hash\"}'",
+    "editable": true,
+    "fiscalYearStartMonth": 0,
+    "graphTooltip": 0,
+    "id": null,
+    "links": [],
+    "liveNow": false,
+    "panels": [
+        {
+            "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
+            "fieldConfig": {
+                "defaults": {
+                    "color": {"mode": "thresholds"},
+                    "mappings": [],
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {"color": "green", "value": null},
+                            {"color": "yellow", "value": 250},
+                            {"color": "orange", "value": 1000},
+                            {"color": "red", "value": 5000}
+                        ]
+                    },
+                    "unit": "ms"
+                },
+                "overrides": []
+            },
+            "gridPos": {"h": 4, "w": 6, "x": 0, "y": 0},
+            "id": 1,
+            "options": {
+                "orientation": "auto",
+                "reduceOptions": {"calcs": ["max"], "fields": "", "values": false},
+                "showThresholdLabels": false,
+                "showThresholdMarkers": true
+            },
+            "pluginVersion": "10.0.0",
+            "targets": [
+                {
+                    "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
+                    "editorMode": "code",
+                    "expr": "max(ada_pg_stat_top_mean_ms)",
+                    "legendFormat": "slowest-mean",
+                    "range": true,
+                    "refId": "A"
+                }
+            ],
+            "title": "Slowest query mean (ms)",
+            "type": "stat"
+        },
+        {
+            "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
+            "fieldConfig": {
+                "defaults": {
+                    "color": {"mode": "thresholds"},
+                    "mappings": [],
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {"color": "green", "value": null},
+                            {"color": "yellow", "value": 100},
+                            {"color": "red", "value": 1000}
+                        ]
+                    },
+                    "unit": "s"
+                },
+                "overrides": []
+            },
+            "gridPos": {"h": 4, "w": 6, "x": 6, "y": 0},
+            "id": 2,
+            "options": {
+                "orientation": "auto",
+                "reduceOptions": {"calcs": ["sum"], "fields": "", "values": false},
+                "showThresholdLabels": false,
+                "showThresholdMarkers": true
+            },
+            "pluginVersion": "10.0.0",
+            "targets": [
+                {
+                    "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
+                    "editorMode": "code",
+                    "expr": "sum(ada_pg_stat_top_total_ms) / 1000",
+                    "legendFormat": "cumulative-top20-sec",
+                    "range": true,
+                    "refId": "A"
+                }
+            ],
+            "title": "Top-20 cumulative time",
+            "type": "stat"
+        },
+        {
+            "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
+            "fieldConfig": {
+                "defaults": {
+                    "color": {"mode": "thresholds"},
+                    "mappings": [],
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [{"color": "green", "value": null}]
+                    },
+                    "unit": "short"
+                },
+                "overrides": []
+            },
+            "gridPos": {"h": 4, "w": 6, "x": 12, "y": 0},
+            "id": 3,
+            "options": {
+                "orientation": "auto",
+                "reduceOptions": {"calcs": ["sum"], "fields": "", "values": false},
+                "showThresholdLabels": false,
+                "showThresholdMarkers": true
+            },
+            "pluginVersion": "10.0.0",
+            "targets": [
+                {
+                    "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
+                    "editorMode": "code",
+                    "expr": "sum(ada_pg_stat_top_calls)",
+                    "legendFormat": "calls",
+                    "range": true,
+                    "refId": "A"
+                }
+            ],
+            "title": "Top-20 cumulative call count",
+            "type": "stat"
+        },
+        {
+            "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
+            "fieldConfig": {
+                "defaults": {
+                    "color": {"mode": "thresholds"},
+                    "custom": {"align": "right", "displayMode": "color-background", "filterable": true, "inspect": false},
+                    "mappings": [],
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {"color": "green", "value": null},
+                            {"color": "yellow", "value": 250},
+                            {"color": "orange", "value": 1000},
+                            {"color": "red", "value": 5000}
+                        ]
+                    },
+                    "unit": "ms"
+                },
+                "overrides": [
+                    {"matcher": {"id": "byName", "options": "query_hash"}, "properties": [{"id": "custom.displayMode", "value": "auto"}]}
+                ]
+            },
+            "gridPos": {"h": 12, "w": 12, "x": 0, "y": 4},
+            "id": 4,
+            "options": {
+                "showHeader": true,
+                "sortBy": [{"desc": true, "displayName": "Value"}]
+            },
+            "pluginVersion": "10.0.0",
+            "targets": [
+                {
+                    "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
+                    "editorMode": "code",
+                    "expr": "topk(20, ada_pg_stat_top_mean_ms)",
+                    "format": "table",
+                    "instant": true,
+                    "legendFormat": "{{query_hash}}",
+                    "range": false,
+                    "refId": "A"
+                }
+            ],
+            "title": "Top-20 by mean execution time (ms)",
+            "type": "table"
+        },
+        {
+            "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
+            "fieldConfig": {
+                "defaults": {
+                    "color": {"mode": "thresholds"},
+                    "custom": {"align": "right", "displayMode": "color-background", "filterable": true},
+                    "mappings": [],
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {"color": "green", "value": null},
+                            {"color": "yellow", "value": 60000},
+                            {"color": "orange", "value": 600000},
+                            {"color": "red", "value": 3600000}
+                        ]
+                    },
+                    "unit": "ms"
+                },
+                "overrides": []
+            },
+            "gridPos": {"h": 12, "w": 12, "x": 12, "y": 4},
+            "id": 5,
+            "options": {
+                "showHeader": true,
+                "sortBy": [{"desc": true, "displayName": "Value"}]
+            },
+            "pluginVersion": "10.0.0",
+            "targets": [
+                {
+                    "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
+                    "editorMode": "code",
+                    "expr": "topk(20, ada_pg_stat_top_total_ms)",
+                    "format": "table",
+                    "instant": true,
+                    "legendFormat": "{{query_hash}}",
+                    "range": false,
+                    "refId": "A"
+                }
+            ],
+            "title": "Top-20 by cumulative time (ms total)",
+            "type": "table"
+        },
+        {
+            "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
+            "fieldConfig": {
+                "defaults": {
+                    "color": {"mode": "palette-classic"},
+                    "custom": {
+                        "axisCenteredZero": false,
+                        "axisColorMode": "text",
+                        "axisLabel": "ms",
+                        "axisPlacement": "auto",
+                        "barAlignment": 0,
+                        "drawStyle": "line",
+                        "fillOpacity": 10,
+                        "gradientMode": "none",
+                        "hideFrom": {"legend": false, "tooltip": false, "viz": false},
+                        "lineInterpolation": "linear",
+                        "lineWidth": 2,
+                        "pointSize": 5,
+                        "scaleDistribution": {"type": "linear"},
+                        "showPoints": "never",
+                        "spanNulls": false,
+                        "stacking": {"group": "A", "mode": "none"},
+                        "thresholdsStyle": {"mode": "off"}
+                    },
+                    "mappings": [],
+                    "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]},
+                    "unit": "ms"
+                },
+                "overrides": []
+            },
+            "gridPos": {"h": 10, "w": 24, "x": 0, "y": 16},
+            "id": 6,
+            "options": {
+                "legend": {"calcs": ["mean", "max"], "displayMode": "table", "placement": "right", "showLegend": true},
+                "tooltip": {"mode": "multi", "sort": "desc"}
+            },
+            "pluginVersion": "10.0.0",
+            "targets": [
+                {
+                    "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
+                    "editorMode": "code",
+                    "expr": "topk(5, ada_pg_stat_top_mean_ms)",
+                    "legendFormat": "{{query_hash}}",
+                    "range": true,
+                    "refId": "A"
+                }
+            ],
+            "title": "Top-5 mean execution time over time",
+            "type": "timeseries"
+        }
+    ],
+    "refresh": "30s",
+    "schemaVersion": 38,
+    "style": "dark",
+    "tags": ["ada", "performance", "plan-479", "perf-151", "pg_stat_statements"],
+    "templating": {"list": []},
+    "time": {"from": "now-1h", "to": "now"},
+    "timepicker": {},
+    "timezone": "",
+    "title": "ADA Query Hotspots (pg_stat_statements top-N)",
+    "uid": "ada-query-hotspots",
+    "version": 1,
+    "weekStart": ""
+}

@@ -30,7 +30,7 @@
       "id": 2,
       "title": "Auto-fix attempts (by source / outcome)",
       "type": "timeseries",
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 1 },
       "targets": [
         {
@@ -47,7 +47,7 @@
       "id": 3,
       "title": "PR state transitions",
       "type": "timeseries",
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 1 },
       "targets": [
         {
@@ -69,7 +69,7 @@
       "id": 5,
       "title": "Gate pass/fail by gate",
       "type": "bargauge",
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
       "gridPos": { "h": 9, "w": 12, "x": 0, "y": 10 },
       "targets": [
         {
@@ -84,7 +84,7 @@
       "id": 6,
       "title": "Diagnosis tier hit rate (Dev-17)",
       "type": "piechart",
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
       "gridPos": { "h": 9, "w": 12, "x": 12, "y": 10 },
       "targets": [
         {
@@ -106,7 +106,7 @@
       "id": 8,
       "title": "Notifications by event_type and status",
       "type": "stat",
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
       "gridPos": { "h": 6, "w": 12, "x": 0, "y": 20 },
       "targets": [
         {
@@ -120,7 +120,7 @@
       "id": 9,
       "title": "Daemon crashes",
       "type": "stat",
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
       "gridPos": { "h": 6, "w": 12, "x": 12, "y": 20 },
       "targets": [
         {

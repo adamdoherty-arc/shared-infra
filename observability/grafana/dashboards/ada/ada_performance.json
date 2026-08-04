@@ -25,7 +25,7 @@
         {
             "datasource": {
                 "type": "prometheus",
-                "uid": "P1809F7CD0C7575DA"
+                "uid": "PBFA97CFB590B2093"
             },
             "fieldConfig": {
                 "defaults": {
@@ -73,7 +73,7 @@
                 {
                     "datasource": {
                         "type": "prometheus",
-                        "uid": "P1809F7CD0C7575DA"
+                        "uid": "PBFA97CFB590B2093"
                     },
                     "editorMode": "code",
                     "expr": "sum(rate(ada_http_requests_total[1m]))",
@@ -88,7 +88,7 @@
         {
             "datasource": {
                 "type": "prometheus",
-                "uid": "P1809F7CD0C7575DA"
+                "uid": "PBFA97CFB590B2093"
             },
             "fieldConfig": {
                 "defaults": {
@@ -161,7 +161,7 @@
                 {
                     "datasource": {
                         "type": "prometheus",
-                        "uid": "P1809F7CD0C7575DA"
+                        "uid": "PBFA97CFB590B2093"
                     },
                     "editorMode": "code",
                     "expr": "histogram_quantile(0.95, sum(rate(ada_http_request_duration_seconds_v2_bucket[5m])) by (le))",

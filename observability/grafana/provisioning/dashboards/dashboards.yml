@@ -18,3 +18,13 @@ providers:
     options:
       path: /etc/grafana/dashboards/ada
       foldersFromFilesStructure: false
+  # Phase 3 item 2 (2026-08-04): shared-infra-level dashboards (GPU/host
+  # telemetry) that don't belong to one project's folder.
+  - name: shared
+    folder: Shared Infra
+    type: file
+    disableDeletion: false
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/dashboards/shared
+      foldersFromFilesStructure: false

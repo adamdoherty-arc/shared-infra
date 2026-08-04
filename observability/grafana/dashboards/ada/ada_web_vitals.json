@@ -18,7 +18,7 @@
         "name": "route",
         "label": "Route",
         "type": "query",
-        "datasource": { "type": "prometheus", "uid": "Prometheus" },
+        "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
         "query": { "query": "label_values(ada_web_vital_seconds_bucket, route)" },
         "multi": true,
         "includeAll": true,
@@ -37,7 +37,7 @@
       "id": 10,
       "type": "timeseries",
       "title": "LCP p95 (target: page-specific, default 1.5s)",
-      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 1 },
       "fieldConfig": { "defaults": { "unit": "s" } },
       "targets": [
@@ -51,7 +51,7 @@
       "id": 11,
       "type": "timeseries",
       "title": "INP p95 (target: < 200ms)",
-      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 1 },
       "fieldConfig": { "defaults": { "unit": "s" } },
       "targets": [
@@ -65,7 +65,7 @@
       "id": 12,
       "type": "timeseries",
       "title": "TTFB p95 (target: < 500ms)",
-      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 9 },
       "fieldConfig": { "defaults": { "unit": "s" } },
       "targets": [
@@ -79,7 +79,7 @@
       "id": 13,
       "type": "timeseries",
       "title": "CLS p95 (target: < 0.1)",
-      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 9 },
       "fieldConfig": { "defaults": { "unit": "short" } },
       "targets": [
@@ -99,7 +99,7 @@
       "id": 20,
       "type": "timeseries",
       "title": "Samples / sec per metric",
-      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
       "gridPos": { "h": 8, "w": 24, "x": 0, "y": 18 },
       "fieldConfig": { "defaults": { "unit": "ops" } },
       "targets": [
@@ -120,7 +120,7 @@
       "type": "timeseries",
       "title": "Saturation correlation: LCP p95 vs DB pool util vs scheduler RSS",
       "description": "Overlays user-visible latency, backend pool pressure, and scheduler memory on one timeline. A regression in any line typically precedes a regression in the others.",
-      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
       "gridPos": { "h": 10, "w": 24, "x": 0, "y": 27 },
       "fieldConfig": {
         "defaults": { "unit": "short" },

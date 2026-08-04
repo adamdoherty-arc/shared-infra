@@ -19,7 +19,7 @@
       "type": "stat",
       "title": "Per-project last heartbeat age (seconds)",
       "description": "S5: time since each project last POSTed /api/projects/{id}/heartbeat. Green <60s, yellow 60-120s, red >120s.",
-      "datasource": {"type": "postgres", "uid": "LegionPG"},
+      "datasource": {"type": "postgres", "uid": "P9961775252BB5566"},
       "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
       "id": 1,
       "fieldConfig": {
@@ -45,7 +45,7 @@
       "targets": [
         {
           "refId": "A",
-          "datasource": {"type": "postgres", "uid": "LegionPG"},
+          "datasource": {"type": "postgres", "uid": "P9961775252BB5566"},
           "format": "table",
           "rawSql": "SELECT p.name AS metric, EXTRACT(EPOCH FROM (now() - max(h.created_at)))::int AS value FROM projects p LEFT JOIN project_heartbeats h ON h.project_id = p.id WHERE p.name IN ('Legion','ADA Trading Platform','Zero Personal Assistant') GROUP BY p.name ORDER BY p.name;"
         }
@@ -55,14 +55,14 @@
       "type": "timeseries",
       "title": "Per-project CPU % (from heartbeats)",
       "description": "S5: cpu_pct reported by the heartbeat emitter on each project.",
-      "datasource": {"type": "postgres", "uid": "LegionPG"},
+      "datasource": {"type": "postgres", "uid": "P9961775252BB5566"},
       "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
       "id": 2,
       "fieldConfig": {"defaults": {"unit": "percent"}},
       "targets": [
         {
           "refId": "A",
-          "datasource": {"type": "postgres", "uid": "LegionPG"},
+          "datasource": {"type": "postgres", "uid": "P9961775252BB5566"},
           "format": "time_series",
           "rawSql": "SELECT h.created_at AS time, p.name AS metric, h.cpu_pct AS value FROM project_heartbeats h JOIN projects p ON p.id = h.project_id WHERE h.created_at > now() - interval '24 hours' ORDER BY time;"
         }
@@ -71,14 +71,14 @@
     {
       "type": "timeseries",
       "title": "Per-project memory MB (from heartbeats)",
-      "datasource": {"type": "postgres", "uid": "LegionPG"},
+      "datasource": {"type": "postgres", "uid": "P9961775252BB5566"},
       "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
       "id": 3,
       "fieldConfig": {"defaults": {"unit": "decmbytes"}},
       "targets": [
         {
           "refId": "A",
-          "datasource": {"type": "postgres", "uid": "LegionPG"},
+          "datasource": {"type": "postgres", "uid": "P9961775252BB5566"},
           "format": "time_series",
           "rawSql": "SELECT h.created_at AS time, p.name AS metric, h.mem_mb AS value FROM project_heartbeats h JOIN projects p ON p.id = h.project_id WHERE h.created_at > now() - interval '24 hours' ORDER BY time;"
         }
@@ -88,7 +88,7 @@
       "type": "stat",
       "title": "Cross-project learnings (last 7d)",
       "description": "S4: unapplied count + applied count + total per source_project, last 7 days.",
-      "datasource": {"type": "postgres", "uid": "LegionPG"},
+      "datasource": {"type": "postgres", "uid": "P9961775252BB5566"},
       "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
       "id": 4,
       "options": {
@@ -105,7 +105,7 @@
       "targets": [
         {
           "refId": "A",
-          "datasource": {"type": "postgres", "uid": "LegionPG"},
+          "datasource": {"type": "postgres", "uid": "P9961775252BB5566"},
           "format": "table",
           "rawSql": "SELECT source_project || ' (' || CASE WHEN applied_at IS NULL THEN 'unapplied' ELSE 'applied' END || ')' AS metric, count(*)::int AS value FROM cross_project_learnings WHERE created_at > now() - interval '7 days' GROUP BY 1 ORDER BY 1;"
         }
@@ -114,7 +114,7 @@
     {
       "type": "piechart",
       "title": "Sprint status across all projects",
-      "datasource": {"type": "postgres", "uid": "LegionPG"},
+      "datasource": {"type": "postgres", "uid": "P9961775252BB5566"},
       "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16},
       "id": 5,
       "options": {
@@ -124,7 +124,7 @@
       "targets": [
         {
           "refId": "A",
-          "datasource": {"type": "postgres", "uid": "LegionPG"},
+          "datasource": {"type": "postgres", "uid": "P9961775252BB5566"},
           "format": "table",
           "rawSql": "SELECT status::text AS metric, count(*)::int AS value FROM sprints GROUP BY status ORDER BY value DESC;"
         }
@@ -133,14 +133,14 @@
     {
       "type": "table",
       "title": "Recent sprint completions (last 7d)",
-      "datasource": {"type": "postgres", "uid": "LegionPG"},
+      "datasource": {"type": "postgres", "uid": "P9961775252BB5566"},
       "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
       "id": 6,
       "options": {"showHeader": true},
       "targets": [
         {
           "refId": "A",
-          "datasource": {"type": "postgres", "uid": "LegionPG"},
+          "datasource": {"type": "postgres", "uid": "P9961775252BB5566"},
           "format": "table",
           "rawSql": "SELECT s.actual_end AS completed_at, p.name AS project, s.name, s.kind::text AS kind FROM sprints s JOIN projects p ON p.id = s.project_id WHERE s.actual_end > now() - interval '7 days' AND s.status = 'COMPLETED' ORDER BY s.actual_end DESC LIMIT 25;"
         }
@@ -150,14 +150,14 @@
       "type": "timeseries",
       "title": "Skill-run rate (last 24h)",
       "description": "S4 supports: per-skill grade signal that the learning bus filters on.",
-      "datasource": {"type": "postgres", "uid": "LegionPG"},
+      "datasource": {"type": "postgres", "uid": "P9961775252BB5566"},
       "gridPos": {"h": 8, "w": 24, "x": 0, "y": 24},
       "id": 7,
       "fieldConfig": {"defaults": {"unit": "runs"}},
       "targets": [
         {
           "refId": "A",
-          "datasource": {"type": "postgres", "uid": "LegionPG"},
+          "datasource": {"type": "postgres", "uid": "P9961775252BB5566"},
           "format": "time_series",
           "rawSql": "SELECT date_trunc('hour', started_at) AS time, status AS metric, count(*)::int AS value FROM skill_runs WHERE started_at > now() - interval '24 hours' GROUP BY 1, 2 ORDER BY 1;"
         }

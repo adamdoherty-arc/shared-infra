@@ -8,7 +8,7 @@
   "liveNow": true,
   "panels": [
     {
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
       "description": "Mesh-79: per-daemon last-tick freshness (seconds since the daemon ran). Yellow >2x expected interval, red >4x.",
       "fieldConfig": {
         "defaults": {
@@ -38,7 +38,7 @@
       "pluginVersion": "10.0.0",
       "targets": [
         {
-          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
           "expr": "time() - legion_mesh_daemon_last_tick_at",
           "instant": true,
           "legendFormat": "{{daemon}}",
@@ -49,7 +49,7 @@
       "type": "stat"
     },
     {
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
       "description": "Tick outcomes per daemon over the selected range. Green=success, amber=partial, red=error.",
       "fieldConfig": {
         "defaults": {
@@ -62,7 +62,7 @@
       "options": {"legend": {"displayMode": "table", "placement": "right"}, "tooltip": {"mode": "multi"}},
       "targets": [
         {
-          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
           "expr": "increase(legion_mesh_daemon_tick_total[1h])",
           "legendFormat": "{{daemon}} {{outcome}}",
           "refId": "A"
@@ -72,7 +72,7 @@
       "type": "timeseries"
     },
     {
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
       "description": "Last-tick wall-clock duration per daemon. Spikes hint at LLM contention or slow per-skill loops.",
       "fieldConfig": {
         "defaults": {
@@ -86,7 +86,7 @@
       "options": {"colorMode": "value", "graphMode": "area", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "value_and_name"},
       "targets": [
         {
-          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
           "expr": "legion_mesh_daemon_last_tick_duration_seconds",
           "instant": true,
           "legendFormat": "{{daemon}}",

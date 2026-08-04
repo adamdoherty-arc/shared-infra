@@ -122,6 +122,86 @@ services:
       timeout: 5s
       retries: 3
 
+  # ─────────────────────────────────────────────────────────────────────────
+  # dcgm-exporter (Phase 3 item 2, 2026-08-04): RTX 5090 GPU telemetry. The
+  # card ran completely blind before this — no exporter, nothing scraping it.
+  # Validated manually on THIS host before wiring in: `docker run --gpus all
+  # nvidia/dcgm-exporter` boots clean via the `nvidia` container runtime
+  # (docker info already lists it) and reports real DCGM_FI_DEV_FB_USED/FREE,
+  # GPU_UTIL, GPU_TEMP, POWER_USAGE for "NVIDIA GeForce RTX 5090" — no
+  # nvidia_gpu_exporter or host-side nvidia-smi-to-pushgateway fallback was
+  # needed. Pinned by digest; the `latest` tag resolved to DCGM
+  # Version=4.6.0-4.8.3 at pin time (2026-08-04).
+  dcgm-exporter:
+    image: nvidia/dcgm-exporter@sha256:613ab03c11d442fd960ff515f547e9921537454a712d08160bc8f677f89f1c35
+    container_name: dcgm-exporter
+    restart: unless-stopped
+    ports:
+      - "9400:9400"
+    networks:
+      - shared-infra
+    deploy:
+      resources:
+        limits: { memory: 256M }
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    # No HEALTHCHECK — the nvidia/dcgm-exporter image has no wget/curl/nc/sh
+    # tool to exec a probe with (verified: `docker exec dcgm-exporter which
+    # wget` -> "executable file not found in $PATH"; same class of image as
+    # grafana/tempo/otelcol/loki above, which already document this pattern
+    # in this file). Liveness = Prometheus's own `up{job="dcgm-exporter"}`
+    # scrape-health signal, not a container-level probe.
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # cadvisor (Phase 3 item 2, 2026-08-04): per-container CPU/memory/IO for
+  # the whole ecosystem. Nothing scraped this before (confirmed: no
+  # cadvisor/node-exporter container existed anywhere on this host) even
+  # though legion_alert_rules.yml / legion_ecosystem.yml already reference
+  # container_cpu_usage_seconds_total / container_memory_usage_bytes — those
+  # alert rules have been silently dead (never evaluated, metric never
+  # existed) until this container exists. This ALSO makes them real.
+  # Windows/Docker-Desktop notes (validated on this host 2026-08-04):
+  #   - v0.49.1 FAILS here: Docker Desktop's containerd image-store
+  #     snapshotter doesn't use the classic overlayfs/layerdb layout v0.49.1
+  #     expects ("failed to identify the read-write layer ID for container
+  #     ..."). v0.55.1 (current `latest` at pin time) handles it cleanly —
+  #     do NOT pin back to an older tag without re-verifying.
+  #   - Docker Desktop PROXIES /var/run/docker.sock (container inspect shows
+  #     desktop.docker.io/binds/0/SourceKind=dockerSocketProxied). That
+  #     blocks cAdvisor's Docker-factory container-metadata enrichment, so
+  #     `name=`/`image=` Prometheus labels stay empty. The RAW cgroup
+  #     factory still reports full real per-container series keyed by
+  #     container ID (verified: id="/docker/<ada-backend's real 64-char
+  #     container ID>" carried correct live cpu/memory/blkio numbers cross-
+  #     checked against `docker inspect ada-backend`). Dashboard/alert
+  #     queries join on that ID, not on a name label.
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor@sha256:3de2bd5203120b866d74a9b283b2ffb8ec382fbf9dc321814700c6ea6f44ec57
+    container_name: cadvisor
+    restart: unless-stopped
+    privileged: true
+    ports:
+      - "9500:8080"
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker:/var/lib/docker:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - shared-infra
+    deploy:
+      resources:
+        limits: { memory: 256M }
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
 networks:
   shared-infra:
     external: true

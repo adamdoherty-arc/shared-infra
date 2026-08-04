@@ -16,7 +16,7 @@
     {
       "type": "timeseries",
       "title": "p95 latency by flow",
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
       "gridPos": {"h": 8, "w": 12, "x": 0, "y": 1},
       "targets": [
         {"expr": "histogram_quantile(0.95, sum by (le, flow) (rate(ada_flow_positions_sync_seconds_bucket[5m])))", "legendFormat": "positions_sync p95"},
@@ -29,7 +29,7 @@
     {
       "type": "timeseries",
       "title": "p50 latency by flow",
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
       "gridPos": {"h": 8, "w": 12, "x": 12, "y": 1},
       "targets": [
         {"expr": "histogram_quantile(0.5, sum by (le, flow) (rate(ada_flow_positions_sync_seconds_bucket[5m])))", "legendFormat": "positions_sync p50"},
@@ -40,14 +40,14 @@
     {
       "type": "stat",
       "title": "Calls / 5m (positions_sync)",
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
       "gridPos": {"h": 4, "w": 6, "x": 0, "y": 9},
       "targets": [{"expr": "sum(increase(ada_flow_positions_sync_total[5m]))"}]
     },
     {
       "type": "stat",
       "title": "Error rate (all flows)",
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
       "gridPos": {"h": 4, "w": 6, "x": 6, "y": 9},
       "targets": [
         {"expr": "sum by (flow) (rate(ada_flow_positions_sync_total{outcome=\"error\"}[5m])) / sum by (flow) (rate(ada_flow_positions_sync_total[5m]))"}
@@ -57,21 +57,21 @@
     {
       "type": "stat",
       "title": "LLM tokens today (Enhancement-37)",
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
       "gridPos": {"h": 4, "w": 6, "x": 12, "y": 9},
       "targets": [{"expr": "sum(ada_llm_tokens_today)"}]
     },
     {
       "type": "stat",
       "title": "Vault queue depth (Feature-63)",
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
       "gridPos": {"h": 4, "w": 6, "x": 18, "y": 9},
       "targets": [{"expr": "ada_sprint_vault_pending"}]
     },
     {
       "type": "heatmap",
       "title": "positions_sync latency heatmap (broker-aware)",
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
       "gridPos": {"h": 8, "w": 24, "x": 0, "y": 13},
       "targets": [{"expr": "sum by (le) (rate(ada_flow_positions_sync_seconds_bucket[5m]))", "format": "heatmap"}]
     }

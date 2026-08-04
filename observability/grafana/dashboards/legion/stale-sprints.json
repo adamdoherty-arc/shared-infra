@@ -19,7 +19,7 @@
       "type": "stat",
       "title": "Stale sprint count per project",
       "description": "S39 / S35 pair: sprints currently in status=STALE, broken down by project.",
-      "datasource": {"type": "postgres", "uid": "LegionPG"},
+      "datasource": {"type": "postgres", "uid": "P9961775252BB5566"},
       "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
       "id": 1,
       "fieldConfig": {
@@ -45,7 +45,7 @@
       "targets": [
         {
           "refId": "A",
-          "datasource": {"type": "postgres", "uid": "LegionPG"},
+          "datasource": {"type": "postgres", "uid": "P9961775252BB5566"},
           "format": "table",
           "rawSql": "SELECT p.name AS metric, count(*)::int AS value FROM sprints s JOIN projects p ON p.id = s.project_id WHERE s.status = 'STALE' GROUP BY p.name ORDER BY value DESC;"
         }
@@ -55,7 +55,7 @@
       "type": "stat",
       "title": "Total STALE sprints",
       "description": "S39: overall count of sprints currently marked STALE by S35 reaper.",
-      "datasource": {"type": "postgres", "uid": "LegionPG"},
+      "datasource": {"type": "postgres", "uid": "P9961775252BB5566"},
       "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
       "id": 2,
       "fieldConfig": {
@@ -81,7 +81,7 @@
       "targets": [
         {
           "refId": "A",
-          "datasource": {"type": "postgres", "uid": "LegionPG"},
+          "datasource": {"type": "postgres", "uid": "P9961775252BB5566"},
           "format": "table",
           "rawSql": "SELECT count(*)::int AS value FROM sprints WHERE status = 'STALE';"
         }
@@ -91,14 +91,14 @@
       "type": "table",
       "title": "Top-20 most recently marked STALE",
       "description": "S39: top-20 sprints by most-recent stale transition (updated_at), with age since sprint started.",
-      "datasource": {"type": "postgres", "uid": "LegionPG"},
+      "datasource": {"type": "postgres", "uid": "P9961775252BB5566"},
       "gridPos": {"h": 10, "w": 24, "x": 0, "y": 8},
       "id": 3,
       "options": {"showHeader": true},
       "targets": [
         {
           "refId": "A",
-          "datasource": {"type": "postgres", "uid": "LegionPG"},
+          "datasource": {"type": "postgres", "uid": "P9961775252BB5566"},
           "format": "table",
           "rawSql": "SELECT s.id, p.name AS project, s.name AS sprint, s.updated_at AS marked_stale_at, round((EXTRACT(EPOCH FROM (now() - COALESCE(s.actual_start, s.created_at)))/3600)::numeric, 1) AS active_age_hours FROM sprints s JOIN projects p ON p.id = s.project_id WHERE s.status = 'STALE' ORDER BY s.updated_at DESC LIMIT 20;"
         }
@@ -108,14 +108,14 @@
       "type": "timeseries",
       "title": "SprintStaleDetected alerts over time (last 7d)",
       "description": "S39: volume of SprintStaleDetected alerts from legion_alerts, bucketed by hour and ecosystem project.",
-      "datasource": {"type": "postgres", "uid": "LegionPG"},
+      "datasource": {"type": "postgres", "uid": "P9961775252BB5566"},
       "gridPos": {"h": 8, "w": 24, "x": 0, "y": 18},
       "id": 4,
       "fieldConfig": {"defaults": {"unit": "short"}},
       "targets": [
         {
           "refId": "A",
-          "datasource": {"type": "postgres", "uid": "LegionPG"},
+          "datasource": {"type": "postgres", "uid": "P9961775252BB5566"},
           "format": "time_series",
           "rawSql": "SELECT date_trunc('hour', created_at) AS time, ecosystem_project AS metric, count(*)::int AS value FROM legion_alerts WHERE alertname = 'SprintStaleDetected' AND created_at > now() - interval '7 days' GROUP BY 1,2 ORDER BY 1;"
         }
