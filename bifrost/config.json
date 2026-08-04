@@ -78,6 +78,7 @@
           "value": "env.NV_API_KEY_2",
           "models": [
             "deepseek-ai/deepseek-v4-flash",
+            "deepseek-ai/deepseek-v4-pro",
             "meta/llama-3.1-70b-instruct",
             "meta/llama-3.1-8b-instruct",
             "meta/llama-3.2-11b-vision-instruct",
@@ -108,6 +109,7 @@
           "value": "env.NV_API_KEY",
           "models": [
             "deepseek-ai/deepseek-v4-flash",
+            "deepseek-ai/deepseek-v4-pro",
             "meta/llama-3.1-70b-instruct",
             "meta/llama-3.1-8b-instruct",
             "meta/llama-3.2-11b-vision-instruct",
