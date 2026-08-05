@@ -487,6 +487,14 @@ groups:
             for the triggering reason (delta_drop / red_dim).
 
   # ────────────────────────────────────────────────────────────────
+  # Heimdall rules REMOVED (Run 37, 2026-08-05): the v1 mesh daemons
+  # were retired — legion_mesh_daemon_last_tick_at and
+  # legion_heimdall_findings_total export no samples (rules could never
+  # fire) and legion_gpu_vram_free_mb is a dead default-0 gauge (rule
+  # would fire permanently). The live shared-infra copy had already
+  # dropped them; this brings the repo source back in sync.
+  # ────────────────────────────────────────────────────────────────
+  # ────────────────────────────────────────────────────────────────
   # Ops-06 (2026-06-12): event-loop lag alert. The watchdog gauge
   # (commit ace19ad0, run 3db48e57) made the silent backend wedge
   # observable; this rule makes it ALERT. A wedged main loop serves
@@ -511,3 +519,34 @@ groups:
             still return 200 (it is too cheap to detect this). Check
             legion_event_loop_stall_total and docker restart legion-backend
             if lag keeps climbing.
+
+      # Wedge-Watchdog-03 (Run 37, 2026-08-05): EventLoopLagHigh requires the
+      # gauge to stay >1 for 2m — a 1-15s single-sample stall can NEVER satisfy
+      # it (the gauge is back to ~0 by the next scrape), and during a hard
+      # block /metrics is unscrapeable. So ~40 soft stalls/24h and today's 77s
+      # forced restart produced zero alerts. These two rules read the COUNTERS.
+      - alert: EventLoopStallBurst
+        expr: increase(legion_event_loop_stall_total[30m]) > 5
+        labels:
+          severity: warning
+          tier: backend
+        annotations:
+          summary: "Event-loop stall burst ({{ $value }} stalls in 30m)"
+          description: >
+            More than 5 event-loop stall samples (>1s lag each) in 30 minutes.
+            The loop is repeatedly blocked — usually sync FS I/O on a Windows
+            bind mount (D-state wedge precursor). If this fires ahead of a
+            WedgeForcedRestart, the hard watchdog is about to earn its keep.
+      - alert: WedgeForcedRestart
+        expr: increase(legion_wedge_forced_restart_total[1h]) > 0
+        labels:
+          severity: critical
+          tier: backend
+        annotations:
+          summary: "Backend was force-restarted by the wedge watchdog"
+          description: >
+            The out-of-loop hard watchdog force-exited a wedged backend
+            (event loop unresponsive >= LEGION_WEDGE_HARD_RESTART_S). Counted
+            at recovery startup from the durable sentinel. One is self-heal
+            working; repeats within a day mean the hung-mount root cause is
+            active — check which bind-mount I/O ran at the wedge timestamps.
