@@ -26,6 +26,7 @@ restart) so the stock python:slim image needs no pip install.
 """
 from __future__ import annotations
 
+import calendar
 import json
 import os
 import socket
@@ -55,6 +56,25 @@ RESTART_COOLDOWN_S = int(os.environ.get("RESTART_COOLDOWN_S", "600"))
 # doesn't over-fire, but a genuinely stuck/unreachable vllm-chat still gets
 # healed instead of silently sitting dark forever.
 UNREACHABLE_SAMPLES = int(os.environ.get("UNREACHABLE_SAMPLES", str(WEDGE_N * 2)))
+# 2026-08-06 ROOT-CAUSE FIX — the unreachable branch was killing vllm-chat MID
+# COLD-START, in a self-sustaining loop. Numbers: UNREACHABLE_SAMPLES*POLL_S =
+# 8*30s = 4 min to fire, but a cold start of Qwen3.6-27B-AWQ-INT4 takes ~9 min
+# (measured 2026-08-07: container start 01:24:53 -> /health 200 at 01:33:46,
+# of which 234s is just weight load). STARTUP_GRACE_S was 120s, so the grace
+# gate was long open by then. The monitor therefore restarted the container ~5s
+# after weights finished loading, throwing away the whole load and starting
+# over; the ONLY thing preventing an infinite loop was RESTART_COOLDOWN_S=600,
+# which is exactly the ~10-minute restart cadence in the 07-31 22:33 -> 08-01
+# 18:25 burst (11 restarts, none of them a real wedge). On the 2026-08-07
+# reload it reached 7/8 — one poll from re-entering the loop.
+# Note vllm-chat's own healthcheck already declares `start_period: 1800s`, so
+# Docker was tolerating the long start correctly and only this monitor was not.
+# Rather than duplicate that number, the unreachable branch now ASKS DOCKER for
+# the container's real state and treats "still starting" as expected-unreachable.
+# This env var is only the fallback used when the inspect call itself fails.
+UNREACHABLE_STARTUP_GRACE_S = int(
+    os.environ.get("UNREACHABLE_STARTUP_GRACE_S", "1800")  # mirrors healthcheck start_period
+)
 DOCKER_SOCK = os.environ.get("DOCKER_SOCK", "/var/run/docker.sock")
 DOCKER_API = os.environ.get("DOCKER_API_VERSION", "v1.41")
 
@@ -114,6 +134,49 @@ def docker_restart(name: str) -> int:
         conn.close()
 
 
+def docker_state(name: str) -> tuple[bool, str | None, float | None]:
+    """Inspect `name` and return (running, health_status, seconds_since_started).
+
+    health_status is Docker's own value — "starting" while inside the
+    healthcheck's start_period, then "healthy"/"unhealthy" — or None when the
+    container declares no healthcheck. Used by the unreachable branch to tell a
+    cold start apart from a genuinely dark engine. Raises on any transport or
+    parse failure so the caller can fall back to a time-based grace.
+    """
+    conn = _UnixHTTPConnection(DOCKER_SOCK, 10)
+    try:
+        conn.request("GET", f"/{DOCKER_API}/containers/{name}/json")
+        resp = conn.getresponse()
+        raw_body = resp.read()
+        status = resp.status
+    finally:
+        conn.close()
+    # A 404 ("No such container") still returns valid JSON, so json.loads alone
+    # would succeed and .get("State") would yield {} -> a bogus
+    # (running=False, health=None) that the caller would misread as a live-but-
+    # stopped container. Fail loudly instead so the caller takes the documented
+    # inspect-failed fallback path.
+    if status != 200:
+        raise RuntimeError(f"docker inspect {name}: HTTP {status} {raw_body[:200]!r}")
+    data = json.loads(raw_body)
+    state = data.get("State")
+    if not isinstance(state, dict):
+        raise RuntimeError(f"docker inspect {name}: no State in payload")
+    health = (state.get("Health") or {}).get("Status")
+    started_ago: float | None = None
+    raw = state.get("StartedAt") or ""
+    # Docker returns RFC3339 with nanosecond precision, e.g.
+    # "2026-08-07T01:29:48.212470591Z" — strptime cannot parse 9-digit
+    # fractions, so slice to whole seconds and treat it as UTC.
+    if len(raw) >= 19:
+        try:
+            parsed = time.strptime(raw[:19], "%Y-%m-%dT%H:%M:%S")
+            started_ago = time.time() - calendar.timegm(parsed)
+        except ValueError:
+            started_ago = None
+    return bool(state.get("Running")), health, started_ago
+
+
 # --- py-spy auto-capture (daily-review run 17, 2026-07-10) --------------------
 # The single-request engine freeze (running=1, both token counters flat) keeps
 # recurring under seqs=1 (07-04, 07-08, and a 6-wedge burst 07-09) — seqs=1 caps
@@ -127,13 +190,48 @@ def docker_restart(name: str) -> int:
 # restart — it can never delay the heal.
 PYSPY_ON_WEDGE = os.environ.get("PYSPY_ON_WEDGE", "1") == "1"
 PYSPY_TIMEOUT_S = int(os.environ.get("PYSPY_DUMP_TIMEOUT_S", "60"))
-_PYSPY_CMD = (
-    "command -v py-spy >/dev/null 2>&1 || pip install -q py-spy >/dev/null 2>&1; "
-    "pid=$(ps -eo pid,args | grep -i EngineCore | grep -v grep "
-    "| awk '{print $1}' | head -1); "
-    "[ -n \"$pid\" ] && py-spy dump --pid \"$pid\" --nonblocking 2>&1 "
-    "|| echo 'py-spy: no EngineCore pid found'"
-)
+# 2026-08-06 REWRITE — the 2026-08-02 23:48 wedge capture FAILED and produced a
+# misleading log, so the only genuine single-request wedge we have caught since
+# the 07-20 sampler change left us with no usable stack. Four bugs, all fixed
+# here:
+#   1. --nonblocking was the direct cause. It reads the target's memory WITHOUT
+#      pausing it, so a live-mutating process yields exactly the observed
+#      "Failed to copy PyCodeObject / Bad address (os error 14)". vllm-chat is
+#      granted CAP_SYS_PTRACE precisely so py-spy can pause and get a clean
+#      read, and we are about to restart the container anyway — pausing a
+#      already-wedged engine for a moment costs nothing. Blocking is now the
+#      primary mode; --nonblocking survives only as a last-ditch fallback.
+#   2. No --native. A pure-Python stack can only ever say "we are in
+#      sample_tokens"; it cannot say what that is blocked ON. The wedge is
+#      almost certainly parked in a CUDA/driver call, so the native unwind is
+#      the actual root-cause lever. Run AFTER the plain dump so a slow or
+#      timing-out native unwind can never cost us the cheap stack.
+#   3. `[ -n "$pid" ] && py-spy ... || echo 'no EngineCore pid found'` reported
+#      "no pid found" whenever py-spy merely EXITED NON-ZERO. On 08-02 the pid
+#      was found fine and py-spy failed — the log claimed the opposite and sent
+#      the next reader hunting a pid-discovery bug that does not exist.
+#   4. head -1 dumped only the first EngineCore. Dump every one.
+_PYSPY_CMD = r"""
+command -v py-spy >/dev/null 2>&1 || pip install -q py-spy >/dev/null 2>&1
+pids=$(ps -eo pid,args | grep -i EngineCore | grep -v grep | awk '{print $1}')
+if [ -z "$pids" ]; then
+  echo "py-spy: no EngineCore process found; full process table follows"
+  ps -eo pid,args | head -30
+  exit 0
+fi
+echo "py-spy: EngineCore pids = $pids"
+for pid in $pids; do
+  echo "===== pid $pid : blocking dump (primary) ====="
+  if ! py-spy dump --pid "$pid" 2>&1; then
+    echo "===== pid $pid : blocking dump FAILED, falling back to --nonblocking ====="
+    py-spy dump --pid "$pid" --nonblocking 2>&1 \
+      || echo "py-spy: ALL dump modes failed for pid $pid"
+  fi
+  echo "===== pid $pid : native dump (CUDA/C frames — the root-cause frame) ====="
+  py-spy dump --pid "$pid" --native 2>&1 \
+    || echo "py-spy: native dump unavailable/failed for pid $pid (plain stack above still valid)"
+done
+"""
 
 
 def _docker_exec_capture(name: str, cmd: list[str], timeout: int) -> str:
@@ -157,9 +255,54 @@ def _docker_exec_capture(name: str, cmd: list[str], timeout: int) -> str:
         conn.request("POST", f"/{DOCKER_API}/exec/{exec_id}/start",
                      body=json.dumps({"Detach": False, "Tty": True}).encode(),
                      headers={"Content-Type": "application/json"})
-        return conn.getresponse().read(65536).decode("utf-8", "replace")
+        # 64 KiB truncated multi-pid + --native dumps (2026-08-06): a native
+        # unwind of an EngineCore with the full CUDA/torch shared-lib set is
+        # easily tens of KiB on its own, and we now emit one plain + one native
+        # dump per pid. Truncation would cut exactly the native frames we added
+        # this for. Still bounded (socket timeout + fixed cap), never unbounded.
+        return conn.getresponse().read(1024 * 1024).decode("utf-8", "replace")
     finally:
         conn.close()
+
+
+def startup_suppression(
+    *,
+    probe_failed: bool,
+    running: bool,
+    health: str | None,
+    started_ago: float | None,
+    since_epoch: float,
+) -> tuple[bool, str]:
+    """Decide whether an unreachable /metrics poll should be EXCUSED as a
+    still-starting target rather than counted toward a restart.
+
+    Returns (suppress, human_reason). Pure function of its inputs so the
+    cold-start-loop regression (2026-08-02 / 2026-08-07) is testable without
+    provoking a real 9-minute model reload.
+    """
+    if probe_failed:
+        # Could not ask Docker: fall back to a generous time window so a broken
+        # socket cannot resurrect the mid-load restart loop, while still
+        # eventually allowing a heal.
+        return since_epoch < UNREACHABLE_STARTUP_GRACE_S, "time-based grace (inspect unavailable)"
+    if not running:
+        # Deliberately NOT suppressed. A container that is down is not
+        # "starting" — restarting it is the correct heal, and issuing a restart
+        # against a stopped container is harmless. Suppressing here would make a
+        # crashed engine invisible to this monitor forever. The brief
+        # not-running window during our own restart is covered by
+        # RESTART_COOLDOWN_S.
+        return False, ""
+    if health == "starting":
+        # Docker's own verdict, driven by the container's start_period (1800s
+        # for vllm-chat). This is the branch that fixes the loop.
+        return True, "healthcheck still in start_period"
+    if health is None and started_ago is not None and started_ago < UNREACHABLE_STARTUP_GRACE_S:
+        # Target declares no healthcheck: fall back to elapsed-since-start.
+        return True, f"no healthcheck, started {int(started_ago)}s ago"
+    # health in {"healthy","unhealthy"} — start_period is over. If /metrics is
+    # unreachable now, that is a real fault worth counting.
+    return False, ""
 
 
 def capture_pyspy_dump(name: str) -> None:
@@ -181,7 +324,8 @@ def capture_pyspy_dump(name: str) -> None:
 def main() -> None:
     log(f"start: metrics={METRICS_URL} target={TARGET} poll={POLL_S}s "
         f"wedge={WEDGE_N} samples grace={GRACE_S}s cooldown={RESTART_COOLDOWN_S}s "
-        f"unreachable={UNREACHABLE_SAMPLES} samples")
+        f"unreachable={UNREACHABLE_SAMPLES} samples "
+        f"startup_grace={UNREACHABLE_STARTUP_GRACE_S}s (docker-state aware)")
     last_gen: float | None = None
     last_prompt: float | None = None
     flat = 0
@@ -252,6 +396,42 @@ def main() -> None:
             # when detection mattered most. `flat` is deliberately preserved here
             # (not reset) so a metrics blip during an active stall streak doesn't
             # erase real progress toward that gate either.
+            # Cold-start guard (2026-08-06). Unreachable /metrics during a
+            # legitimate startup is EXPECTED, not a wedge: vLLM binds the HTTP
+            # server only after weights are loaded and CUDA graphs captured.
+            # Ask Docker what the container is actually doing before counting
+            # this against the restart threshold. Without this, the monitor
+            # restarts the target mid-load, forever (see the header note on
+            # UNREACHABLE_STARTUP_GRACE_S).
+            try:
+                c_running, c_health, c_started_ago = docker_state(TARGET)
+                probe_failed = False
+            except Exception as probe_exc:  # noqa: BLE001
+                # Never let an inspect failure block healing — fall back to a
+                # generous time-based grace anchored on the monitor's epoch.
+                c_running, c_health, c_started_ago = True, None, None
+                probe_failed = True
+                log(f"docker inspect failed ({probe_exc!r}) - "
+                    f"falling back to {UNREACHABLE_STARTUP_GRACE_S}s time-based startup grace")
+
+            still_starting, reason = startup_suppression(
+                probe_failed=probe_failed,
+                running=c_running,
+                health=c_health,
+                started_ago=c_started_ago,
+                since_epoch=time.time() - epoch,
+            )
+
+            if still_starting:
+                # Hold the counter at 0 AND re-anchor the grace epoch so the
+                # stall branch does not misfire the instant metrics come back.
+                unreachable = 0
+                epoch = time.time()
+                log(f"poll unreachable but {TARGET} is STARTING ({reason}) - "
+                    f"not counting toward restart (flat={flat})")
+                time.sleep(POLL_S)
+                continue
+
             unreachable += 1
             log(f"poll UNREACHABLE {unreachable}/{UNREACHABLE_SAMPLES} ({e!r}) - "
                 f"preserving stall counter (flat={flat})")

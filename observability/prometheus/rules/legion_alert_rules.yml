@@ -486,6 +486,62 @@ groups:
             If alerts are firing frequently, review legion_learning_alert_fired_total
             for the triggering reason (delta_drop / red_dim).
 
+      # ── Fix-1802 (Run 38, 2026-08-06): learning measured NOTHING ────
+      # LearningCompositeLow above can only fire on a LOW number. It is
+      # structurally blind to the failure that actually happened: every
+      # dimension self-excluded, the composite reported a vacuous 100,
+      # and the system health score ROSE 97 -> 100/green as the learning
+      # loop went dark. Post-fix an unmeasured composite publishes NaN,
+      # which is indistinguishable from a scrape gap — so the enabled-
+      # dimension count is the signal that has to be watched.
+      - alert: LearningDimensionsAllDark
+        expr: legion_learning_dims_enabled == 0
+        for: 90m
+        labels:
+          severity: warning
+          tier: ecosystem
+        annotations:
+          summary: "Learning composite is UNMEASURED — 0 dimensions enabled"
+          description: >
+            Every learning dimension is excluded (no_data / self-pruned /
+            anticorrelated), so there is no learning composite at all and
+            /api/health/system-overview reports learning as `unmeasured`
+            with its weight redistributed. This is NOT a low grade — it is
+            the absence of measurement, and it hides whether the learning
+            loop works. Check /learning-engine for per-dimension state and
+            legion_learning_dim_grade{dim_key="..."}. The usual cause is a
+            sample window sliding below a representativeness floor
+            (_EPISODIC_MIN_EVAL=30 / _EPISODIC_MIN_COVERAGE=0.20). Fix the
+            starved input; do NOT lower the floor to force a number.
+
+      # ── Fix-1805 (Run 38): codegraph enrichment dark ────────────────
+      # The host bridge (127.0.0.1:18900) is a Windows Scheduled Task, not
+      # a compose service, so nothing restarts it and nothing watched it.
+      # It died on 2026-08-02 and every LLM call recorded
+      # codegraph_status='unavailable' for FOUR DAYS in silence — the
+      # enricher degrades quietly by design (rule 55), which is right, but
+      # silent degradation still has to be visible somewhere.
+      - alert: CodegraphEnrichmentUnavailable
+        expr: >
+          sum(rate(legion_codegraph_enrichment_total{outcome="unavailable"}[15m])) > 0
+          and sum(rate(legion_codegraph_enrichment_total{outcome="ok"}[15m])) == 0
+        for: 30m
+        labels:
+          severity: warning
+          tier: ecosystem
+        annotations:
+          summary: "Codegraph enrichment is failing on every attempt (bridge down?)"
+          description: >
+            Enrichment attempts are resolving `unavailable` and none are
+            succeeding, so every LLM call is leaving the backend without its
+            <codegraph_context> block. Almost always the host bridge is dead:
+            check `curl http://127.0.0.1:18900/healthz` and
+            `Get-ScheduledTask CodegraphBridge` — State `Ready` means the
+            process exited and the task is NOT running; `Start-ScheduledTask
+            -TaskName CodegraphBridge` revives it. Sibling of the Executor
+            Runner (:18910): both are host Scheduled Tasks that do not come
+            back on a headless reboot.
+
   # ────────────────────────────────────────────────────────────────
   # Heimdall rules REMOVED (Run 37, 2026-08-05): the v1 mesh daemons
   # were retired — legion_mesh_daemon_last_tick_at and
