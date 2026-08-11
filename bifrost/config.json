@@ -85,8 +85,7 @@
           "name": "nvidia-nim-secondary",
           "value": "env.NV_API_KEY_2",
           "models": [
-            "deepseek-ai/deepseek-v4-flash",
-            "deepseek-ai/deepseek-v4-pro",
+            "deepseek-ai/deepseek-v4-flash-0731",
             "meta/llama-3.1-70b-instruct",
             "meta/llama-3.1-8b-instruct",
             "meta/llama-3.2-11b-vision-instruct",
@@ -94,7 +93,10 @@
             "meta/llama-3.3-70b-instruct",
             "minimaxai/minimax-m3",
             "mistralai/mistral-nemotron",
+            "nvidia/ising-calibration-1.5-31b",
+            "nvidia/llama-3.1-nemoguard-8b-content-safety",
             "nvidia/llama-3.1-nemotron-nano-vl-8b-v1",
+            "nvidia/llama-3.1-nemotron-safety-guard-8b-v3",
             "nvidia/llama-3.3-nemotron-super-49b-v1",
             "nvidia/llama-3.3-nemotron-super-49b-v1.5",
             "nvidia/nemotron-3-nano-30b-a3b",
@@ -103,6 +105,7 @@
             "nvidia/nemotron-3-ultra-550b-a55b",
             "nvidia/nemotron-3.5-content-safety",
             "nvidia/nemotron-3.5-lightning-30b-a3b",
+            "nvidia/nemotron-mini-4b-instruct",
             "nvidia/nemotron-nano-12b-v2-vl",
             "nvidia/nvidia-nemotron-nano-9b-v2",
             "openai/gpt-oss-120b",
@@ -115,15 +118,16 @@
           "weight": 1.0,
           "aliases": {
             "nemotron-lightning": "nvidia/nemotron-3.5-lightning-30b-a3b",
-            "nemotron-safety": "nvidia/nemotron-3.5-content-safety"
+            "nemotron-safety": "nvidia/nemotron-3.5-content-safety",
+            "deepseek-v4-flash": "deepseek-ai/deepseek-v4-flash-0731",
+            "nemoguard-safety": "nvidia/llama-3.1-nemoguard-8b-content-safety"
           }
         },
         {
           "name": "nvidia-nim-primary",
           "value": "env.NV_API_KEY",
           "models": [
-            "deepseek-ai/deepseek-v4-flash",
-            "deepseek-ai/deepseek-v4-pro",
+            "deepseek-ai/deepseek-v4-flash-0731",
             "meta/llama-3.1-70b-instruct",
             "meta/llama-3.1-8b-instruct",
             "meta/llama-3.2-11b-vision-instruct",
@@ -131,7 +135,10 @@
             "meta/llama-3.3-70b-instruct",
             "minimaxai/minimax-m3",
             "mistralai/mistral-nemotron",
+            "nvidia/ising-calibration-1.5-31b",
+            "nvidia/llama-3.1-nemoguard-8b-content-safety",
             "nvidia/llama-3.1-nemotron-nano-vl-8b-v1",
+            "nvidia/llama-3.1-nemotron-safety-guard-8b-v3",
             "nvidia/llama-3.3-nemotron-super-49b-v1",
             "nvidia/llama-3.3-nemotron-super-49b-v1.5",
             "nvidia/nemotron-3-nano-30b-a3b",
@@ -140,6 +147,7 @@
             "nvidia/nemotron-3-ultra-550b-a55b",
             "nvidia/nemotron-3.5-content-safety",
             "nvidia/nemotron-3.5-lightning-30b-a3b",
+            "nvidia/nemotron-mini-4b-instruct",
             "nvidia/nemotron-nano-12b-v2-vl",
             "nvidia/nvidia-nemotron-nano-9b-v2",
             "openai/gpt-oss-120b",
@@ -166,10 +174,11 @@
             "llama-90b-vision": "meta/llama-3.2-90b-vision-instruct",
             "nemotron-vl": "nvidia/nemotron-nano-12b-v2-vl",
             "deepseek-v4": "deepseek-ai/deepseek-v4-flash",
-            "deepseek-v4-flash": "deepseek-ai/deepseek-v4-flash",
+            "deepseek-v4-flash": "deepseek-ai/deepseek-v4-flash-0731",
             "minimax-m3": "minimaxai/minimax-m3",
             "nemotron-lightning": "nvidia/nemotron-3.5-lightning-30b-a3b",
-            "nemotron-safety": "nvidia/nemotron-3.5-content-safety"
+            "nemotron-safety": "nvidia/nemotron-3.5-content-safety",
+            "nemoguard-safety": "nvidia/llama-3.1-nemoguard-8b-content-safety"
           }
         }
       ],
@@ -197,26 +206,29 @@
           "name": "openrouter-primary",
           "value": "env.OPENROUTER_API_KEY",
           "models": [
-            "nvidia/nemotron-3-ultra-550b-a55b:free",
-            "nvidia/nemotron-3-super-120b-a12b:free",
-            "qwen/qwen3-coder:free",
-            "qwen/qwen3-next-80b-a3b-instruct:free",
-            "openai/gpt-oss-120b:free",
-            "openai/gpt-oss-20b:free",
-            "meta-llama/llama-3.3-70b-instruct:free",
-            "google/gemma-4-31b-it:free",
+            "cohere/north-mini-code:free",
             "google/gemma-4-26b-a4b-it:free",
+            "google/gemma-4-31b-it:free",
+            "inclusionai/ling-3.0-tiny:free",
+            "meta-llama/llama-3.3-70b-instruct:free",
+            "nousresearch/hermes-3-llama-3.1-405b:free",
             "nvidia/nemotron-3-nano-30b-a3b:free",
             "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
+            "nvidia/nemotron-3-super-120b-a12b:free",
+            "nvidia/nemotron-3-ultra-550b-a55b:free",
+            "nvidia/nemotron-3.5-content-safety:free",
+            "nvidia/nemotron-3.5-lightning:free",
             "nvidia/nemotron-nano-12b-v2-vl:free",
-            "poolside/laguna-m.1:free",
-            "poolside/laguna-xs-2.1:free",
-            "openrouter/owl-alpha",
+            "nvidia/nemotron-nano-9b-v2:free",
+            "openai/gpt-oss-120b:free",
+            "openai/gpt-oss-20b:free",
             "openrouter/free",
-            "cohere/north-mini-code:free",
-            "tencent/hy3:free",
-            "nousresearch/hermes-3-llama-3.1-405b:free",
-            "nvidia/nemotron-3.5-lightning:free"
+            "openrouter/owl-alpha",
+            "poolside/laguna-m.1:free",
+            "poolside/laguna-s-2.1:free",
+            "poolside/laguna-xs-2.1:free",
+            "qwen/qwen3-next-80b-a3b-instruct:free",
+            "tencent/hy3:free"
           ],
           "weight": 1.0,
           "aliases": {
@@ -340,13 +352,15 @@
           "name": "groq-primary",
           "value": "env.GROQ_API_KEY",
           "models": [
+            "allam-2-7b",
+            "groq/compound",
+            "groq/compound-mini",
+            "llama-3.1-8b-instant",
             "llama-3.3-70b-versatile",
             "openai/gpt-oss-120b",
             "openai/gpt-oss-20b",
-            "llama-3.1-8b-instant",
-            "qwen/qwen3.6-27b",
-            "groq/compound",
-            "groq/compound-mini"
+            "openai/gpt-oss-safeguard-20b",
+            "qwen/qwen3.6-27b"
           ],
           "weight": 1.0,
           "aliases": {
@@ -523,13 +537,22 @@
           "name": "ovhcloud-anon",
           "value": "EMPTY",
           "models": [
-            "gpt-oss-120b",
-            "gpt-oss-20b",
-            "Qwen3.6-27B",
+            "Mistral-7B-Instruct-v0.3",
+            "Mistral-Nemo-Instruct-2407",
             "Mistral-Small-3.2-24B-Instruct-2506",
-            "Qwen2.5-VL-72B-Instruct"
+            "Qwen2.5-VL-72B-Instruct",
+            "Qwen3-32B",
+            "Qwen3-Coder-30B-A3B-Instruct",
+            "Qwen3.5-397B-A17B",
+            "Qwen3.6-27B",
+            "gpt-oss-120b",
+            "gpt-oss-20b"
           ],
-          "weight": 1.0
+          "weight": 1.0,
+          "aliases": {
+            "qwen3-coder-30b": "Qwen3-Coder-30B-A3B-Instruct",
+            "qwen3.5-397b": "Qwen3.5-397B-A17B"
+          }
         }
       ],
       "network_config": {
@@ -593,8 +616,9 @@
           "value": "env.SEALION_API_KEY",
           "models": [
             "aisingapore/Gemma-SEA-LION-v4-27B-IT",
-            "aisingapore/Qwen-SEA-LION-v4.5-27B-IT",
-            "aisingapore/Llama-SEA-LION-v3-70B-IT"
+            "aisingapore/Llama-SEA-LION-v3-70B-IT",
+            "aisingapore/Qwen-SEA-LION-v4-32B-IT",
+            "aisingapore/Qwen-SEA-LION-v4.5-27B-IT"
           ],
           "weight": 1.0
         }
@@ -661,9 +685,11 @@
           "name": "aion_api_key-primary",
           "value": "env.AION_API_KEY",
           "models": [
-            "aion-labs/aion-3.0-mini",
+            "aion-labs/aion-2.0",
+            "aion-labs/aion-2.5",
             "aion-labs/aion-3.0",
-            "aion-labs/aion-2.5"
+            "aion-labs/aion-3.0-mini",
+            "aion-labs/aion-rp-llama-3.1-8b"
           ],
           "weight": 1.0
         }
