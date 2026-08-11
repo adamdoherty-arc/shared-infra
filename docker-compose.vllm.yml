@@ -2,23 +2,34 @@
 # Single instance of each model in VRAM; all three projects point at these endpoints
 # via VLLM_CHAT_BASE_URL / VLLM_EMBED_BASE_URL in their .env files.
 #
-# Chat backend (2026-06-24→): vLLM v0.23.0-cu129 serving
-# cyankiwi/Qwen3.6-27B-AWQ-INT4 — a DENSE 27B, AWQ-Marlin INT4 (the proven
-# Blackwell weight-only kernel on this card), ctx 16384, tool calling enabled
-# (qwen3_xml parser). Served canonical name `Qwen3.5-35B-A3B` (+ stable alias
-# `qwen3-chat`); Bifrost forwards `vllm-local/qwen3-chat` (and legacy
-# `Qwen3-32B-AWQ`) here. Dense 27B was chosen to STRUCTURALLY avoid the
-# NVFP4-MoE running=2 wedge on sm_120 (vllm#35566). Both earlier paths are
-# RETIRED as unstable on this WSL2+Blackwell box: Qwen3.5-35B-A3B-GPTQ-Int4
-# (MoE, forced --enforce-eager -> ~9 tok/s + engine wedges) and
-# Qwen3.6-35B-A3B-NVFP4 (FlashInfer CUTLASS crash/hang). The authoritative
-# live config + full swap history are in the vllm-chat service block below
-# (see "SWAP 2026-06-24").
+# Chat backend (2026-08-11→): vLLM v0.25.1-cu129 serving
+# Qwen/Qwen3-8B-AWQ — a DENSE 8B, AWQ-Marlin INT4 (the proven Blackwell
+# weight-only kernel on this card), ctx 32768, tool calling enabled
+# (hermes parser + qwen3 reasoning parser). Served canonical name
+# `Qwen3.5-35B-A3B` (+ stable alias `qwen3-chat`); Bifrost forwards
+# `vllm-local/qwen3-chat` (and legacy `Qwen3-32B-AWQ`) here.
 #
-# VRAM budget on a 5090 (32 GB):
-#   chat  (cyankiwi/Qwen3.6-27B-AWQ-INT4, dense AWQ-INT4)  ~19 GB weights + KV
-#   embed (Qwen3-Embedding-0.6B, vLLM)         ~1.5 GB
-#   total                                       ~26 GB pinned (0.92 util cap)
+# NB: the six --served-model-name aliases are legacy and NO LONGER describe
+# the weights. `Qwen3.5-35B-A3B`, `Qwen3.6-35B-A3B`, `Qwen3.6-27B`,
+# `Qwen3-32B-AWQ` and `gpt-oss-20b` ALL answer with Qwen3-8B as of Pass-6.
+# They are kept because ~350 Legion/Zero/ADA call sites reference them and
+# because moving position 0 is a platform-wide 403 (see ALIASES notes below).
+# Renaming them is tracked as its own migration, not a config edit.
+#
+# Earlier paths RETIRED as unstable on this WSL2+Blackwell box:
+# Qwen3.5-35B-A3B-GPTQ-Int4 (MoE, forced --enforce-eager -> ~9 tok/s + engine
+# wedges) and Qwen3.6-35B-A3B-NVFP4 (FlashInfer CUTLASS crash/hang). The
+# authoritative live config + full swap history are in the vllm-chat service
+# block below (see "SWAP 2026-06-24" and "2026-08-11 (Pass-6 model swap)").
+#
+# VRAM budget on a 5090 (32 GB), MEASURED from the boot log 2026-08-11 08:51:
+#   chat  (Qwen/Qwen3-8B-AWQ, dense AWQ-INT4)   ~5.5 GB weights
+#         + 21.65 GiB KV (315,296 tokens @ fp8; 9.62x concurrency at 32K ctx)
+#   embed (Qwen3-Embedding-0.6B, vLLM)          ~1.5 GB
+#   total                                       ~31.9/32.6 GiB pinned (0.90 util cap)
+#   NB: --gpu-memory-utilization PRE-ALLOCATES. Freeing weight VRAM does not
+#   free card-level VRAM — it is handed to the KV pool. The card sits at ~98%
+#   by design; the win is KV headroom, not free memory.
 #
 # Model swap history:
 #   - Qwen3.6-35B-A3B-FP8 (March 2026): 34 GiB, OOM on 32 GB. RETIRED.
@@ -266,7 +277,33 @@ services:
       # top-k sampling". Route sampling through the native PyTorch sampler to dodge the
       # FlashInfer sampling-kernel hang on SM120. Attention backend is untouched.
       # Set VLLM_USE_FLASHINFER_SAMPLER=1 in .env + recreate to roll back.
-      VLLM_USE_FLASHINFER_SAMPLER: ${VLLM_USE_FLASHINFER_SAMPLER:-1}
+      #
+      # 2026-08-06 FALSIFICATION — this did NOT fix the wedge. Keep it (native
+      # sampler has no measured downside and the py-spy capture was real), but do
+      # NOT treat the single-request wedge as solved. Post-fix wedge evidence from
+      # vllm-wedge-monitor, all at running=1, all AFTER 2026-07-20:
+      #   2026-07-28 19:23 / 19:44   stall 1/4, recovered without restart
+      #   2026-07-29 00:59 / 14:58 / 19:38  stall 1/4, recovered without restart
+      #   2026-08-02 23:46->23:48    stall 4/4 (120s zero progress on BOTH
+      #                              generation_tokens_total AND prompt_tokens_total,
+      #                              one request in flight) -> monitor restarted
+      #                              vllm-chat. Genuine single-request wedge.
+      # Implication: the sampler was at most A hang path, not THE hang path. Any
+      # future max_num_seqs>1 experiment is therefore NOT "testing on a fixed base"
+      # — the base is still broken. See the wedge-monitor note further down.
+      #
+      # Default flipped 1 -> 0 on 2026-08-06: the old default meant any `compose up`
+      # that did not source shared-infra/.env silently re-enabled the known-bad
+      # FlashInfer sampler. Production value now holds without .env.
+      VLLM_USE_FLASHINFER_SAMPLER: ${VLLM_USE_FLASHINFER_SAMPLER:-0}
+      # 2026-08-11 (Pass-6 model swap): force V1 Model Runner. V2 tries to allocate
+      # a StagedWriteTensor via UvaBuffer which needs CUDA Unified Virtual Addressing —
+      # NOT available in WSL2's CUDA driver. Symptom on first boot with Qwen3-8B-AWQ:
+      # "RuntimeError: UVA is not available" during GPUModelRunnerV2 init at seqs=6.
+      # V1 uses cudaMalloc for the same buffer and works on WSL2 unchanged. This may
+      # also explain the historical seqs>=2 wedges the .env comment documented — V2
+      # was the wedge source, not concurrency-per-se.
+      VLLM_USE_V2_MODEL_RUNNER: ${VLLM_USE_V2_MODEL_RUNNER:-0}
       # KV-OOM fix (2026-06-21): was a v0.22.1 workaround for its over-reserving
       # graph estimator. 2026-06-24 supervise v0.23 retry-2: removed because v0.23
       # has correct graph accounting and the workaround hurts more than helps on
@@ -325,9 +362,18 @@ services:
     #                                     the running=2 wedge condition that
     #                                     hit clockwork every 30 min on v0.22.1).
     #   gpu_memory_util: 0.92 -> 0.94    (just under the free-mem precheck).
-    # Wedge-monitor sidecar (vllm-wedge-monitor) is now redundant safety-net
-    # only — at max_num_seqs=1 the wedge condition is structurally impossible.
-    # Leave it running as defense in depth.
+    # Wedge-monitor sidecar (vllm-wedge-monitor): LOAD-BEARING, not redundant.
+    # This block used to claim "at max_num_seqs=1 the wedge condition is
+    # structurally impossible." That claim is FALSE and was falsified on
+    # 2026-08-02 23:46-23:48, when the monitor caught a genuine wedge at
+    # running=1 (four consecutive 30s polls, zero forward progress on both the
+    # generation and prompt token counters) and had to restart vllm-chat to
+    # clear it. Earlier single-request stalls on 07-28 and 07-29 self-cleared
+    # before hitting the 4-sample threshold.
+    # What is actually true: max_num_seqs=1 eliminated the running>=2 wedge that
+    # fired every ~30 min on v0.22.1. It did NOT eliminate wedging in general.
+    # Do not decommission this sidecar — without it a wedge is a silent outage
+    # for every ADA/Legion/Zero call that routes to vllm-local.
     # ROLLBACK to v0.22.1: restore `image: vllm/vllm-openai:v0.22.1` here +
     # restore VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS: "0" env above + .env
     # mem_util=0.92 + max_num_seqs=2 + max_model_len=16384.
@@ -605,8 +651,53 @@ services:
     #     EngineCore stack on every wedge — the root-cause read we still want).
     #   ALIASES: list kept IDENTICAL (incl. gpt-oss-20b) — clients may have
     #     adopted any name in the 07-13..07-17 window; removing one = 403/404s.
+    # 2026-08-11 (Pass-6 model swap): cyankiwi/Qwen3.6-27B-AWQ-INT4 -> Qwen/Qwen3-8B-AWQ.
+    # WHY: 27B at ~13.5 GB weights was consuming 31.7/32.6 GiB (97%) on the RTX 5090,
+    # forcing max_num_seqs=1 as the ONLY safe setting (the WSL2+SM120 concurrency wedge
+    # documented in .env's VLLM_MAX_NUM_SEQS block is a hardware constraint, not a
+    # model one — it stays 1). At 97% VRAM there was no margin for KV growth, and the
+    # local rung was the tail-of-tail safety net anyway (LLM_IMPORTANT_TASKS_CLOUD_FIRST
+    # already sends real reasoning to gpt-oss-120b + qwen3.5-122b-a10b via cloud).
+    # Qwen3-8B-AWQ (~5.5 GB weights) frees ~8 GB, drops VRAM to ~65%, and Qwen3-8B
+    # "matches Qwen2.5-14B benchmarks" per the Qwen team — more than enough for the
+    # sentiment/triage/short-form-narration + emergency-fallback role. Smaller model
+    # is also faster per token, so queue-wait at seqs=1 shrinks even without concurrency.
+    #   ALIASES: list kept IDENTICAL. The 2026-07-13 note in this file warns that
+    #     removing any alias in the 07-13..07-17 window = 403/404s for clients that
+    #     adopted them. So "gpt-oss-20b" and "Qwen3-32B-AWQ" now transparently answer
+    #     with Qwen3-8B; caller-visible names are unchanged.
+    #   MAX_NUM_SEQS: 1 -> 6 (.env VLLM_MAX_NUM_SEQS). This comment previously
+    #     read "unchanged at 1" and was WRONG — the live container has run
+    #     --max-num-seqs 6 since the 08:50Z boot. Corrected 2026-08-11.
+    #     WHY IT IS DEFENSIBLE THIS TIME (and was not in 07-02 / 07-14): both
+    #     earlier attempts raised concurrency WITHOUT first freeing weight VRAM,
+    #     so the KV pool could not cover the extra sequences. Freeing 8 GB of
+    #     weights first produced a measured 9.62x concurrency ceiling at 32K
+    #     ("GPU KV cache size: 315,296 tokens" in the boot log), so seqs=6 sits
+    #     well under the ceiling and preemptions stay at 0.
+    #     ALSO relevant: the wedge was never actually absent at seqs=1 — the
+    #     wedge-monitor logged stalls at running=1 on 07-28, 07-29, 08-02, 08-10
+    #     and 08-11, and the 08-06 note falsified the FlashInfer-sampler theory.
+    #     STATUS: WATCHFUL EXPERIMENT, not a settled config. First 24h measured
+    #     clean: 6,749 requests, 0 errors, 0 aborts, 0 preemptions, 6.5s of
+    #     TOTAL queue time across all requests (was ~17s per request), mean TTFT
+    #     0.56s. Tripwires: vllm-wedge-monitor + host nvidia-smi.
+    #     ROLLBACK: .env VLLM_MAX_NUM_SEQS=1 + Bifrost vllm-local concurrency 1 /
+    #     buffer_size 2 + ADA .env VLLM_MAX_CONCURRENT=1.
+    #   MAX_NUM_BATCHED_TOKENS: 2304 -> 8192. With 8 GB freed by the smaller model,
+    #     a bigger batched-token budget lets prefill absorb long ADA prompts
+    #     (typical 4-8K) without chunk-recompute stalls.
+    #   CUDAGRAPH_CAPTURE_SIZES: [1,2] -> [1,2,4,6] (fixed 2026-08-11, post-swap).
+    #     The [1,2] list dates from the seqs=1/seqs=2 era. With --max-num-seqs 6
+    #     the scheduler routinely runs batches of 3-6 (observed running=5 live),
+    #     and any batch size without a captured graph falls back to EAGER decode
+    #     — i.e. the majority of the new concurrency was running unoptimised.
+    #     Capture cost is small for an 8B; sizes above max-num-seqs are clamped.
+    #   ROLLBACK: restore --model cyankiwi/Qwen3.6-27B-AWQ-INT4, --max-num-batched-tokens 2304
+    #     and cudagraph_capture_sizes [1,2];
+    #     backup at c:\code\shared-infra\docker-compose.vllm.yml.bak.pass6-model-swap-20260811.
     command: >
-      --model cyankiwi/Qwen3.6-27B-AWQ-INT4
+      --model Qwen/Qwen3-8B-AWQ
       --served-model-name Qwen3.5-35B-A3B qwen3-chat gpt-oss-20b Qwen3.6-27B Qwen3-32B-AWQ Qwen3.6-35B-A3B
       --port 8000
       --host 0.0.0.0
@@ -614,13 +705,13 @@ services:
       --max-model-len ${VLLM_MAX_MODEL_LEN:-16384}
       --gpu-memory-utilization ${VLLM_GPU_MEM_UTIL:-0.92}
       --max-num-seqs ${VLLM_MAX_NUM_SEQS:-1}
-      --max-num-batched-tokens 2304
+      --max-num-batched-tokens 8192
       --limit-mm-per-prompt '{"image":0,"video":0}'
       --kv-cache-dtype fp8
       --enable-prefix-caching
       --enable-chunked-prefill
       --default-chat-template-kwargs '{"enable_thinking": false}'
-      --compilation-config '{"cudagraph_capture_sizes":[1,2],"cudagraph_num_of_warmups":3}'
+      --compilation-config '{"cudagraph_capture_sizes":[1,2,4,6],"cudagraph_num_of_warmups":3}'
       ${VLLM_TOOL_CALL_FLAGS:- }
     ports:
       - "18801:8000"
@@ -679,7 +770,24 @@ services:
     # clears and self-heal, while a genuinely-broken config still gives up
     # (bounded) and shows Exited to ops. This is the anti-churn intent preserved
     # with a realistic recovery window for the common transient case.
-    restart: "on-failure:10"
+    #
+    # SUPERSEDED 2026-08-06 — this was a SECOND `restart:` key inside the same
+    # vllm-chat service mapping (the other is `restart: unless-stopped` up at the
+    # top of this service, added 2026-08-04). A duplicate mapping key made
+    # `docker compose -f docker-compose.vllm.yml config` fail outright with
+    # 'mapping key "restart" already defined', so this file could not be rendered
+    # or validated at all. The live container resolved to unless-stopped.
+    # Resolution: keep unless-stopped, drop on-failure:10. Rationale —
+    #   * on-failure does NOT restart when the Docker daemon/host restarts; it
+    #     only fires on a non-zero exit. That is exactly the 2026-08-01 failure
+    #     where a host restart left containers dead for three days.
+    #   * on-failure:10 also gives up permanently after 10 tries, and autoheal
+    #     only restarts UNHEALTHY containers, never EXITED ones — so exhausting
+    #     the count is an unrecoverable silent outage.
+    #   * unless-stopped survives daemon restart AND retries indefinitely, and is
+    #     what every other container in this file already uses.
+    # The 2026-06-14 anti-churn intent above is now served by vllm-autoheal
+    # (wedged/unhealthy) + vllm-wedge-monitor (stall detection) instead.
     # 2026-06-24 (daily-review root-fix): generation-ping healthcheck REMOVED.
     # History: Fix-245 (2026-05-20) added a /v1/chat/completions ping alongside
     # /health to detect a 0-tok/s engine wedge (/health 200 but stuck, observed

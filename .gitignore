@@ -6,6 +6,16 @@ nssm-stdout-*.log
 # .env carries provider API keys
 .env
 !.env.example
+# Also exclude timestamped .env snapshots so pre-swap backup files
+# don't leak the API keys the base .env is redacting.
+.env.bak.*
+.env.bak-*
+
+# Ad-hoc timestamped compose backups (docker-compose.*.bak.* /
+# docker-compose.*.bak-*) taken before risky swaps. Track the live
+# file only.
+docker-compose.*.bak.*
+docker-compose.*.bak-*
 
 # Migration archives (bifrost migration 2026-05-14)
 .deleted-2026-05-14/
@@ -19,8 +29,15 @@ bifrost/logs.db-shm
 bifrost/config.db-wal
 bifrost/config.db-shm
 
-# Ad-hoc timestamped config backups (config.json.bak.*, config.db.bak.*)
-bifrost/*.bak.*
+# Ad-hoc config backups. Widened 2026-08-11 from `bifrost/*.bak.*` to `*.bak*`
+# so it also catches the trailing-suffix and infix variants actually produced by
+# swap runs: config.json.pre-101261-ws7-<ts>.bak, vllm-local.provider.bak-<ts>.json.
+# These MUST stay on disk (they are the documented rollback path) but must not be
+# committed — untracked backup clutter is how the live Pass-6 model swap sat in
+# `git status` unnoticed for a day. Root-level compose/.env variants are already
+# covered by the dedicated patterns near the top of this file.
+bifrost/*.bak*
+bifrost/*.pre-*.bak
 
 # Archived corrupt DBs set aside for possible later recovery (logs.db.corrupt-*)
 bifrost/*.corrupt-*

@@ -1,7 +1,8 @@
 {
   "$schema": "https://www.getbifrost.ai/schema",
   "client": {
-    "drop_excess_requests": false,
+    "_comment_drop_excess": "2026-08-10: false -> true. With false, a full provider buffer QUEUES instead of rejecting, so requests sat in Bifrost's buffer for hours (observed: 3.9h on /v1/chat/completions, 231 leaked CLOSE_WAIT sockets, 4300 open FDs). true makes an over-capacity lane return immediately so the caller's fallback chain cascades to a cloud provider. Nothing may queue unbounded.",
+    "drop_excess_requests": true,
     "initial_pool_size": 100,
     "enforce_auth_on_inference": true
   },
@@ -11,36 +12,43 @@
         {
           "name": "local-noauth",
           "value": "EMPTY",
+          "_comment_models": "MUST mirror vllm-chat's --served-model-name list EXACTLY (docker-compose.vllm.yml). Two names were missing until 2026-08-11 — gpt-oss-20b and Qwen3.6-27B resolved fine on a direct :18801 call but 403'd through the gateway, and Legion references gpt-oss-20b ~24x and Qwen3.6-27B ~10x. Every name here answers with Qwen/Qwen3-8B-AWQ as of Pass-6; the names are legacy, not descriptive.",
           "models": [
             "Qwen3.5-35B-A3B",
             "Qwen3.6-35B-A3B",
             "qwen3-chat",
-            "Qwen3-32B-AWQ"
+            "Qwen3-32B-AWQ",
+            "gpt-oss-20b",
+            "Qwen3.6-27B"
           ],
           "weight": 1.0,
           "aliases": {
             "qwen3-chat": "Qwen3.5-35B-A3B",
             "Qwen3-32B-AWQ": "Qwen3.5-35B-A3B",
-            "Qwen3.6-35B-A3B": "Qwen3.5-35B-A3B"
+            "Qwen3.6-35B-A3B": "Qwen3.5-35B-A3B",
+            "gpt-oss-20b": "Qwen3.5-35B-A3B",
+            "Qwen3.6-27B": "Qwen3.5-35B-A3B"
           }
         }
       ],
       "network_config": {
         "base_url": "http://vllm-chat:8000",
-        "default_request_timeout_in_seconds": 120,
+        "default_request_timeout_in_seconds": 90,
         "max_retries": 1
       },
       "custom_provider_config": {
         "base_provider_type": "openai",
         "allowed_requests": {
-          "list_models": true,
+          "_comment_list_models": "MUST stay false. /v1/models fans out to every provider with list_models=true, so a model-list call joins the inference queue behind real work (Legion's stack_monitor.py documented it hanging past 150s on 2026-08-03, when vllm-chat ran --max-num-seqs 1). vllm-chat now runs --max-num-seqs 6, which makes the hang less likely but NOT impossible — model discovery must never depend on inference capacity, at any concurrency. Corrected 2026-08-11: this comment previously asserted seqs=1 as current fact.",
+          "list_models": false,
           "chat_completion": true,
           "chat_completion_stream": true
         }
       },
+      "_comment_capacity": "2026-08-11 Pass-6: vllm-chat swapped to Qwen3-8B-AWQ + max-num-seqs 1->6 (V2 UVA blocker sidestepped by VLLM_USE_V2_MODEL_RUNNER=0, and vLLM's own budget check reports 'Maximum concurrency for 32,768 tokens per request: 9.38x' so 6 fits with 3.4x headroom). Bifrost concurrency raised 1->6 to match, buffer_size 2->12 (2 x concurrency, standard sizing) so callers don't get 400 drops before vLLM's own queue is engaged. If the 8B slots wedge under sustained real load, drop concurrency back to 1 buffer 2 first (matches vllm --max-num-seqs=1 rollback in shared-infra/.env) before touching anything else.",
       "concurrency_and_buffer_size": {
-        "concurrency": 1,
-        "buffer_size": 6
+        "concurrency": 6,
+        "buffer_size": 12
       }
     },
     "embed-local": {
