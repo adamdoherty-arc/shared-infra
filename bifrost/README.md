@@ -195,6 +195,55 @@ descriptive. `gpt-oss-20b` and `Qwen3.6-27B` were missing from this provider's
 `models` list until 2026-08-11 and 403'd through the gateway while resolving
 fine on a direct `:18801` call.
 
+## Nemotron 3.5 Lightning (added 2026-08-11) — thinking + tool-calling gotchas
+
+Added day-0 on both free lanes:
+
+| Bifrost model | measured via gateway |
+|---|---|
+| `nvidia-nim/nvidia/nemotron-3.5-lightning-30b-a3b` | 891ms |
+| `openrouter/nvidia/nemotron-3.5-lightning:free` | 696ms |
+| `nvidia-nim/nvidia/nemotron-3.5-content-safety` | 385ms |
+
+30B total / 3B active hybrid Mamba MoE, 1M ctx, OpenMDW-1.1. Artificial Analysis
+Intelligence Index **24** — level with gpt-oss-120b, *below* Qwen3.6-35B-A3B (32).
+It is a **speed** play: excellent at scoped single-step work (PinchBench 83.4,
+MMLU-Pro 81.6), weak at multi-turn agentic tool loops (Terminal-Bench 2.1 = 23.5,
+τ³-bench Banking = 9.5). Route high-volume scoped calls to it; do NOT make it a
+planner or a primary coding agent.
+
+**Thinking is ON by default and the two providers suppress it differently.**
+Measured 2026-08-11 against a "what is 2+2" prompt:
+
+| | `chat_template_kwargs.enable_thinking=false` | `reasoning.enabled=false` |
+|---|---|---|
+| nvidia-nim | **works** (reasoning 446 -> 0) | n/a |
+| openrouter | **IGNORED** (reasoning stayed 481) | **works** (-> 0) |
+
+ADA injects `chat_template_kwargs` globally (`llm_router.py:1681,1714,1769`), so the
+NIM lane suppresses correctly and the **OpenRouter lane does not**. This matters
+beyond tidiness: with a small `max_tokens` the response truncates mid-reasoning and
+the partial chain-of-thought lands in `content` (reproduced at `max_tokens=16`) —
+the same reasoning-starvation class documented in `docker-compose.vllm.yml` for
+gpt-oss. At `max_tokens>=200` content was clean in every combination.
+
+**On NIM, `enable_thinking=false` silently disables tool calling.** Same prompt and
+tool schema, `tool_choice=auto`:
+
+```
+nim  auto + enable_thinking:false  -> tool_calls: NULL      (answers in prose)
+nim  auto + thinking ON            -> tool_calls: [get_weather]  finish=tool_calls
+nim  tool_choice:"required" + off  -> tool_calls: [get_weather]  (forced works)
+openrouter  auto, either mode      -> tool_calls: [get_weather]  (unaffected)
+```
+
+So: **do not put the NIM Lightning lane in a tool-calling chain** while ADA's global
+`enable_thinking=false` injection is in place — tools will silently stop firing with
+no error. Use it for non-tool lanes (overflow / general / sentiment / structured
+generation), where `response_format: json_schema` was verified working with a strict
+schema. The OpenRouter lane is the tool-safe variant but needs `reasoning.enabled=false`
+to keep reasoning out of the payload.
+
 ## Open issue (track in Phase 2)
 
 Qwen3.6 emits its chain-of-thought into a separate `reasoning` field

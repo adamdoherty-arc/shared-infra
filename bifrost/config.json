@@ -101,6 +101,8 @@
             "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
             "nvidia/nemotron-3-super-120b-a12b",
             "nvidia/nemotron-3-ultra-550b-a55b",
+            "nvidia/nemotron-3.5-content-safety",
+            "nvidia/nemotron-3.5-lightning-30b-a3b",
             "nvidia/nemotron-nano-12b-v2-vl",
             "nvidia/nvidia-nemotron-nano-9b-v2",
             "openai/gpt-oss-120b",
@@ -110,7 +112,11 @@
             "thinkingmachines/inkling",
             "z-ai/glm-5.2"
           ],
-          "weight": 1.0
+          "weight": 1.0,
+          "aliases": {
+            "nemotron-lightning": "nvidia/nemotron-3.5-lightning-30b-a3b",
+            "nemotron-safety": "nvidia/nemotron-3.5-content-safety"
+          }
         },
         {
           "name": "nvidia-nim-primary",
@@ -132,6 +138,8 @@
             "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
             "nvidia/nemotron-3-super-120b-a12b",
             "nvidia/nemotron-3-ultra-550b-a55b",
+            "nvidia/nemotron-3.5-content-safety",
+            "nvidia/nemotron-3.5-lightning-30b-a3b",
             "nvidia/nemotron-nano-12b-v2-vl",
             "nvidia/nvidia-nemotron-nano-9b-v2",
             "openai/gpt-oss-120b",
@@ -159,7 +167,9 @@
             "nemotron-vl": "nvidia/nemotron-nano-12b-v2-vl",
             "deepseek-v4": "deepseek-ai/deepseek-v4-flash",
             "deepseek-v4-flash": "deepseek-ai/deepseek-v4-flash",
-            "minimax-m3": "minimaxai/minimax-m3"
+            "minimax-m3": "minimaxai/minimax-m3",
+            "nemotron-lightning": "nvidia/nemotron-3.5-lightning-30b-a3b",
+            "nemotron-safety": "nvidia/nemotron-3.5-content-safety"
           }
         }
       ],
@@ -205,7 +215,8 @@
             "openrouter/free",
             "cohere/north-mini-code:free",
             "tencent/hy3:free",
-            "nousresearch/hermes-3-llama-3.1-405b:free"
+            "nousresearch/hermes-3-llama-3.1-405b:free",
+            "nvidia/nemotron-3.5-lightning:free"
           ],
           "weight": 1.0,
           "aliases": {
@@ -218,7 +229,8 @@
             "or-auto-free": "openrouter/free",
             "north-code-free": "cohere/north-mini-code:free",
             "hy3-free": "tencent/hy3:free",
-            "hermes-405b-free": "nousresearch/hermes-3-llama-3.1-405b:free"
+            "hermes-405b-free": "nousresearch/hermes-3-llama-3.1-405b:free",
+            "nemotron-lightning-free": "nvidia/nemotron-3.5-lightning:free"
           }
         }
       ],
