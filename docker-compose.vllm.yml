@@ -2,12 +2,17 @@
 # Single instance of each model in VRAM; all three projects point at these endpoints
 # via VLLM_CHAT_BASE_URL / VLLM_EMBED_BASE_URL in their .env files.
 #
-# Chat backend (2026-08-11→): vLLM v0.25.1-cu129 serving
-# Qwen/Qwen3-8B-AWQ — a DENSE 8B, AWQ-Marlin INT4 (the proven Blackwell
-# weight-only kernel on this card), ctx 32768, tool calling enabled
-# (hermes parser + qwen3 reasoning parser). Served canonical name
-# `Qwen3.5-35B-A3B` (+ stable alias `qwen3-chat`); Bifrost forwards
-# `vllm-local/qwen3-chat` (and legacy `Qwen3-32B-AWQ`) here.
+# Chat backend (2026-08-11→): vLLM v0.27.1-cu129 serving
+# nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4 — a hybrid
+# Mamba-2 + MoE (nemotron_h), 30B total / 3B ACTIVE, NVFP4 via the Marlin
+# NvFp4 kernel, ctx 32768. Reasoning parser nemotron_v3, tool-call parser
+# qwen3_coder. Served canonical name `Qwen3.5-35B-A3B` (+ stable alias
+# `qwen3-chat`, and honest new names `nemotron-3.5-lightning` / `local-chat`);
+# Bifrost forwards `vllm-local/qwen3-chat` (and legacy `Qwen3-32B-AWQ`) here.
+#
+# NB: thinking is suppressed server-side (--default-chat-template-kwargs), which
+# on this model ALSO disables tool calling under tool_choice=auto. That is a
+# deliberate trade — see the "enable_thinking" block in the vllm-chat service.
 #
 # NB: the six --served-model-name aliases are legacy and NO LONGER describe
 # the weights. `Qwen3.5-35B-A3B`, `Qwen3.6-35B-A3B`, `Qwen3.6-27B`,
@@ -22,14 +27,25 @@
 # authoritative live config + full swap history are in the vllm-chat service
 # block below (see "SWAP 2026-06-24" and "2026-08-11 (Pass-6 model swap)").
 #
-# VRAM budget on a 5090 (32 GB), MEASURED from the boot log 2026-08-11 08:51:
-#   chat  (Qwen/Qwen3-8B-AWQ, dense AWQ-INT4)   ~5.5 GB weights
-#         + 21.65 GiB KV (315,296 tokens @ fp8; 9.62x concurrency at 32K ctx)
-#   embed (Qwen3-Embedding-0.6B, vLLM)          ~1.5 GB
-#   total                                       ~31.9/32.6 GiB pinned (0.90 util cap)
+# VRAM budget on a 5090 (32 GB), MEASURED from the boot log 2026-08-11 16:41:
+#   chat  (Nemotron-3.5-Lightning-30B-A3B-NVFP4)  17.86 GiB weights
+#         + 0.10 GiB CUDA graphs (PIECEWISE — see below, this was 10.90 GiB on
+#           the default FULL_AND_PIECEWISE and broke the boot outright)
+#         + 2.43 GiB KV (164,659 tokens @ fp8)
+#   embed (Qwen3-Embedding-0.6B, vLLM)            ~1.1 GiB weights + ~3.6 GiB KV
+#   total                                         ~30.1/32.6 GiB pinned (0.90 util cap)
 #   NB: --gpu-memory-utilization PRE-ALLOCATES. Freeing weight VRAM does not
-#   free card-level VRAM — it is handed to the KV pool. The card sits at ~98%
+#   free card-level VRAM — it is handed to the KV pool. The card sits at ~92%
 #   by design; the win is KV headroom, not free memory.
+#   KNOWN WASTE, not yet reclaimed: vllm-embed reserves ~3.6 GiB of KV for a
+#   0.6B POOLING model that does not autoregress. Dropping its
+#   --gpu-memory-utilization from 0.12 would hand ~2 GiB back to vllm-chat.
+#   Left alone here only because chat already has ~8x the KV its live working
+#   set uses (12.5% utilisation under a 10-way concurrent load test), so there
+#   was nothing to spend it on — revisit if KV ever gets tight on this model.
+#
+# For the previous Qwen3-8B-AWQ config (Pass-6, same day): ~5.5 GB weights +
+# 21.65 GiB KV = 315,296 tokens, 9.62x at 32K. Kept here as the rollback target.
 #
 # Model swap history:
 #   - Qwen3.6-35B-A3B-FP8 (March 2026): 34 GiB, OOM on 32 GB. RETIRED.
@@ -383,7 +399,13 @@ services:
     # completion + streaming + tool-calling (qwen3_xml) + XGrammar structured
     # output all green on the qwen3_5 hybrid arch. ROLLBACK: set image back to
     # v0.23.0-cu129 (still cached locally) + force-recreate vllm-chat.
-    image: vllm/vllm-openai:v0.25.1-cu129
+    # UPGRADE 2026-08-11: v0.25.1-cu129 -> v0.27.1-cu129 (operator-requested),
+    # REQUIRED for the nemotron_h MoE-hybrid arch of Nemotron 3.5 Lightning --
+    # it does not load on 0.25.1. Note v0.27.1 was published the SAME DAY as the
+    # model (2026-08-11 10:41 UTC); this is deliberately a fresh release on a box
+    # with a wedge history, so the Nemotron swap below is gated on reading the
+    # boot log, and v0.25.1-cu129 stays cached for an immediate rollback.
+    image: vllm/vllm-openai:v0.27.1-cu129
     container_name: vllm-chat
     # 2026-07-02 (zero daily-review run 13): allow ptrace so py-spy can dump the
     # EngineCore stack DURING a wedge (default caps denied it: "Permission denied"
@@ -687,6 +709,16 @@ services:
     #   MAX_NUM_BATCHED_TOKENS: 2304 -> 8192. With 8 GB freed by the smaller model,
     #     a bigger batched-token budget lets prefill absorb long ADA prompts
     #     (typical 4-8K) without chunk-recompute stalls.
+    #   CUDAGRAPH_MODE: PIECEWISE (pinned 2026-08-11 during the Pass-7 swap).
+    #     vLLM's default on this build is FULL_AND_PIECEWISE, which on the
+    #     nemotron_h hybrid arch estimated **10.90 GiB** of CUDA-graph memory --
+    #     against 17.86 GiB of weights in a 29.34 GiB budget, that produced
+    #     "Available KV cache memory: -2.89 GiB" and a hard boot failure
+    #     ("No available memory for the cache blocks"). The cost is real but
+    #     invisible on small models: the same setting was harmless with the 8B.
+    #     PIECEWISE keeps per-layer graph capture (the part that actually helps
+    #     decode) and drops the whole-model full graphs. If KV is ever tight
+    #     again on this model, this is the first knob, not max-model-len.
     #   CUDAGRAPH_CAPTURE_SIZES: [1,2] -> [1,2,4,6] (fixed 2026-08-11, post-swap).
     #     The [1,2] list dates from the seqs=1/seqs=2 era. With --max-num-seqs 6
     #     the scheduler routinely runs batches of 3-6 (observed running=5 live),
@@ -696,22 +728,118 @@ services:
     #   ROLLBACK: restore --model cyankiwi/Qwen3.6-27B-AWQ-INT4, --max-num-batched-tokens 2304
     #     and cudagraph_capture_sizes [1,2];
     #     backup at c:\code\shared-infra\docker-compose.vllm.yml.bak.pass6-model-swap-20260811.
+    # 2026-08-11 (Pass-7): Qwen/Qwen3-8B-AWQ -> nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4.
+    # WHY: Pass-6 (above) bought throughput by trading capability -- the 8B is
+    # roughly Qwen2.5-14B-class and every lane parked on vllm-local silently got
+    # it, including ADA's deterministic-synthesis lane. Nemotron 3.5 Lightning
+    # (released 2026-08-11) recovers that capability WITHOUT giving the
+    # throughput back: 30B total but only 3B ACTIVE per token, so decode cost is
+    # in the same class as a dense 8B while the model is far more capable.
+    # NVIDIA lists the RTX 5090 as tested hardware for this exact checkpoint.
+    #   CAPABILITY, honestly: AA Intelligence Index 24 -- level with gpt-oss-120b,
+    #     still BELOW the Qwen3.6-35B class (32) that this box ran until today.
+    #     Strong at scoped single-step work (PinchBench 83.4, MMLU-Pro 81.6),
+    #     weak at multi-turn agentic tool loops (Terminal-Bench 23.5, tau-cubed
+    #     Banking 9.5). That matches the local lane's actual job (structured
+    #     generation, code_analysis triage, single LangGraph steps). Do NOT
+    #     promote it to a planner or coding primary.
+    #   VRAM: ~20.0 GiB of NVFP4 weights -- 1.5x the 27B AWQ checkpoint that was
+    #     removed this morning for being too big, so KV drops from a measured
+    #     21.65 GiB to roughly 7 GiB. That is expected to be fine ONLY because
+    #     nemotron_h runs full attention on a small fraction of layers: Qwen3-8B
+    #     is dense-attention on all 36 layers and cost ~72 KiB/token at fp8
+    #     (21.65 GiB / 72 KiB = 315,296 tokens, which matched its boot log
+    #     exactly), whereas this arch should be ~6-10x cheaper per token.
+    #     *** THIS IS A PROJECTION. READ THE BOOT LOG BEFORE TRUSTING IT. ***
+    #     MEASURED OUTCOME 2026-08-11: weights 17.86 GiB, CUDA graphs 0.10 GiB,
+    #     KV 2.43 GiB = 164,659 tokens = "Maximum concurrency for 32,768 tokens
+    #     per request: 5.03x".
+    #     That 5.03x is BELOW the >=6 gate this comment originally set -- and the
+    #     gate was kept at 32768 ctx anyway, deliberately. Reason: 5.03x is a
+    #     worst-case bound that assumes every one of the concurrent sequences
+    #     holds a FULL 32K context at once, which this workload never does
+    #     (measured max input over 24h of real ADA traffic: 7,433 tokens; typical
+    #     400-1,000). The metric that actually matters is preemptions under real
+    #     load, and that was verified empirically instead:
+    #       10 concurrent requests @ ~1,473 prompt tokens -> 10/10 ok in 9.2s,
+    #       num_preemptions_total = 0, kv_cache_usage_perc = 12.5% at running=5,
+    #       0 errors, 0 aborts.
+    #     i.e. the KV pool is ~8x larger than the live working set. WATCH
+    #     `vllm:num_preemptions_total` -- if it ever leaves 0, THAT is the signal
+    #     to act, not the boot-log ratio. Then: drop VLLM_MAX_MODEL_LEN to 16384
+    #     FIRST (doubles the ratio for free), and only reduce VLLM_MAX_NUM_SEQS
+    #     if that is still not enough.
+    #     NB 32768 is load-bearing for the claude-coder local-mode project (its
+    #     tool manifest alone is ~14-15K tokens -- see .env 2026-07-08), which is
+    #     the other reason not to cut context reflexively.
+    #   KERNEL: --moe-backend marlin, which is what NVIDIA's own Nemotron-3.5
+    #     serving recipe specifies for the small-Blackwell (DGX Spark GB10 /
+    #     sm_121) path -- the closest sanctioned config to this sm_120 card.
+    #     TRIED FIRST AND FAILED 2026-08-11: --moe-backend flashinfer_b12x, the
+    #     native SM120 NVFP4 path from vLLM PR #40082. It loads the weights fine
+    #     but dies at the first forward pass with
+    #       "ValueError: b12x fused MoE requires CUDA 13 or later.
+    #        Current CUDA version: 12.9"
+    #     (flashinfer/fused_moe/cute_dsl/b12x_moe.py:329). The b12x CuTe-DSL
+    #     kernels are CUDA-13-only and the ONLY v0.27.1 images published are
+    #     cu129 -- there is no v0.27.1-cu130 tag. Do not re-add this flag until a
+    #     CUDA 13 build of a vLLM version that supports nemotron_h exists; and
+    #     per the 2026-06-14 note above, do NOT reach for cu130-nightly to get
+    #     there (it is an OLD v0.19.2 line that leaves MoE experts unquantized).
+    #     NB the SM120 MoE gap in vllm#43507 is specifically about tensor/token-
+    #     scaled *FP8* grouped GEMM; CUTLASS 4.5 DOES ship SM120 grouped GEMM for
+    #     NVFP4, so this checkpoint sits on the supported side of that gap.
+    #   THIRD BOOT GATE (the 2026-06-14 lesson, verbatim): the startup log must
+    #     show a *quantized* (modelopt/compressed-tensors FP4) FusedMoE method.
+    #     If it says "Unquantized MoE backend", the experts are being allocated
+    #     as dense BF16 (~60+ GiB) and it will OOM -- roll back immediately
+    #     rather than trying to tune around it.
+    #   PARSERS: nemotron_v3 reasoning + qwen3_coder tool-call (per NVIDIA's own
+    #     recipe), set via .env VLLM_TOOL_CALL_FLAGS. NOT hermes/qwen3.
+    #   *** enable_thinking:false DISABLES TOOL CALLING ON THIS MODEL. ***
+    #     Verified locally 2026-08-11, and it is a property of the model's chat
+    #     template, not of the host -- NVIDIA's own NIM endpoint behaves
+    #     identically. With --default-chat-template-kwargs enable_thinking:false
+    #     below and tool_choice=auto, the model returns tool_calls: NULL and
+    #     answers in prose. Same request with chat_template_kwargs
+    #     {"enable_thinking": true} fires the tool correctly; so does
+    #     tool_choice="required" with thinking off (though it tends to emit
+    #     several calls and finish on `length`).
+    #     WHY WE KEEP THINKING OFF ANYWAY: suppressed reasoning is a HARD ADA
+    #     requirement (reasoning blocks break LangGraph swarm handoffs and JSON
+    #     parsing -- ADA/.claude/rules/50-llm.md), whereas tool calling on the
+    #     LOCAL lane is currently unused: ada_llm_service._model_supports_tools()
+    #     hard-excludes vllm-local/*. So this costs nothing today.
+    #     IF YOU EVER WANT LOCAL TOOL CALLING: do NOT just delete the
+    #     enable_thinking flag -- that regresses every JSON/LangGraph caller.
+    #     Send chat_template_kwargs {"enable_thinking": true} per-request on the
+    #     tool path only, and strip the reasoning field client-side.
+    #     VERIFIED WORKING at this config: thinking suppression (reasoning_len 0,
+    #     no <think> leakage), XGrammar json_schema structured output (strict
+    #     schema parsed clean), and Bifrost VK routing.
+    #   DROPPED --dtype bfloat16 (let vLLM read the NVFP4 quant config) and
+    #     --limit-mm-per-prompt (this model is text-only; the flag is a no-op at
+    #     best and an arg error at worst).
+    #   ROLLBACK (one step, weights + image both still cached): image back to
+    #     v0.25.1-cu129, --model Qwen/Qwen3-8B-AWQ, restore --dtype bfloat16 and
+    #     --limit-mm-per-prompt, drop the two backend flags, and .env
+    #     VLLM_TOOL_CALL_FLAGS back to `hermes` / `qwen3`.
     command: >
-      --model Qwen/Qwen3-8B-AWQ
-      --served-model-name Qwen3.5-35B-A3B qwen3-chat gpt-oss-20b Qwen3.6-27B Qwen3-32B-AWQ Qwen3.6-35B-A3B
+      --model nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4
+      --served-model-name Qwen3.5-35B-A3B qwen3-chat gpt-oss-20b Qwen3.6-27B Qwen3-32B-AWQ Qwen3.6-35B-A3B nemotron-3.5-lightning local-chat
       --port 8000
       --host 0.0.0.0
-      --dtype bfloat16
       --max-model-len ${VLLM_MAX_MODEL_LEN:-16384}
       --gpu-memory-utilization ${VLLM_GPU_MEM_UTIL:-0.92}
       --max-num-seqs ${VLLM_MAX_NUM_SEQS:-1}
-      --max-num-batched-tokens 8192
-      --limit-mm-per-prompt '{"image":0,"video":0}'
+      --max-num-batched-tokens 2048
+      --moe-backend marlin
+      --mamba-backend flashinfer
       --kv-cache-dtype fp8
       --enable-prefix-caching
       --enable-chunked-prefill
       --default-chat-template-kwargs '{"enable_thinking": false}'
-      --compilation-config '{"cudagraph_capture_sizes":[1,2,4,6],"cudagraph_num_of_warmups":3}'
+      --compilation-config '{"cudagraph_mode":"PIECEWISE","cudagraph_capture_sizes":[1,2,4,6],"cudagraph_num_of_warmups":3}'
       ${VLLM_TOOL_CALL_FLAGS:- }
     ports:
       - "18801:8000"
