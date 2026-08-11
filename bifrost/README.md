@@ -95,6 +95,106 @@ POST http://shared-bifrost:8080/v1/embeddings
 
 From the host: substitute `localhost:4445` for `shared-bifrost:8080`.
 
+## `vllm-local` gateway concurrency: 1 -> 4 (2026-08-06)
+
+`vllm-local` was `concurrency=1, buffer_size=6`, mirroring vLLM's
+`--max-num-seqs 1`. That double-gates the local model: Bifrost admitted one
+request at a time, so **any** call to that provider — including
+`list_models`, which vLLM answers from memory without touching the
+scheduler — blocked until the in-flight generation finished.
+
+Measured, model-list through Bifrost with one generation in flight:
+
+| | `?provider=vllm-local` |
+|---|---|
+| before (`concurrency=1`) | **16.3s** |
+| after (`concurrency=4`) | **0.017s** |
+
+Idle it was 3ms both ways — the cost only appeared under load, which is why
+it hid. Compounded over the sequential 15-provider fan-out this was a large
+part of `/v1/models` taking 30-90 minutes (see the odysseus session
+2026-08-06; ADA polls it every ~30s with a 2.5s client timeout, and Bifrost
+does not cancel on client disconnect, so abandoned calls kept grinding).
+
+**Why this does NOT re-open the `running>=2` wedge** (docker-compose.vllm.yml,
+falsified promotions 2026-07-13/14): the wedge condition is `running>=2`
+*inside vLLM*, and `--max-num-seqs 1` enforces that regardless of how many
+requests a client sends. Verified 2026-08-06 with 3 concurrent direct
+requests: `num_requests_running` held at 1.0 while `num_requests_waiting`
+rose to 2.0. Raising the **gateway** gate moves queueing from Bifrost's
+buffer into vLLM's own scheduler; it does not raise vLLM's running count.
+`VLLM_MAX_NUM_SEQS` is untouched and must stay 1.
+
+Post-change soak: `running=1.0`, `waiting=3.0`, `generation_tokens_total`
+climbing ~62 tok/s (the wedge signature is GPU 100% with that counter
+*flat*), all vllm containers healthy, wedge-monitor quiet.
+
+> **SUPERSEDED 2026-08-11 (Pass-6).** Everything above is accurate history for
+> the 08-06 change, but two of its statements are no longer current fact:
+> gateway `concurrency` is now **6** (`buffer_size` 12), and
+> `VLLM_MAX_NUM_SEQS` is now **6**, not 1 — see the "Pass-6" section below and
+> `docker-compose.vllm.yml`. The reasoning in this section still holds and is
+> worth keeping: raising the *gateway* gate never raised vLLM's running count,
+> which is why 08-06 was safe on its own. Pass-6 is a different change — it
+> raised the *engine* limit, and it was only defensible because swapping the
+> 27B for an 8B first freed ~8 GB of weight VRAM into the KV pool, lifting the
+> measured concurrency ceiling to 9.62x at 32K ctx.
+
+Persisted in `config.db` (`config_providers.concurrency_buffer_json`), so it
+survives a container restart. Prior value backed up to
+`vllm-local.provider.bak-20260806T220527Z.json`. **Revert:**
+
+```bash
+curl -s http://localhost:4445/api/providers/vllm-local \
+  | python -c "import json,sys,urllib.request; c=json.load(sys.stdin); \
+c['concurrency_and_buffer_size']={'concurrency':1,'buffer_size':6}; \
+urllib.request.urlopen(urllib.request.Request( \
+'http://localhost:4445/api/providers/vllm-local', data=json.dumps(c).encode(), \
+headers={'Content-Type':'application/json'}, method='PUT'))"
+```
+
+## `vllm-local` Pass-6: engine + gateway to 6 (2026-08-11)
+
+The 08-06 change above raised only the *gateway* gate. Pass-6 raised the
+**engine** limit, which is a materially different risk, and is why it needed
+the model swap to go with it.
+
+| | before | after |
+|---|---|---|
+| `--model` | `cyankiwi/Qwen3.6-27B-AWQ-INT4` (~13.5 GB) | `Qwen/Qwen3-8B-AWQ` (~5.5 GB) |
+| `VLLM_MAX_NUM_SEQS` | 1 | **6** |
+| Bifrost `concurrency` / `buffer_size` | 4 / 6 | **6 / 12** |
+| `--max-num-batched-tokens` | 2304 | 8192 |
+| `--gpu-memory-utilization` | 0.92 | 0.90 |
+| request timeout | 120s | 90s |
+| `drop_excess_requests` | false | **true** |
+
+**Why raising the engine limit was defensible here when 07-02 and 07-14 were
+not:** both earlier attempts raised concurrency *without freeing weight VRAM*,
+so the KV pool could not cover the extra sequences. Freeing ~8 GB first gave a
+measured ceiling of **9.62x at 32K ctx** (`GPU KV cache size: 315,296 tokens`),
+so seqs=6 sits well under it. Also relevant: seqs=1 was never actually
+wedge-free — the wedge-monitor logged stalls at `running=1` on 07-28, 07-29,
+08-02, 08-10 and 08-11.
+
+First-day measurement (engine metrics, ~6h after the 08:50Z boot): **6,749
+requests, 0 errors, 0 aborts, 0 preemptions**, mean TTFT 0.56s, and **6.5
+seconds of total queue time across all requests** — down from ~17s *per*
+request. ADA's local-lane success rate went 0-50% -> 89-100% at the hour of the
+swap.
+
+**This is a watchful experiment, not a settled config.** Tripwires:
+`vllm-wedge-monitor`, host `nvidia-smi`, and `vllm:num_preemptions_total`.
+**Rollback:** `.env` `VLLM_MAX_NUM_SEQS=1`, Bifrost `vllm-local` concurrency 1 /
+buffer 2, ADA `.env` `VLLM_MAX_CONCURRENT=1`.
+
+**Caveat worth knowing:** all six `--served-model-name` aliases
+(`Qwen3.5-35B-A3B`, `Qwen3.6-35B-A3B`, `Qwen3.6-27B`, `Qwen3-32B-AWQ`,
+`gpt-oss-20b`, `qwen3-chat`) now answer with an 8B. The names are legacy, not
+descriptive. `gpt-oss-20b` and `Qwen3.6-27B` were missing from this provider's
+`models` list until 2026-08-11 and 403'd through the gateway while resolving
+fine on a direct `:18801` call.
+
 ## Open issue (track in Phase 2)
 
 Qwen3.6 emits its chain-of-thought into a separate `reasoning` field
