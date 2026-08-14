@@ -1008,10 +1008,28 @@ services:
     volumes:
       - hf-cache:/root/.cache/huggingface
     restart: unless-stopped
+    # ADA Feature-1000478 (2026-08-14): the bare `/health` liveness probe
+    # below passed for 2+ days while the pooling engine was silently
+    # emitting NaN in every embedding vector -- `/v1/embeddings` 200'd at
+    # the vLLM layer, then Bifrost's response serializer 400'd on
+    # `json.dumps` ("Out of range float values are not JSON compliant:
+    # nan"). Every downstream embedding consumer (RAG, stock_knowledge
+    # enrichment, the new agent_memory Qdrant collection) silently failed
+    # its embed step while autoheal saw a green healthcheck the whole
+    # time -- classic silent-500 pattern (MEMORY.md
+    # project_ada_silent_500s_pattern). `docker restart vllm-embed`
+    # cleared whatever numerical/CUDA state had drifted; this healthcheck
+    # now does a REAL embedding call and rejects NaN/Inf/empty vectors so
+    # autoheal restarts the container the next time this recurs instead of
+    # reporting healthy over a broken embedding lane.
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      # Single unbroken line deliberately -- a YAML folded/literal block
+      # scalar here bakes each source line's leading indentation into the
+      # folded string as literal spaces, which python3 -c then rejects
+      # with IndentationError (hit this live 2026-08-14 rolling this out).
+      test: ["CMD-SHELL", "python3 -c \"import json, urllib.request; req = urllib.request.Request('http://localhost:8001/v1/embeddings', data=json.dumps({'model': 'Qwen/Qwen3-Embedding-0.6B', 'input': 'healthcheck'}).encode(), headers={'Content-Type': 'application/json'}); vec = json.loads(urllib.request.urlopen(req, timeout=8).read())['data'][0]['embedding']; assert len(vec) > 0 and all(v == v and v not in (float('inf'), float('-inf')) for v in vec)\""]
       interval: 30s
-      timeout: 10s
+      timeout: 15s
       retries: 5
       start_period: 180s
     logging:
