@@ -14,12 +14,30 @@
 # on this model ALSO disables tool calling under tool_choice=auto. That is a
 # deliberate trade — see the "enable_thinking" block in the vllm-chat service.
 #
-# NB: the six --served-model-name aliases are legacy and NO LONGER describe
-# the weights. `Qwen3.5-35B-A3B`, `Qwen3.6-35B-A3B`, `Qwen3.6-27B`,
-# `Qwen3-32B-AWQ` and `gpt-oss-20b` ALL answer with Qwen3-8B as of Pass-6.
-# They are kept because ~350 Legion/Zero/ADA call sites reference them and
-# because moving position 0 is a platform-wide 403 (see ALIASES notes below).
-# Renaming them is tracked as its own migration, not a config edit.
+# NB (corrected 2026-08-15 -- this block previously said "Qwen3-8B as of
+# Pass-6" and was stale the same day it was written; Pass-7, also 2026-08-11,
+# swapped the weights again): the six --served-model-name aliases
+# `Qwen3.5-35B-A3B`, `Qwen3.6-35B-A3B`, `Qwen3.6-27B`, `Qwen3-32B-AWQ`,
+# `gpt-oss-20b`, `qwen3-chat` are DEPRECATED COMPATIBILITY NAMES. None of them
+# describe the weights -- as of Pass-7 they ALL answer with
+# nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4 (verified live
+# 2026-08-15). `qwen3-chat` is the one intentional exception: it is ADA's/
+# Legion's stable ROLE alias ("whatever answers local chat today"),
+# deliberately swap-proof by design (ADA/.claude/rules/50-llm.md) -- keep
+# using it in new code. The other five are pure legacy debt with no honest
+# reading left in them. USE `nemotron-3.5-lightning` (model-descriptive) or
+# `local-chat` (role-descriptive, same intent as qwen3-chat) for ANYTHING
+# NEW -- both exist on vLLM since Pass-7 and were fixed 2026-08-15 to
+# actually route through Bifrost (they 403'd at the gateway for 4 days: added
+# to vLLM's --served-model-name but never synced into Bifrost's per-VK
+# governance allow-list -- same bug class as the gpt-oss-20b/Qwen3.6-27B gap
+# below, same fix: config.json `models` + `sync_vk_allowlists.py`). They are
+# kept alongside the six legacy names, never removed, because ~350
+# Legion/Zero/ADA call sites reference the legacy names and moving position 0
+# is a platform-wide 403 (see ALIASES notes below). Mechanically renaming or
+# retiring the six legacy names is its own cross-repo migration (dozens of
+# hardcoded literals in Legion's unified_llm_service.py / legion_config.py /
+# enums.py / alembic data migrations alone) -- not attempted in this pass.
 #
 # Earlier paths RETIRED as unstable on this WSL2+Blackwell box:
 # Qwen3.5-35B-A3B-GPTQ-Int4 (MoE, forced --enforce-eager -> ~9 tok/s + engine
@@ -574,16 +592,21 @@ services:
     # bifrost/config.db). The provider aliases (qwen3-chat / Qwen3-32B-AWQ /
     # Qwen3.6-35B-A3B → Qwen3.5-35B-A3B, in bifrost/config.json) resolve EVERY
     # request to the FIRST served-model-name below, so that canonical name MUST
-    # be present in all four VK allow-lists (ada-prod, legion-prod, zero-prod,
-    # fortressos-prod) or every project's local chat gets 403 "model not allowed
-    # for this virtual key". On 2026-06-14 the swap to Qwen3.5-35B-A3B was made
-    # here but the VKs still only allowed [Qwen3.6-35B-A3B, qwen3-chat,
-    # Qwen3-32B-AWQ] → platform-wide chat outage. Fix: added Qwen3.5-35B-A3B to
-    # all 4 VK allow-lists via direct SQLite write (admin API PUT is buggy) then
-    # `docker restart shared-bifrost`. WHEN YOU CHANGE THE FIRST served-model
-    # name BELOW, also add it to every VK's vllm-local allowed_models. The
-    # current allow-lists hold all four aliases, so reusing any of these names is
-    # safe; a brand-new canonical name needs the VK update.
+    # be present in every VK allow-list (ada-prod, legion-prod, zero-prod,
+    # fortressos-prod, claude-code-local, hermes-prod -- 6 VKs as of 2026-08-15;
+    # this comment said "4" until corrected that day, the last 2 were added
+    # after 2026-06-14 without this note being synced) or every project's local
+    # chat gets 403 "model not allowed for this virtual key". On 2026-06-14 the
+    # swap to Qwen3.5-35B-A3B was made here but the VKs still only allowed
+    # [Qwen3.6-35B-A3B, qwen3-chat, Qwen3-32B-AWQ] → platform-wide chat outage.
+    # Fix: added Qwen3.5-35B-A3B to all VK allow-lists via direct SQLite write
+    # (admin API PUT is buggy) then `docker restart shared-bifrost`. WHEN YOU
+    # CHANGE THE FIRST served-model name BELOW, also add it to every VK's
+    # vllm-local allowed_models. The current allow-lists hold all eight
+    # aliases (2026-08-15: added nemotron-3.5-lightning + local-chat via
+    # bifrost/config.json `models` + `python bifrost/sync_vk_allowlists.py` --
+    # see the NB block above), so reusing any of these eight names is safe; a
+    # brand-new name still needs the same VK-sync procedure.
     # NVFP4 SWAP (2026-06-21) — replaces the GPTQ-Int4 config above (kept as
     # documented history). WHY: GPTQ-Int4 (22.74GB) left no VRAM for CUDA-graph
     # capture -> forced --enforce-eager -> ~9 tok/s + engine wedges + 17min loads

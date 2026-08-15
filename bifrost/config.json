@@ -12,14 +12,16 @@
         {
           "name": "local-noauth",
           "value": "EMPTY",
-          "_comment_models": "MUST mirror vllm-chat's --served-model-name list EXACTLY (docker-compose.vllm.yml). Two names were missing until 2026-08-11 — gpt-oss-20b and Qwen3.6-27B resolved fine on a direct :18801 call but 403'd through the gateway, and Legion references gpt-oss-20b ~24x and Qwen3.6-27B ~10x. Every name here answers with Qwen/Qwen3-8B-AWQ as of Pass-6; the names are legacy, not descriptive.",
+          "_comment_models": "MUST mirror vllm-chat's --served-model-name list EXACTLY (docker-compose.vllm.yml), then run `python bifrost/sync_vk_allowlists.py` (after a restart so config_keys picks up this file) or new/changed names 403 at the gateway even though vLLM answers them fine on a direct :18801 call. Two names were missing until 2026-08-11 — gpt-oss-20b and Qwen3.6-27B (Legion references gpt-oss-20b ~24x and Qwen3.6-27B ~10x). SAME BUG recurred 2026-08-11→2026-08-15: Pass-7 added nemotron-3.5-lightning + local-chat to vLLM's --served-model-name but this file was never updated, so both 403'd through the gateway for 4 days — fixed 2026-08-15 (added below). Every name here answers with nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4 as of Pass-7 (2026-08-11; briefly Qwen/Qwen3-8B-AWQ for a few hours the same day under Pass-6, already superseded). The six original names (Qwen3.5-35B-A3B / Qwen3.6-35B-A3B / qwen3-chat / Qwen3-32B-AWQ / gpt-oss-20b / Qwen3.6-27B) are legacy compat aliases, not descriptive — ~350 Legion/Zero/ADA call sites reference them, so they stay. qwen3-chat is the one deliberate exception (ADA's/Legion's stable ROLE alias, swap-proof by design). nemotron-3.5-lightning (model-descriptive) and local-chat (role-descriptive) are the honest names — use them in all new code.",
           "models": [
             "Qwen3.5-35B-A3B",
             "Qwen3.6-35B-A3B",
             "qwen3-chat",
             "Qwen3-32B-AWQ",
             "gpt-oss-20b",
-            "Qwen3.6-27B"
+            "Qwen3.6-27B",
+            "nemotron-3.5-lightning",
+            "local-chat"
           ],
           "weight": 1.0,
           "aliases": {
@@ -28,7 +30,8 @@
             "Qwen3.6-35B-A3B": "Qwen3.5-35B-A3B",
             "gpt-oss-20b": "Qwen3.5-35B-A3B",
             "Qwen3.6-27B": "Qwen3.5-35B-A3B"
-          }
+          },
+          "_comment_no_alias_for_honest_names": "nemotron-3.5-lightning and local-chat are deliberately NOT in this remap dict (2026-08-15). This dict rewrites the requested model to Qwen3.5-35B-A3B before forwarding, which is exactly what makes the six legacy names above resolve to one canonical served name -- but it also means the response 'model' field always echoes 'Qwen3.5-35B-A3B' regardless of what was requested. Mapping the two honest names into this dict would silently launder them back into the lying canonical name on every response, defeating the point of adding them. They stay in `models` (so the VK/governance allow-list permits them) and pass straight through unmapped -- vLLM already accepts them natively as direct --served-model-name entries."
         }
       ],
       "network_config": {
@@ -45,7 +48,7 @@
           "chat_completion_stream": true
         }
       },
-      "_comment_capacity": "2026-08-11 Pass-6: vllm-chat swapped to Qwen3-8B-AWQ + max-num-seqs 1->6 (V2 UVA blocker sidestepped by VLLM_USE_V2_MODEL_RUNNER=0, and vLLM's own budget check reports 'Maximum concurrency for 32,768 tokens per request: 9.38x' so 6 fits with 3.4x headroom). Bifrost concurrency raised 1->6 to match, buffer_size 2->12 (2 x concurrency, standard sizing) so callers don't get 400 drops before vLLM's own queue is engaged. If the 8B slots wedge under sustained real load, drop concurrency back to 1 buffer 2 first (matches vllm --max-num-seqs=1 rollback in shared-infra/.env) before touching anything else.",
+      "_comment_capacity": "CORRECTED 2026-08-15 (this entry described Pass-6's Qwen3-8B-AWQ state as current fact; it was superseded THE SAME DAY by Pass-7). Current: 2026-08-11 Pass-7 swapped vllm-chat to nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4 (30B total / 3B active MoE), max-num-seqs held at 6. vLLM's boot-time budget check measured 'Maximum concurrency for 32,768 tokens per request: 5.03x' (164,659 KV tokens off 2.43 GiB KV headroom after 17.86 GiB of weights) -- lower than Pass-6's 8B (9.38x) because the weights are ~3.2x bigger, but still comfortably above the 6 configured seqs in practice because real ADA/Legion/Zero traffic rarely holds a full 32K context per concurrent request (measured 24h max input 7,433 tokens; num_preemptions_total held at 0 under a 10-concurrent/1,473-avg-token-prompt load test). Bifrost concurrency stays 6, buffer_size 12 (2x concurrency, standard sizing) so callers don't get 400 drops before vLLM's own queue is engaged. If this MoE model wedges under sustained real load, drop concurrency back to 1 / buffer 2 first (matches a vllm --max-num-seqs=1 rollback in shared-infra/.env) before touching anything else. Live GPU check 2026-08-15: 31,531 / 32,607 MiB used (96.7%), 77% util under real traffic -- see ADA .claude/rules/50-llm.md for the full VRAM math and upgrade-eval writeup.",
       "concurrency_and_buffer_size": {
         "concurrency": 6,
         "buffer_size": 12
