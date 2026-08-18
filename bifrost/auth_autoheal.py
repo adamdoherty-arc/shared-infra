@@ -258,10 +258,24 @@ def load_active_providers() -> dict:
 
 
 def key_provider_map() -> dict:
-    """key_id (uuid) -> provider, read live from config.db (read-only)."""
+    """key_id (uuid) -> provider, read live from config.db (read-only).
+
+    immutable=1 is required, not optional, on this bind mount: the Windows
+    Docker Desktop file-sharing layer under C:\\code\\shared-infra\\bifrost
+    does not support the mmap-backed shared memory SQLite's WAL mode uses
+    for its -shm file, so a plain mode=ro connect() succeeds (lazy open)
+    but the first execute() throws OperationalError('unable to open
+    database file') -- every single call, not intermittently. immutable=1
+    tells SQLite the file won't change under it and to skip WAL/locking
+    entirely, which is the correct semantics for this fire-and-forget probe
+    read anyway (shared-bifrost is the sole writer). Found 2026-08-18 while
+    triaging a YELLOW api_health/llm alert: this silently broke every VK
+    lookup for the sidecar's hang-check safety net, every poll, for as long
+    as config.db has been in WAL mode.
+    """
     out: dict[str, str] = {}
     try:
-        db = sqlite3.connect(f"file:{CONFIG_DB}?mode=ro", uri=True, timeout=10)
+        db = sqlite3.connect(f"file:{CONFIG_DB}?mode=ro&immutable=1", uri=True, timeout=10)
         try:
             for kid, prov in db.execute("SELECT key_id, provider FROM config_keys"):
                 if kid:
@@ -309,9 +323,13 @@ def probe_vk() -> str | None:
 
     Read-only, and reuses the mount this sidecar already has -- so the probe adds
     no new secret plumbing and cannot drift from the gateway's real key set.
+
+    immutable=1 required -- see key_provider_map()'s docstring above for why
+    a plain mode=ro connect() on this Windows bind mount opens fine but
+    every execute() throws OperationalError('unable to open database file').
     """
     try:
-        db = sqlite3.connect(f"file:{CONFIG_DB}?mode=ro", uri=True, timeout=10)
+        db = sqlite3.connect(f"file:{CONFIG_DB}?mode=ro&immutable=1", uri=True, timeout=10)
     except Exception as e:  # noqa: BLE001
         log(f"probe: cannot open config.db read-only ({e!r})")
         return None
