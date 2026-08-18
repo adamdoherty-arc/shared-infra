@@ -12,7 +12,7 @@
         {
           "name": "local-noauth",
           "value": "EMPTY",
-          "_comment_models": "MUST mirror vllm-chat's --served-model-name list EXACTLY (docker-compose.vllm.yml), then run `python bifrost/sync_vk_allowlists.py` (after a restart so config_keys picks up this file) or new/changed names 403 at the gateway even though vLLM answers them fine on a direct :18801 call. Two names were missing until 2026-08-11 — gpt-oss-20b and Qwen3.6-27B (Legion references gpt-oss-20b ~24x and Qwen3.6-27B ~10x). SAME BUG recurred 2026-08-11→2026-08-15: Pass-7 added nemotron-3.5-lightning + local-chat to vLLM's --served-model-name but this file was never updated, so both 403'd through the gateway for 4 days — fixed 2026-08-15 (added below). Every name here answers with nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4 as of Pass-7 (2026-08-11; briefly Qwen/Qwen3-8B-AWQ for a few hours the same day under Pass-6, already superseded). The six original names (Qwen3.5-35B-A3B / Qwen3.6-35B-A3B / qwen3-chat / Qwen3-32B-AWQ / gpt-oss-20b / Qwen3.6-27B) are legacy compat aliases, not descriptive — ~350 Legion/Zero/ADA call sites reference them, so they stay. qwen3-chat is the one deliberate exception (ADA's/Legion's stable ROLE alias, swap-proof by design). nemotron-3.5-lightning (model-descriptive) and local-chat (role-descriptive) are the honest names — use them in all new code.",
+          "_comment_models": "MUST mirror vllm-chat's --served-model-name list EXACTLY (docker-compose.vllm.yml), then run `python bifrost/sync_vk_allowlists.py` (after a restart so config_keys picks up this file) or new/changed names 403 at the gateway even though vLLM answers them fine on a direct :18801 call. Two names were missing until 2026-08-11 \u2014 gpt-oss-20b and Qwen3.6-27B (Legion references gpt-oss-20b ~24x and Qwen3.6-27B ~10x). SAME BUG recurred 2026-08-11\u21922026-08-15: Pass-7 added nemotron-3.5-lightning + local-chat to vLLM's --served-model-name but this file was never updated, so both 403'd through the gateway for 4 days \u2014 fixed 2026-08-15 (added below). Every name here answers with nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4 as of Pass-7 (2026-08-11; briefly Qwen/Qwen3-8B-AWQ for a few hours the same day under Pass-6, already superseded). The six original names (Qwen3.5-35B-A3B / Qwen3.6-35B-A3B / qwen3-chat / Qwen3-32B-AWQ / gpt-oss-20b / Qwen3.6-27B) are legacy compat aliases, not descriptive \u2014 ~350 Legion/Zero/ADA call sites reference them, so they stay. qwen3-chat is the one deliberate exception (ADA's/Legion's stable ROLE alias, swap-proof by design). nemotron-3.5-lightning (model-descriptive) and local-chat (role-descriptive) are the honest names \u2014 use them in all new code.",
           "models": [
             "Qwen3.5-35B-A3B",
             "Qwen3.6-35B-A3B",
@@ -42,7 +42,7 @@
       "custom_provider_config": {
         "base_provider_type": "openai",
         "allowed_requests": {
-          "_comment_list_models": "MUST stay false. /v1/models fans out to every provider with list_models=true, so a model-list call joins the inference queue behind real work (Legion's stack_monitor.py documented it hanging past 150s on 2026-08-03, when vllm-chat ran --max-num-seqs 1). vllm-chat now runs --max-num-seqs 6, which makes the hang less likely but NOT impossible — model discovery must never depend on inference capacity, at any concurrency. Corrected 2026-08-11: this comment previously asserted seqs=1 as current fact.",
+          "_comment_list_models": "MUST stay false. /v1/models fans out to every provider with list_models=true, so a model-list call joins the inference queue behind real work (Legion's stack_monitor.py documented it hanging past 150s on 2026-08-03, when vllm-chat ran --max-num-seqs 1). vllm-chat now runs --max-num-seqs 6, which makes the hang less likely but NOT impossible \u2014 model discovery must never depend on inference capacity, at any concurrency. Corrected 2026-08-11: this comment previously asserted seqs=1 as current fact.",
           "list_models": false,
           "chat_completion": true,
           "chat_completion_stream": true
@@ -210,10 +210,15 @@
           "value": "env.OPENROUTER_API_KEY",
           "models": [
             "cohere/north-mini-code:free",
+            "deepseek/deepseek-v4-flash",
             "google/gemma-4-26b-a4b-it:free",
             "google/gemma-4-31b-it:free",
             "inclusionai/ling-3.0-tiny:free",
             "meta-llama/llama-3.3-70b-instruct:free",
+            "minimax/minimax-m3",
+            "moonshotai/kimi-k2.5",
+            "moonshotai/kimi-k2.6",
+            "moonshotai/kimi-k3",
             "nousresearch/hermes-3-llama-3.1-405b:free",
             "nvidia/nemotron-3-nano-30b-a3b:free",
             "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
@@ -232,7 +237,9 @@
             "poolside/laguna-xs-2.1:free",
             "qwen/qwen3-next-80b-a3b-instruct:free",
             "qwen/qwen3.8-27b",
-            "tencent/hy3:free"
+            "tencent/hy3:free",
+            "z-ai/glm-5.2",
+            "z-ai/glm-5.2:free"
           ],
           "weight": 1.0,
           "aliases": {
@@ -247,7 +254,14 @@
             "hy3-free": "tencent/hy3:free",
             "hermes-405b-free": "nousresearch/hermes-3-llama-3.1-405b:free",
             "nemotron-lightning-free": "nvidia/nemotron-3.5-lightning:free",
-            "qwen3.8-27b": "qwen/qwen3.8-27b"
+            "qwen3.8-27b": "qwen/qwen3.8-27b",
+            "glm-5.2-paid": "z-ai/glm-5.2",
+            "glm-5.2-or-free": "z-ai/glm-5.2:free",
+            "kimi-k2.5": "moonshotai/kimi-k2.5",
+            "kimi-k2.6-or": "moonshotai/kimi-k2.6",
+            "kimi-k3": "moonshotai/kimi-k3",
+            "minimax-m3": "minimax/minimax-m3",
+            "deepseek-v4-flash-or": "deepseek/deepseek-v4-flash"
           }
         }
       ],
@@ -756,6 +770,37 @@
       "concurrency_and_buffer_size": {
         "concurrency": 1,
         "buffer_size": 50
+      }
+    },
+    "moonshot": {
+      "keys": [
+        {
+          "name": "moonshot-primary",
+          "value": "env.MOONSHOT_API_KEY",
+          "models": [
+            "kimi-k2.5",
+            "kimi-k2.6",
+            "kimi-k3"
+          ],
+          "weight": 1.0
+        }
+      ],
+      "network_config": {
+        "base_url": "https://api.moonshot.ai",
+        "default_request_timeout_in_seconds": 120,
+        "max_retries": 2
+      },
+      "custom_provider_config": {
+        "base_provider_type": "openai",
+        "allowed_requests": {
+          "list_models": false,
+          "chat_completion": true,
+          "chat_completion_stream": true
+        }
+      },
+      "concurrency_and_buffer_size": {
+        "concurrency": 4,
+        "buffer_size": 100
       }
     }
   }

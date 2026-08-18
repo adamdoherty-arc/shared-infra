@@ -50,17 +50,18 @@
 #         + 0.10 GiB CUDA graphs (PIECEWISE — see below, this was 10.90 GiB on
 #           the default FULL_AND_PIECEWISE and broke the boot outright)
 #         + 2.43 GiB KV (164,659 tokens @ fp8)
-#   embed (Qwen3-Embedding-0.6B, vLLM)            ~1.1 GiB weights + ~3.6 GiB KV
+#   embed (Qwen3-Embedding-0.6B, vLLM)            ~1.1 GiB weights + ~2.5 GiB overhead/KV (0.12 util)
 #   total                                         ~30.1/32.6 GiB pinned (0.90 util cap)
 #   NB: --gpu-memory-utilization PRE-ALLOCATES. Freeing weight VRAM does not
 #   free card-level VRAM — it is handed to the KV pool. The card sits at ~92%
 #   by design; the win is KV headroom, not free memory.
-#   KNOWN WASTE, not yet reclaimed: vllm-embed reserves ~3.6 GiB of KV for a
-#   0.6B POOLING model that does not autoregress. Dropping its
-#   --gpu-memory-utilization from 0.12 would hand ~2 GiB back to vllm-chat.
-#   Left alone here only because chat already has ~8x the KV its live working
-#   set uses (12.5% utilisation under a 10-way concurrent load test), so there
-#   was nothing to spend it on — revisit if KV ever gets tight on this model.
+#   MYTH CORRECTED 2026-08-18: an earlier note here called embed's allocation
+#   "~2 GiB KNOWN WASTE". Live reclaim attempts DISPROVED it — 0.09 and 0.06
+#   both fail boot. Measured floor: weights 1.1 + CUDA/engine overhead ~1.6 +
+#   0.88 GiB KV that vLLM requires for one 8192-token sequence even in
+#   pooling mode ≈ 0.111 util. 0.12 is correctly sized; real reclaim needs a
+#   --max-model-len cut, gated on auditing embed consumers' chunk sizes
+#   (tracked in the local-optimization sprint, Legion 13910).
 #
 # For the previous Qwen3-8B-AWQ config (Pass-6, same day): ~5.5 GB weights +
 # 21.65 GiB KV = 315,296 tokens, 9.62x at 32K. Kept here as the rollback target.
@@ -994,7 +995,15 @@ services:
     # For a 0.6B pooling model cudagraphs give negligible speedup.
     # --max-model-len 8192: embed inputs are short; 32K default reserves needlessly
     # large KV blocks in the already-tight residual VRAM after vllm-chat loads.
-    # --gpu-memory-utilization 0.12: weights + pooling workspace + safety margin.
+    # --gpu-memory-utilization 0.12: weights (~1.1 GiB) + workspace + the KV
+    # floor vLLM requires for ONE max-model-len (8192-token) sequence (~0.94
+    # GiB on this arch). Was 0.12 (~3.9 GiB) — ~1 GiB reclaimed 2026-08-18.
+    # NB 0.06 FAILS BOOT ("No available memory for the cache blocks",
+    # verified live): even a pooling engine pre-allocates one max-len
+    # sequence of KV, so ~2.9 GiB is the real floor at 8192 ctx. Going lower
+    # means shrinking --max-model-len first (audit embed consumers' chunk
+    # sizes before trying). The healthcheck below does a REAL embedding
+    # call, so a too-tight setting fails loudly, not silently.
     command: >
       --model Qwen/Qwen3-Embedding-0.6B
       --served-model-name Qwen/Qwen3-Embedding-0.6B
