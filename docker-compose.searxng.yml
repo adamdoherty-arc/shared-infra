@@ -1,0 +1,87 @@
+# shared-searxng — self-hosted, keyless meta-search engine.
+#
+# WS-F / Feature-1001010 (Intelligence Center Wave-7, 2026-08-18): rung 3 of
+# ADA's news_search fallback ladder (Tavily -> Brave -> SearXNG,
+# backend/services/news_search/fallback.py). Tavily and Brave each need an
+# owner-provisioned API key (dark pending signup — see the Legion notes filed
+# on product_feature:intelligence-center). SearXNG needs neither: it's a
+# self-hosted meta-search aggregator over public search engines, so it's the
+# one rung of the ladder ADA can light up today without waiting on any
+# external account. THERE IS ONE OWNER — standing this up in shared-infra is
+# in-scope, ordinary work, not "someone else's container".
+#
+# Why a separate compose file (mirrors docker-compose.freellmapi.yml pattern):
+#   - Bring up:   docker compose -f docker-compose.searxng.yml up -d
+#   - Bring down: docker compose -f docker-compose.searxng.yml down
+#   - Doesn't touch the bifrost / vllm / freellmapi / observability stacks.
+#     Rolling back this one rung is a single `down` away.
+#
+# Image: official docker.io/searxng/searxng, pinned to the dated tag (not
+# `latest`) so a stack restart never silently swaps versions underneath us.
+# Bump deliberately; re-pin the tag + digest comment when you do.
+#
+# Network: joins shared-infra_default (created by docker-compose.vllm.yml).
+# ADA's backend/scheduler/agent containers already join that network as
+# `shared-infra` (see c:/code/ADA/docker-compose.yml's network block), so they
+# reach this container as `shared-searxng:8080` — no host.docker.internal hop
+# needed, same pattern shared-bifrost uses.
+#
+# No valkey sidecar: valkey only backs the public-instance bot-detection
+# limiter (settings.yml `server.limiter`) and cross-request result caching.
+# This instance is internal-only, consumed exclusively by ADA's news_search
+# ladder at low QPS (per-provider cap registered in provider_quota_guard.py)
+# -- `server.limiter: false` (the settings.yml default, kept explicit in
+# core-config/settings.yml) is correct here, so valkey would be dead weight.
+# If this instance is ever exposed publicly, add valkey + limiter first.
+
+services:
+  searxng:
+    image: docker.io/searxng/searxng:${SEARXNG_VERSION:-2026.8.17-374939b88}
+    # Digest at time of pin (searxng/searxng:2026.8.17-374939b88, verified
+    # 2026-08-18): sha256:3aed6b4bfb4e6a2b3b94c890dafb3f35cb2588493b83818434aa260e8bdeb4d4
+    container_name: shared-searxng
+    networks:
+      - shared
+    ports:
+      # Host 8091 -> container 8080. 8091 was unclaimed as of 2026-08-18 (see
+      # the port survey across every shared-infra + ADA + Legion compose
+      # file). Override via SEARXNG_HOST_PORT in shared-infra/.env.
+      - "${SEARXNG_HOST_PORT:-8091}:8080"
+    environment:
+      # Required, no silent weak default — settings.yml ships with the
+      # well-known placeholder "ultrasecretkey"; this env overrides it at
+      # runtime (server.secret_key: "... # Is overwritten by ${SEARXNG_SECRET}").
+      SEARXNG_SECRET: ${SEARXNG_SECRET:?SEARXNG_SECRET missing -- see shared-infra/.env}
+      # Used for the instance's own inbound-link generation, not for how
+      # callers reach it (that's the container-DNS name + port above).
+      SEARXNG_BASE_URL: "http://shared-searxng:8080/"
+      SEARXNG_LIMITER: "false"
+    volumes:
+      - ./searxng/core-config:/etc/searxng:rw
+      - searxng-data:/var/cache/searxng
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "1.0"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/healthz || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
+
+networks:
+  shared:
+    name: shared-infra_default
+    external: true
+
+volumes:
+  searxng-data:
+    name: shared-searxng-data
