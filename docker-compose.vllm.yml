@@ -879,8 +879,17 @@ services:
       #   VRAM 31,646 -> 29,745 MiB
       # Spec decode is LOSSLESS: the target model verifies every draft token.
       # ROLLBACK: delete this --speculative-config line and recreate.
-      # TUNING LEAD: boot warns max_num_scheduled_tokens fell to 2036; raising
-      # --max-num-batched-tokens above 2048 may lift acceptance further.
+      # The boot warning about max_num_scheduled_tokens dropping to 2036 is
+      # BOILERPLATE -- do NOT chase it. vLLM computes it as
+      # max_num_batched_tokens - (max_num_new_slots_for_drafting x max_num_seqs)
+      # = 2048 - (2 x 6) = 2036, i.e. a 0.59% reduction, and it fires whenever
+      # spec decode is on regardless of magnitude. Raising
+      # --max-num-batched-tokens would NOT lift draft acceptance (acceptance is
+      # draft-vs-target agreement, unrelated to batch scheduling); it would only
+      # recover 12 tokens of scheduling headroom while shrinking the KV pool at
+      # profiling time and costing a restart on a box with wedge history.
+      # Verified 2026-08-18: acceptance climbed to 41.9% (107,479/256,215) on
+      # real traffic with this setting untouched.
       --speculative-config '{"model":"nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4-DFlash","num_speculative_tokens":3}'
       --compilation-config '{"cudagraph_mode":"PIECEWISE","cudagraph_capture_sizes":[1,2,4,6],"cudagraph_num_of_warmups":3}'
       ${VLLM_TOOL_CALL_FLAGS:- }
