@@ -863,6 +863,25 @@ services:
       --enable-prefix-caching
       --enable-chunked-prefill
       --default-chat-template-kwargs '{"enable_thinking": false}'
+      # DFlash speculative decoding (2026-08-18). NVIDIA ships two draft
+      # checkpoints for this exact target model; only DFlash works on vLLM
+      # v0.27.1. The -DSpark sibling was tried FIRST and FAILED to boot:
+      # AttributeError 'Qwen3DSparkForCausalLM' object has no attribute
+      # 'mask_hidden' -- vLLM auto-detects method='dspark' from that
+      # checkpoint's arch, then routes it into the parallel-drafting path that
+      # expects DFlash's mask machinery. DFlash's arch (DFlashDraftModel)
+      # carries the matching mask_token_id, so it takes the supported path.
+      # MEASURED, same 200-token prompt, before -> after:
+      #   29.1s / 49.8s / 25.7s  ->  22.5s / 2.31s / 2.49s (warm ~10x)
+      #   acceptance 223/951 draft tokens (23.4%), per-pos 145/66/12
+      #   KV 164,659 -> 136,533 tokens (draft weights come out of the KV pool;
+      #   safe here because KV ran at 8% utilisation under a full 6-seq load)
+      #   VRAM 31,646 -> 29,745 MiB
+      # Spec decode is LOSSLESS: the target model verifies every draft token.
+      # ROLLBACK: delete this --speculative-config line and recreate.
+      # TUNING LEAD: boot warns max_num_scheduled_tokens fell to 2036; raising
+      # --max-num-batched-tokens above 2048 may lift acceptance further.
+      --speculative-config '{"model":"nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4-DFlash","num_speculative_tokens":3}'
       --compilation-config '{"cudagraph_mode":"PIECEWISE","cudagraph_capture_sizes":[1,2,4,6],"cudagraph_num_of_warmups":3}'
       ${VLLM_TOOL_CALL_FLAGS:- }
     ports:
