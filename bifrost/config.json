@@ -49,9 +49,10 @@
         }
       },
       "_comment_capacity": "CORRECTED 2026-08-15 (this entry described Pass-6's Qwen3-8B-AWQ state as current fact; it was superseded THE SAME DAY by Pass-7). Current: 2026-08-11 Pass-7 swapped vllm-chat to nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4 (30B total / 3B active MoE), max-num-seqs held at 6. vLLM's boot-time budget check measured 'Maximum concurrency for 32,768 tokens per request: 5.03x' (164,659 KV tokens off 2.43 GiB KV headroom after 17.86 GiB of weights) -- lower than Pass-6's 8B (9.38x) because the weights are ~3.2x bigger, but still comfortably above the 6 configured seqs in practice because real ADA/Legion/Zero traffic rarely holds a full 32K context per concurrent request (measured 24h max input 7,433 tokens; num_preemptions_total held at 0 under a 10-concurrent/1,473-avg-token-prompt load test). Bifrost concurrency stays 6, buffer_size RAISED 12->16 + default_request_timeout_in_seconds RAISED 90->120 by Wave5-WS2A (2026-08-16, Feature-1000532) to absorb market-hours burst without tripping ADA's local circuit breaker as fast (see ADA .claude/rules/50-llm.md + backend/infrastructure/llm_router.py _LOCAL_CB_THRESHOLD 5->8) -- so callers don't get 400 drops before vLLM's own queue is engaged. If this MoE model wedges under sustained real load, drop concurrency back to 1 / buffer 2 first (matches a vllm --max-num-seqs=1 rollback in shared-infra/.env) before touching anything else. Live GPU check 2026-08-15: 31,531 / 32,607 MiB used (96.7%), 77% util under real traffic -- see ADA .claude/rules/50-llm.md for the full VRAM math and upgrade-eval writeup.",
+      "_comment_capacity_2026_08_19": "buffer_size RAISED 16->64 (concurrency held at 6 -- that is vLLM's real max-num-seqs and raising it just moves the queue into the engine as preemption). WHY: until today the local model was a rung nothing actually reached, because every ladder in ADA was cloud-only. On 2026-08-19 the entire free cloud tier saturated as ONE event (cerebras 402 credits-out, openrouter :free 429 free-models-per-day, the openrouter key 403 owner-daily-limit, nvidia-nim 429, groq 429 token-cap) and ADA added vllm-local as the structural terminal rung on every non-grade ladder. That turned local from ~0 qps into the fallback for every starved lane at once, and a 16-deep buffer overflowed instantly -- callers got 'request dropped: queue is full' 400s, which reads exactly like a model outage. 64 gives ~4x burst headroom; ADA's own 90s per-call ladder timeout bounds how long anything sits in it. Rollback ladder unchanged: if the MoE wedges under sustained load, drop concurrency to 1 / buffer 2 (with a matching vllm --max-num-seqs=1 in shared-infra/.env) BEFORE touching anything else.",
       "concurrency_and_buffer_size": {
         "concurrency": 6,
-        "buffer_size": 16
+        "buffer_size": 64
       }
     },
     "embed-local": {
@@ -211,8 +212,12 @@
           "models": [
             "cohere/north-mini-code:free",
             "deepseek/deepseek-v4-flash",
+            "deepseek/deepseek-v4-flash-0731",
+            "google/gemini-3.7-flash",
             "google/gemma-4-26b-a4b-it:free",
             "google/gemma-4-31b-it:free",
+            "inclusionai/ling-3.0-flash",
+            "inclusionai/ling-3.0-tiny",
             "inclusionai/ling-3.0-tiny:free",
             "meta-llama/llama-3.3-70b-instruct:free",
             "minimax/minimax-m3",
@@ -279,8 +284,8 @@
         }
       },
       "concurrency_and_buffer_size": {
-        "concurrency": 4,
-        "buffer_size": 100
+        "concurrency": 16,
+        "buffer_size": 400
       }
     },
     "hf-router": {
