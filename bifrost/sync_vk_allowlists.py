@@ -24,22 +24,40 @@ import sqlite3
 
 DB_PATH = os.environ.get("BIFROST_CONFIG_DB", r"C:/code/shared-infra/bifrost/config.db")
 
+# Deliberate revocations this sync must NOT undo. Without this the loop below
+# re-grants every (vk, provider) pair it finds, so a revocation silently comes
+# back on the next run. openrouter is the only PAID provider on this gateway and
+# its credits are the owner's, so only ada-prod may reach it.
+REVOKED_VK_PROVIDERS = {
+    ("legion-prod", "openrouter"),
+    ("zero-prod", "openrouter"),
+    ("fortressos-prod", "openrouter"),
+    ("claude-code-local", "openrouter"),
+    ("hermes-prod", "openrouter"),
+}
+
 db = sqlite3.connect(DB_PATH)
 
 providers = {}
 for prov, models in db.execute("SELECT provider, models_json FROM config_keys"):
     providers[prov] = models  # already a JSON array string
 
-vks = [r[0] for r in db.execute("SELECT id FROM governance_virtual_keys")]
+vks = [(r[0], r[1]) for r in db.execute("SELECT id, name FROM governance_virtual_keys")]
 
 gone = db.execute(
     "DELETE FROM governance_virtual_key_provider_configs WHERE provider NOT IN ({})".format(
         ",".join("?" * len(providers))), list(providers)).rowcount
 print(f"deleted PC rows for retired providers: {gone}")
 
-updated = inserted = 0
-for vk in vks:
+updated = inserted = revoked = 0
+for vk, vk_name in vks:
     for prov, models in providers.items():
+        if (vk_name, prov) in REVOKED_VK_PROVIDERS:
+            db.execute(
+                "DELETE FROM governance_virtual_key_provider_configs "
+                "WHERE virtual_key_id=? AND provider=?", (vk, prov))
+            revoked += 1
+            continue
         cur = db.execute(
             "UPDATE governance_virtual_key_provider_configs "
             "SET allowed_models=?, allow_all_keys=1 WHERE virtual_key_id=? AND provider=?",
@@ -53,7 +71,7 @@ for vk in vks:
                 "VALUES (?,?,NULL,?,1,NULL)", (vk, prov, models))
             inserted += 1
 db.commit()
-print(f"updated={updated} inserted={inserted} across {len(vks)} VKs x {len(providers)} providers")
+print(f"updated={updated} inserted={inserted} revoked={revoked} across {len(vks)} VKs x {len(providers)} providers")
 for row in db.execute(
         "SELECT provider, COUNT(*) FROM governance_virtual_key_provider_configs GROUP BY provider ORDER BY provider"):
     print("PC rows:", row)

@@ -184,6 +184,48 @@
             "nemotron-safety": "nvidia/nemotron-3.5-content-safety",
             "nemoguard-safety": "nvidia/llama-3.1-nemoguard-8b-content-safety"
           }
+        },
+        {
+          "name": "nvidia-nim-secondary",
+          "value": "env.NV_API_KEY_3",
+          "models": [
+            "deepseek-ai/deepseek-v4-flash-0731",
+            "meta/llama-3.1-70b-instruct",
+            "meta/llama-3.1-8b-instruct",
+            "meta/llama-3.2-11b-vision-instruct",
+            "meta/llama-3.2-90b-vision-instruct",
+            "meta/llama-3.3-70b-instruct",
+            "minimaxai/minimax-m3",
+            "mistralai/mistral-nemotron",
+            "nvidia/ising-calibration-1.5-31b",
+            "nvidia/llama-3.1-nemoguard-8b-content-safety",
+            "nvidia/llama-3.1-nemotron-nano-vl-8b-v1",
+            "nvidia/llama-3.1-nemotron-safety-guard-8b-v3",
+            "nvidia/llama-3.3-nemotron-super-49b-v1",
+            "nvidia/llama-3.3-nemotron-super-49b-v1.5",
+            "nvidia/nemotron-3-nano-30b-a3b",
+            "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
+            "nvidia/nemotron-3-super-120b-a12b",
+            "nvidia/nemotron-3-ultra-550b-a55b",
+            "nvidia/nemotron-3.5-content-safety",
+            "nvidia/nemotron-3.5-lightning-30b-a3b",
+            "nvidia/nemotron-mini-4b-instruct",
+            "nvidia/nemotron-nano-12b-v2-vl",
+            "nvidia/nvidia-nemotron-nano-9b-v2",
+            "openai/gpt-oss-120b",
+            "openai/gpt-oss-20b",
+            "poolside/laguna-xs-2.1",
+            "stepfun-ai/step-3.7-flash",
+            "thinkingmachines/inkling",
+            "z-ai/glm-5.2"
+          ],
+          "weight": 1.0,
+          "aliases": {
+            "nemotron-lightning": "nvidia/nemotron-3.5-lightning-30b-a3b",
+            "nemotron-safety": "nvidia/nemotron-3.5-content-safety",
+            "deepseek-v4-flash": "deepseek-ai/deepseek-v4-flash-0731",
+            "nemoguard-safety": "nvidia/llama-3.1-nemoguard-8b-content-safety"
+          }
         }
       ],
       "network_config": {

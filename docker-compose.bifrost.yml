@@ -54,6 +54,12 @@ services:
       # round-robins across keys defined on the nvidia-nim provider block by
       # `weight`; failing key gets its budget skipped for subsequent calls.
       NV_API_KEY_2: ${NV_API_KEY_2:-}
+      # 2026-08-19: third NIM account. Verified an INDEPENDENT quota pool --
+      # probed at the same instant, keys 1 and 2 both 429'd while this one
+      # returned 200. Each key must be enumerated here explicitly; the
+      # service does not inherit the whole .env, so adding a key to .env
+      # alone silently does nothing.
+      NV_API_KEY_3: ${NV_API_KEY_3:-}
       # 2026-05-27: re-enabled OpenRouter + added NVIDIA NIM + HF Router provider
       # blocks in config.json. See those provider entries for the model catalogues.
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
