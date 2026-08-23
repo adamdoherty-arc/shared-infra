@@ -284,6 +284,7 @@
             "poolside/laguna-xs-2.1:free",
             "qwen/qwen3-next-80b-a3b-instruct:free",
             "qwen/qwen3.8-27b",
+            "stealth/ox-alpha",
             "tencent/hy3:free",
             "z-ai/glm-5.2",
             "z-ai/glm-5.2:free"
@@ -308,7 +309,8 @@
             "kimi-k2.6-or": "moonshotai/kimi-k2.6",
             "kimi-k3": "moonshotai/kimi-k3",
             "minimax-m3": "minimax/minimax-m3",
-            "deepseek-v4-flash-or": "deepseek/deepseek-v4-flash"
+            "deepseek-v4-flash-or": "deepseek/deepseek-v4-flash",
+            "ox-alpha": "stealth/ox-alpha"
           }
         }
       ],
