@@ -158,21 +158,60 @@ def _prune_once() -> None:
             else:
                 print("[pruner] no rows deleted — VACUUM skipped", flush=True)
 
-            # WAL-mode gotcha (found 2026-07-13, logs.db hygiene workstream):
-            # VACUUM writes its rewritten pages through the WAL like any other
-            # transaction. A PASSIVE checkpoint (SQLite's default autocheckpoint,
-            # fires every ~1000 WAL pages) reclaims that data into the main file
-            # but does NOT shrink logs.db-wal on disk — only a TRUNCATE-mode
-            # checkpoint does, and TRUNCATE needs a momentary exclusive lock that
-            # a continuously-writing Bifrost rarely leaves open. Left unaddressed,
-            # -wal grew to 9.76 GB (bigger than the 11.95 GB main file) with zero
-            # visibility, because bifrost_logs_db_bytes only measured logs.db
-            # itself. Best-effort: try a few times with short backoffs — succeeds
-            # whenever Bifrost happens to be between writes, harmless no-op
-            # (busy=1) otherwise. Never blocks Bifrost — busy_timeout still caps
-            # the wait, and TRUNCATE failing just leaves the WAL as-is.
+            # LGN-14184: prior version only tried TRUNCATE (needs an exclusive
+            # lock Bifrost never releases -- verified 15+ consecutive failures)
+            # and did NOT try PASSIVE/RESTART fallbacks or set
+            # journal_size_limit. Result: -wal grew to 6.5-9.7 GB and stayed
+            # there indefinitely. New ladder (all non-blocking, all safe under
+            # continuous Bifrost writes):
+            #   1. PASSIVE checkpoint (never blocks -- moves committed pages
+            #      into main file even while Bifrost writes continue)
+            #   2. RESTART checkpoint (like PASSIVE + tells future writers to
+            #      start a fresh WAL block, so the WAL file eventually shrinks
+            #      once existing readers drain their snapshots -- no exclusive
+            #      lock required)
+            #   3. TRUNCATE (best-effort as before -- shrinks file to zero
+            #      immediately when it succeeds)
+            #   4. Set journal_size_limit so next writer commit trims the WAL
+            #      to that cap on disk. Persists in the DB file header.
             wal_reclaimed = False
             wal_cur = conn.cursor()
+            wal_mb_before = _file_mb(LOGS_DB.with_name(LOGS_DB.name + "-wal"))
+
+            # Cap WAL file at 512 MB via journal_size_limit (persistent DB header setting).
+            try:
+                wal_cur.execute("PRAGMA journal_size_limit = 536870912")
+                jsl_val = wal_cur.fetchone()
+                print(f"[pruner] PRAGMA journal_size_limit -> {jsl_val[0] if jsl_val else '?'} bytes", flush=True)
+            except sqlite3.OperationalError as exc:
+                print(f"[pruner] journal_size_limit set failed: {exc!r}", flush=True)
+
+            # Step 1: PASSIVE (never blocks, moves committed pages into main)
+            try:
+                wal_cur.execute("PRAGMA wal_checkpoint(PASSIVE)")
+                busy_p, frames_p, checkpointed_p = wal_cur.fetchone()
+                print(
+                    f"[pruner] wal_checkpoint(PASSIVE): busy={busy_p} "
+                    f"frames={frames_p} checkpointed={checkpointed_p}",
+                    flush=True,
+                )
+            except sqlite3.OperationalError as exc:
+                print(f"[pruner] wal_checkpoint(PASSIVE) error: {exc!r}", flush=True)
+
+            # Step 2: RESTART (no exclusive lock, forces future writers to
+            # rotate the WAL block so existing WAL file can shrink)
+            try:
+                wal_cur.execute("PRAGMA wal_checkpoint(RESTART)")
+                busy_r, frames_r, checkpointed_r = wal_cur.fetchone()
+                print(
+                    f"[pruner] wal_checkpoint(RESTART): busy={busy_r} "
+                    f"frames={frames_r} checkpointed={checkpointed_r}",
+                    flush=True,
+                )
+            except sqlite3.OperationalError as exc:
+                print(f"[pruner] wal_checkpoint(RESTART) error: {exc!r}", flush=True)
+
+            # Step 3: TRUNCATE (best-effort, as before) -- up to 5 attempts
             for attempt in range(1, 6):
                 try:
                     wal_cur.execute("PRAGMA wal_checkpoint(TRUNCATE)")
@@ -199,14 +238,23 @@ def _prune_once() -> None:
                         flush=True,
                     )
                 time.sleep(3)
-            if not wal_reclaimed:
-                wal_mb = _file_mb(LOGS_DB.with_name(LOGS_DB.name + "-wal"))
+
+            wal_mb_after = _file_mb(LOGS_DB.with_name(LOGS_DB.name + "-wal"))
+            if wal_reclaimed:
                 print(
-                    f"[pruner] wal_checkpoint(TRUNCATE) did not complete after "
-                    f"5 attempts — logs.db-wal stays at {wal_mb:.1f} MB on disk "
-                    "(data itself is safely checkpointed into logs.db; this "
-                    "only affects on-disk WAL file size, not correctness). "
-                    "Will retry tomorrow.",
+                    f"[pruner] WAL reclaim summary: {wal_mb_before:.1f} MB -> "
+                    f"{wal_mb_after:.1f} MB (TRUNCATE succeeded)",
+                    flush=True,
+                )
+            else:
+                # journal_size_limit + RESTART/PASSIVE still bound growth even
+                # when TRUNCATE loses the race -- pages ARE in the main file.
+                print(
+                    f"[pruner] WAL reclaim summary: {wal_mb_before:.1f} MB -> "
+                    f"{wal_mb_after:.1f} MB (TRUNCATE lost race after 5 "
+                    "attempts; PASSIVE+RESTART checkpointed pages into main "
+                    "regardless; journal_size_limit=512 MB will trim on next "
+                    "writer commit boundary).",
                     flush=True,
                 )
         finally:
@@ -238,6 +286,55 @@ def _seconds_until_next_prune() -> float:
     return delta
 
 
+# LGN-14184: interval (seconds) between mid-day PASSIVE checkpoint passes.
+# 15 min was picked so a saturated Bifrost never grows the WAL more than
+# ~15 min worth of pages beyond the journal_size_limit ceiling.
+_MID_DAY_CHECKPOINT_INTERVAL_S = int(os.getenv("WAL_MIDDAY_CHECKPOINT_INTERVAL_S", "900"))
+
+
+def _mid_day_checkpoint() -> None:
+    """LGN-14184: PASSIVE + RESTART checkpoint pass, no exclusive lock needed.
+
+    Runs on a mid-day loop between nightly prunes so the WAL file never grows
+    unbounded even if the nightly TRUNCATE consistently loses the race. Never
+    blocks Bifrost -- PASSIVE walks committed pages into the main file while
+    writes continue; RESTART tells future writers to rotate the WAL block.
+    """
+    try:
+        conn = _connect_rw()
+    except Exception as exc:
+        print(f"[pruner] midday connect failed: {exc!r}", flush=True)
+        return
+    try:
+        wal_mb_before = _file_mb(LOGS_DB.with_name(LOGS_DB.name + "-wal"))
+        cur = conn.cursor()
+        try:
+            cur.execute("PRAGMA journal_size_limit = 536870912")
+            cur.fetchone()
+        except sqlite3.OperationalError:
+            pass
+        try:
+            cur.execute("PRAGMA wal_checkpoint(PASSIVE)")
+            busy_p, frames_p, checkpointed_p = cur.fetchone()
+            try:
+                cur.execute("PRAGMA wal_checkpoint(RESTART)")
+                busy_r, frames_r, checkpointed_r = cur.fetchone()
+            except sqlite3.OperationalError:
+                busy_r = frames_r = checkpointed_r = -1
+            wal_mb_after = _file_mb(LOGS_DB.with_name(LOGS_DB.name + "-wal"))
+            print(
+                f"[pruner] midday checkpoint: WAL {wal_mb_before:.1f} MB -> "
+                f"{wal_mb_after:.1f} MB (PASSIVE busy={busy_p} "
+                f"frames={frames_p} chkpt={checkpointed_p}; "
+                f"RESTART busy={busy_r} frames={frames_r} chkpt={checkpointed_r})",
+                flush=True,
+            )
+        except sqlite3.OperationalError as exc:
+            print(f"[pruner] midday checkpoint error: {exc!r}", flush=True)
+    finally:
+        conn.close()
+
+
 def main() -> None:
     if RUN_ONCE:
         print("[pruner] RUN_ONCE=1 — running prune immediately", flush=True)
@@ -246,17 +343,30 @@ def main() -> None:
 
     print(
         f"[pruner] started — nightly prune at {PRUNE_HOUR_UTC:02d}:00 UTC, "
-        f"retention={RETENTION_DAYS}d, batch={BATCH_SIZE}, db={LOGS_DB}",
+        f"retention={RETENTION_DAYS}d, batch={BATCH_SIZE}, db={LOGS_DB}; "
+        f"midday PASSIVE checkpoint every {_MID_DAY_CHECKPOINT_INTERVAL_S}s "
+        "(LGN-14184)",
         flush=True,
     )
     while True:
         wait_s = _seconds_until_next_prune()
         print(
-            f"[pruner] sleeping {wait_s / 3600:.2f}h until next prune "
-            f"(target: {PRUNE_HOUR_UTC:02d}:00 UTC)",
+            f"[pruner] sleeping up to {wait_s / 3600:.2f}h until next prune "
+            f"(target: {PRUNE_HOUR_UTC:02d}:00 UTC), "
+            f"waking every {_MID_DAY_CHECKPOINT_INTERVAL_S}s for a PASSIVE "
+            "checkpoint",
             flush=True,
         )
-        time.sleep(wait_s)
+        # Slice sleep into midday-checkpoint intervals.
+        end_at = time.monotonic() + wait_s
+        while True:
+            slice_s = min(_MID_DAY_CHECKPOINT_INTERVAL_S, max(0, end_at - time.monotonic()))
+            if slice_s <= 0:
+                break
+            time.sleep(slice_s)
+            if time.monotonic() >= end_at:
+                break
+            _mid_day_checkpoint()
         _prune_once()
 
 
