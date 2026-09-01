@@ -306,13 +306,19 @@ services:
       AUTOHEAL_PROBE_MODEL: "vllm-local/qwen3-chat"
       AUTOHEAL_PROBE_PROVIDER: "vllm-local"
       AUTOHEAL_PROBE_BASE: "http://shared-bifrost:8080"
-      # The upstream is probed by COMPLETING, not by listing models: vllm-chat
-      # runs max_num_seqs=1 and this lane is concurrency=1, so one long
-      # generation legitimately blocks it (a 651-SECOND completion was observed
-      # while vLLM was healthily producing 54 tok/s). /v1/models answers
-      # instantly throughout that, which would read as "gateway hung".
-      AUTOHEAL_PROBE_UPSTREAM_BASE: "http://vllm-chat:8000"
-      AUTOHEAL_PROBE_UPSTREAM_MODEL: "qwen3-chat"
+      # The upstream is probed by COMPLETING, not by listing models: one long
+      # generation can legitimately block a saturated engine (a 651-SECOND
+      # completion was observed on the old max_num_seqs=1 engine while vLLM
+      # was healthily producing 54 tok/s). /v1/models answers instantly
+      # throughout that, which would read as "gateway hung".
+      # Pass-9 (2026-08-31, Migration-20): upstream is qwen38-chat (syv-ai
+      # Qwen3.8-27B stack, port 18020). UPSTREAM_MODEL must be the engine's
+      # REAL served name (qwen3.8-27b) -- this probe bypasses Bifrost, and the
+      # legacy aliases (qwen3-chat et al.) now exist ONLY in Bifrost's
+      # vllm-local aliases remap, so probing the upstream with qwen3-chat
+      # would 404 forever and read as a permanent upstream outage.
+      AUTOHEAL_PROBE_UPSTREAM_BASE: "http://qwen38-chat:18020"
+      AUTOHEAL_PROBE_UPSTREAM_MODEL: "qwen3.8-27b"
       AUTOHEAL_PROBE_UPSTREAM_TIMEOUT_S: "60"
       # NOT a latency SLO -- only has to separate "slow" from "never". 45s was
       # tried and sat inside the normal spread (observed healthy completions:

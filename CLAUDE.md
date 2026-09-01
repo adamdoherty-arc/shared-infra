@@ -104,14 +104,19 @@ UPDATE governance_virtual_key_provider_configs SET allow_all_keys=1
 ```
 (Stop bifrost first, restart after the update.)
 
-### Local chat backend (`vllm-chat`)
+### Local chat backend (`qwen38-chat`) — Pass-9, 2026-08-31
 
-- Host port `18801` → container port `8000`.
-- Model: `cyankiwi/Qwen3.6-27B-AWQ-INT4` (dense 27B, AWQ-Marlin INT4) on
-  vLLM `v0.23.0-cu129`, ctx 16384. (`llama-cpp-chat` at 18800 was retired
-  2026-05-17 — its block is `profile: retired` in `docker-compose.vllm.yml`.)
-- Served canonical `Qwen3.5-35B-A3B`; alias `qwen3-chat` → `Qwen3.5-35B-A3B`
-  (Bifrost rewrites at the gateway).
+- Host port `18801` → container port `18020` (18801 kept across the engine
+  swap because ~15 Legion/Zero consumers target it; the stack's native 18020
+  is inside a Windows WinNAT excluded range and cannot be host-bound).
+- Model: **Qwen3.8-27B** (`dbirks/Qwen3.8-27B-W4A16-AutoRound`) on the
+  syv-ai/qwen38-27b-rtx3090 patched vLLM `0.27.1` stack, batch profile,
+  ctx 65,536, MAX_SEQS=32, GPU_UTIL=0.78 (coexists with vllm-embed).
+- Serves ONE name `qwen3.8-27b`; ALL legacy aliases (incl. `qwen3-chat`,
+  `Qwen3.5-35B-A3B`) are remapped in Bifrost's `vllm-local` key aliases dict.
+- Previous engine (`vllm-chat`, Nemotron-3.5-Lightning NVFP4, host port
+  18801 → 8000) is intact behind the `nemotron-rollback` compose profile.
+  (`llama-cpp-chat` at 18800 was retired 2026-05-17.)
 
 ### Local embed backend (`vllm-embed`)
 

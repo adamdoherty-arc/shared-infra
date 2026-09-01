@@ -283,6 +283,17 @@ services:
   # don't fight. After Bifrost is flipped to point at this service and
   # llama-cpp-chat is retired, bump gpu-util to 0.85 in a follow-up.
   vllm-chat:
+    # ============ Pass-9 (2026-08-31, Migration-20): ROLLBACK-ONLY ===========
+    # This service was REPLACED by qwen38-chat (see the Pass-9 block below).
+    # It is kept fully intact behind the `nemotron-rollback` profile so a
+    # rollback is one command (weights still in hf-cache):
+    #   docker stop qwen38-chat
+    #   docker compose -f docker-compose.vllm.yml --profile nemotron-rollback up -d vllm-chat
+    #   python <bifrost rollback: base_url http://vllm-chat:8000, conc 6/buf 64,
+    #          restore aliases dict from git history of bifrost/config.json>
+    # A plain `docker compose up -d` will NOT resurrect it (profile-gated).
+    # =========================================================================
+    profiles: ["nemotron-rollback"]
     # 2026-08-04: this service had NO restart directive, so it defaulted to a
     # policy that does not survive a host/daemon restart. On 2026-08-01 a host
     # restart killed all 10 shared containers at once; the ones with
@@ -848,6 +859,70 @@ services:
     #     v0.25.1-cu129, --model Qwen/Qwen3-8B-AWQ, restore --dtype bfloat16 and
     #     --limit-mm-per-prompt, drop the two backend flags, and .env
     #     VLLM_TOOL_CALL_FLAGS back to `hermes` / `qwen3`.
+    # DFlash speculative decoding (2026-08-18). NVIDIA ships two draft
+    # checkpoints for this exact target model; only DFlash works on vLLM
+    # v0.27.1. The -DSpark sibling was tried FIRST and FAILED to boot:
+    # AttributeError 'Qwen3DSparkForCausalLM' object has no attribute
+    # 'mask_hidden' -- vLLM auto-detects method='dspark' from that
+    # checkpoint's arch, then routes it into the parallel-drafting path that
+    # expects DFlash's mask machinery. DFlash's arch (DFlashDraftModel)
+    # carries the matching mask_token_id, so it takes the supported path.
+    # MEASURED, same 200-token prompt, before -> after:
+    #   29.1s / 49.8s / 25.7s  ->  22.5s / 2.31s / 2.49s (warm ~10x)
+    #   acceptance 223/951 draft tokens (23.4%), per-pos 145/66/12
+    #   KV 164,659 -> 136,533 tokens (draft weights come out of the KV pool;
+    #   safe here because KV ran at 8% utilisation under a full 6-seq load)
+    #   VRAM 31,646 -> 29,745 MiB
+    # Spec decode is LOSSLESS: the target model verifies every draft token.
+    # ROLLBACK: delete this --speculative-config line and recreate.
+    # The boot warning about max_num_scheduled_tokens dropping to 2036 is
+    # BOILERPLATE -- do NOT chase it. vLLM computes it as
+    # max_num_batched_tokens - (max_num_new_slots_for_drafting x max_num_seqs)
+    # = 2048 - (2 x 6) = 2036, i.e. a 0.59% reduction, and it fires whenever
+    # spec decode is on regardless of magnitude. Raising
+    # --max-num-batched-tokens would NOT lift draft acceptance (acceptance is
+    # draft-vs-target agreement, unrelated to batch scheduling); it would only
+    # recover 12 tokens of scheduling headroom while shrinking the KV pool at
+    # profiling time and costing a restart on a box with wedge history.
+    # Verified 2026-08-18: acceptance climbed to 41.9% (107,479/256,215) on
+    # real traffic with this setting untouched.
+    # ===================== 2026-08-27 (Pass-8) — Qwen3.8-27B A/B ==============
+    # TRIAL, eval-gated. Rollback = restore the Pass-7 block commented directly
+    # below and `docker compose -f docker-compose.vllm.yml up -d
+    # --force-recreate vllm-chat` (weights for BOTH models stay in hf-cache, so
+    # rollback costs a restart, not a re-download).
+    #
+    # WHY: Pass-7's Nemotron is a Mamba-2/MoE hybrid with two properties that
+    # cost ADA real capability, both measured, not theorised:
+    #   1. Prefix caching is INERT on it (0 hits across 5.35M+ queried tokens,
+    #      byte-identical repeat prompts included; vLLM's own boot log labels
+    #      mamba-mode prefix caching "experimental"). ADA's dominant shape is a
+    #      long stable system prompt + a short tail, so every LangGraph / judge
+    #      / synthesis call pays FULL prefill, forever.
+    #   2. Tool calling is dead under `enable_thinking:false`, which ADA must
+    #      set platform-wide so JSON/LangGraph callers don't get reasoning-block
+    #      leakage. That single fact is why `vllm-local/*` is excluded from the
+    #      tool-capable lane in llm_router.get_tool_capable_llm() and
+    #      ada_llm_service._model_supports_tools().
+    # Qwen3.8-27B is a DENSE transformer (arch tag qwen3_5), so prefix caching
+    # works normally and tool calling does not depend on a thinking template.
+    #
+    # Flag deltas vs Pass-7, each load-bearing:
+    #   - dropped --moe-backend marlin      : dense model, no experts to route
+    #   - dropped --mamba-backend flashinfer: no Mamba layers
+    #   - dropped --speculative-config      : the DFlash draft checkpoint is
+    #                                         Nemotron-specific; Qwen's own MTP
+    #                                         draft is a separate follow-on test
+    #   - --reasoning-parser qwen3 (was nemotron_v3, inlined here instead of
+    #     riding ${VLLM_TOOL_CALL_FLAGS} so the shared .env stays untouched and
+    #     rollback needs no env edit). NOT optional: without it the whole
+    #     reasoning block lands in message.content.
+    #   - --max-num-seqs 4 (was 6): dense 27B KV per sequence is far larger than
+    #     a 3B-active MoE's. Raise only on measured headroom.
+    # The 8 --served-model-name aliases are IDENTICAL to Pass-7 on purpose:
+    # ~350 Legion/Zero/ADA call sites and the Bifrost vllm-local allowlist
+    # address those names, so the swap needs zero client or gateway changes.
+    # ---------------- Pass-7 (2026-08-11) ROLLBACK BLOCK — keep verbatim ------
     command: >
       --model nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4
       --served-model-name Qwen3.5-35B-A3B qwen3-chat gpt-oss-20b Qwen3.6-27B Qwen3-32B-AWQ Qwen3.6-35B-A3B nemotron-3.5-lightning local-chat
@@ -863,36 +938,51 @@ services:
       --enable-prefix-caching
       --enable-chunked-prefill
       --default-chat-template-kwargs '{"enable_thinking": false}'
-      # DFlash speculative decoding (2026-08-18). NVIDIA ships two draft
-      # checkpoints for this exact target model; only DFlash works on vLLM
-      # v0.27.1. The -DSpark sibling was tried FIRST and FAILED to boot:
-      # AttributeError 'Qwen3DSparkForCausalLM' object has no attribute
-      # 'mask_hidden' -- vLLM auto-detects method='dspark' from that
-      # checkpoint's arch, then routes it into the parallel-drafting path that
-      # expects DFlash's mask machinery. DFlash's arch (DFlashDraftModel)
-      # carries the matching mask_token_id, so it takes the supported path.
-      # MEASURED, same 200-token prompt, before -> after:
-      #   29.1s / 49.8s / 25.7s  ->  22.5s / 2.31s / 2.49s (warm ~10x)
-      #   acceptance 223/951 draft tokens (23.4%), per-pos 145/66/12
-      #   KV 164,659 -> 136,533 tokens (draft weights come out of the KV pool;
-      #   safe here because KV ran at 8% utilisation under a full 6-seq load)
-      #   VRAM 31,646 -> 29,745 MiB
-      # Spec decode is LOSSLESS: the target model verifies every draft token.
-      # ROLLBACK: delete this --speculative-config line and recreate.
-      # The boot warning about max_num_scheduled_tokens dropping to 2036 is
-      # BOILERPLATE -- do NOT chase it. vLLM computes it as
-      # max_num_batched_tokens - (max_num_new_slots_for_drafting x max_num_seqs)
-      # = 2048 - (2 x 6) = 2036, i.e. a 0.59% reduction, and it fires whenever
-      # spec decode is on regardless of magnitude. Raising
-      # --max-num-batched-tokens would NOT lift draft acceptance (acceptance is
-      # draft-vs-target agreement, unrelated to batch scheduling); it would only
-      # recover 12 tokens of scheduling headroom while shrinking the KV pool at
-      # profiling time and costing a restart on a box with wedge history.
-      # Verified 2026-08-18: acceptance climbed to 41.9% (107,479/256,215) on
-      # real traffic with this setting untouched.
       --speculative-config '{"model":"nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4-DFlash","num_speculative_tokens":3}'
       --compilation-config '{"cudagraph_mode":"PIECEWISE","cudagraph_capture_sizes":[1,2,4,6],"cudagraph_num_of_warmups":3}'
       ${VLLM_TOOL_CALL_FLAGS:- }
+
+    # ========== Pass-8 (2026-08-27) — TRIED AND REJECTED, DO NOT RE-RUN =======
+    # Qwen3.8-27B (cyankiwi/Qwen3.8-27B-AWQ-INT4) does NOT fit this box.
+    # MEASURED, not estimated — vLLM refused to start:
+    #   "Available KV cache memory: 1.1 GiB" vs "1.29 GiB KV cache is needed"
+    #   to serve ONE 32,768-token sequence. Engine's own suggested ceiling was
+    #   max_model_len 26,656, where KV/seq is still ~1.05 GiB => concurrency ~1.
+    # Compare Pass-7 on the identical box minutes later: 69,905 KV tokens,
+    # 2.13x concurrency at the full 32K.
+    #
+    # A 1-seq local engine is a KNOWN-CATASTROPHIC operating point here, not a
+    # theoretical worry: Legion's own routing notes record completions of
+    # 880-2030s and 21% success over 17k calls the last time this box ran
+    # --max-num-seqs 1. So the dense model loses decisively despite genuinely
+    # having the two things Nemotron lacks (working prefix caching, and tool
+    # calling that survives enable_thinking:false).
+    #
+    # The cause is ARCHITECTURAL, not a tuning miss: a DENSE 27.78B at INT4
+    # plus a vision tower leaves no KV headroom on a 32GB card that also hosts
+    # vllm-embed. Raising --gpu-memory-utilization is not the fix — chat's
+    # fraction is of TOTAL card memory and already overlaps embed's claim.
+    # Do not retry a dense ~27B+ here. The open directions are a SPARSE model
+    # whose prefix caching actually works, or a smaller dense (~8-14B) with
+    # real KV headroom. Weights stay in hf-cache, so re-testing costs a
+    # restart, not a re-download.  (Legion sprint 14155 carries the full retro.)
+    # -------------------------------------------------------------------------
+    # command: >
+    #   --model cyankiwi/Qwen3.8-27B-AWQ-INT4
+    #   --served-model-name Qwen3.5-35B-A3B qwen3-chat gpt-oss-20b Qwen3.6-27B Qwen3-32B-AWQ Qwen3.6-35B-A3B nemotron-3.5-lightning local-chat
+    #   --port 8000
+    #   --host 0.0.0.0
+    #   --max-model-len ${VLLM_MAX_MODEL_LEN:-16384}
+    #   --gpu-memory-utilization ${VLLM_GPU_MEM_UTIL:-0.92}
+    #   --max-num-seqs 4
+    #   --max-num-batched-tokens 2048
+    #   --kv-cache-dtype fp8
+    #   --enable-prefix-caching
+    #   --enable-chunked-prefill
+    #   --default-chat-template-kwargs '{"enable_thinking": false}'
+    #   --compilation-config '{"cudagraph_mode":"PIECEWISE","cudagraph_capture_sizes":[1,2,4],"cudagraph_num_of_warmups":3}'
+    #   --enable-auto-tool-choice --tool-call-parser qwen3_coder --reasoning-parser qwen3
+    # -------------------------------------------------------------------------
     ports:
       - "18801:8000"
     ipc: host
@@ -1010,6 +1100,133 @@ services:
         max-size: "100m"
         max-file: "5"
 
+  # ===================== 2026-08-31 (Pass-9) — Qwen3.8-27B via syv-ai stack ==
+  # Migration-20 (Legion sprint 14397). Supersedes the Pass-8 "do not retry a
+  # dense ~27B+ here" verdict WITHOUT contradicting its measurement: Pass-8
+  # tried a generic AWQ-INT4 checkpoint on STOCK vLLM at 0.92 util, where KV
+  # for one 32k sequence didn't fit. This stack (github.com/syv-ai/
+  # qwen38-27b-rtx3090) is the same model made to fit 64k-240k context inside
+  # 24GB via int4 lm_head/embeddings, int8 tensor-core GEMMs, and quantized-KV
+  # CTX presets — measured on an RTX 5090 (issue #35): 25,295 MiB peak at
+  # CTX=long (128k), 405-449 tok/s code / 196 prose single-stream, 1,135 tok/s
+  # aggregate at N=4, sm_120 explicitly supported. Motivation measured, not
+  # theorised: vllm-local ran 15.8% success over 97k logical requests in the
+  # 14 days to 2026-08-31 (86,943 queue-full drops/week against the 6-seq
+  # Nemotron engine), and Nemotron's chat template kills tool calling under
+  # the platform-required enable_thinking:false.
+  # Serving model name is qwen3.8-27b (their stack, unmodified); ALL alias
+  # compatibility (Qwen3.5-35B-A3B / qwen3-chat / ... 8 names) moves to the
+  # Bifrost vllm-local key's aliases remap dict — vLLM no longer needs to lie
+  # about what it serves, and response model fields become honest.
+  # prepare = their download + head/embedding/MTP requantization one-shot;
+  # artifacts land in qwen38-models. hf-cache is mounted UNDER /cache so the
+  # HF download dedupes against the shared cache (weights pre-fetched
+  # 2026-08-31).
+  # prepare is CPU-ONLY by design (their docker/prepare.sh header: download +
+  # requantization "On the CPU (no GPU needed)") — safe to run while the old
+  # engine still holds the card. Idempotent state check; re-runs cost seconds.
+  qwen38-prepare:
+    image: ghcr.io/syv-ai/qwen38-27b-rtx3090:latest
+    container_name: qwen38-prepare
+    profiles: ["qwen38-prepare"]
+    command: prepare
+    ipc: host
+    environment:
+      HOME: /cache
+      HF_TOKEN: ${HF_TOKEN}
+    volumes:
+      - qwen38-models:/app/models
+      - qwen38-cache:/cache
+      - hf-cache:/cache/.cache/huggingface
+
+  # NOTE: no depends_on qwen38-prepare — the serve entrypoint re-runs the
+  # idempotent prepare state-check itself in seconds (PREPARE=1 default), and
+  # a depends_on onto a profiled-out one-shot would break every plain
+  # `docker compose up -d` with "depends on undefined service". Run
+  # `--profile qwen38-prepare run --rm qwen38-prepare` manually for a
+  # from-scratch rebuild of the models volume.
+  qwen38-chat:
+    image: ghcr.io/syv-ai/qwen38-27b-rtx3090:latest
+    container_name: qwen38-chat
+    command: batch
+    ipc: host
+    shm_size: "4gb"
+    stop_grace_period: 30s
+    environment:
+      HOME: /cache
+      HF_TOKEN: ${HF_TOKEN}
+      # Batch profile knobs (batch/start_qwen.sh env surface — batch mode uses
+      # KV/MAX_LEN/GPU_UTIL, NOT the single-user CTX presets). Their defaults
+      # assume an exclusive card (GPU_UTIL=0.972, MAX_LEN=150000, MAX_SEQS=64);
+      # this box also carries ~1.5-2 GiB Windows WDDM desktop + vllm-embed's
+      # ~3.9 GiB claim, so GPU_UTIL is pinned to 0.78 (~25.4 GiB): measured
+      # free VRAM with vllm-chat stopped and embed+desktop resident was
+      # 26.0 GiB (2026-08-31), and vLLM's free-mem precheck (documented above
+      # for v0.23+) refuses a fraction that exceeds it. Raise only on
+      # measured headroom in boot logs. MAX_LEN 65536 = 2x the old
+      # Nemotron 32k ceiling (ADA's measured 24h max input was 7,433 tokens;
+      # a smaller max-len lowers the boot-time one-full-sequence KV floor that
+      # killed Pass-8). MAX_SEQS 32 with Bifrost concurrency to match.
+      # PREFIX_CACHE=1 deliberately overrides their batch default (0): ADA's
+      # dominant shape is a long stable system prompt + short tail, and dead
+      # prefix caching was Pass-8 motivation #1.
+      KV: fp8
+      MAX_LEN: "65536"
+      MAX_SEQS: "32"
+      GPU_UTIL: "0.78"
+      PREFIX_CACHE: "1"
+      # Platform-wide thinking-off (same contract the Nemotron block enforced):
+      # JSON/LangGraph callers must not get reasoning-block leakage, and most
+      # callers never pass chat_template_kwargs. EXTRA_ARGS lands AFTER the
+      # script's own flags, so it can carry vLLM args the script doesn't
+      # expose. Qwen3.8's tool calling does NOT depend on the thinking
+      # template (the Pass-8 block documents this as the architectural fix) —
+      # verified live in the smoke below before cutover.
+      EXTRA_ARGS: '--default-chat-template-kwargs {"enable_thinking":false}'
+      # WSL2 + Blackwell hygiene inherited from vllm-chat's scar tissue above:
+      # pin-memory is required for the DFlash2/MTP draft path on WSL2 (their
+      # README), and flashinfer-cubin lags flashinfer-python upstream so the
+      # version check must be disabled (their issue #35, gotcha 1).
+      VLLM_WSL2_ENABLE_PIN_MEMORY: "1"
+      FLASHINFER_DISABLE_VERSION_CHECK: "1"
+    # Host 18801 (the port the retired vllm-chat published), NOT the stack's
+    # native 18020: Windows reserves 17938-18337 (WinNAT excluded port
+    # ranges, verified live 2026-08-31 -- bind on 18020 fails with "access
+    # permissions"), and ~15 Legion/Zero host-port consumers
+    # (stack_monitor.py, llm_ops vllm adapter, qa_verification, zero_run,
+    # vllm_client.py LOCAL_LLM_URL defaults) all target
+    # host.docker.internal:18801 -- inheriting the port keeps every one of
+    # them live without cross-repo edits. Container-internal port stays 18020
+    # (their PORT default); Bifrost reaches it container->container as
+    # qwen38-chat:18020. No conflict with the rollback-gated vllm-chat block:
+    # the two can never run concurrently (VRAM) and compose binds host ports
+    # at start time only.
+    ports:
+      - "18801:18020"
+    labels:
+      - "autoheal=true"
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    volumes:
+      - qwen38-models:/app/models
+      - qwen38-cache:/cache
+      - hf-cache:/cache/.cache/huggingface
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:18020/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 900s
+  # =================== end Pass-9 qwen38 block ===============================
+
   vllm-embed:
     environment:
       HF_TOKEN: ${HF_TOKEN}
@@ -1042,8 +1259,11 @@ services:
       --gpu-memory-utilization 0.12
       --dtype auto
       --enforce-eager
+    # Pass-9 (2026-08-31): boot-order dependency repointed vllm-chat ->
+    # qwen38-chat (same rationale: embed boots into the residual VRAM after
+    # the chat engine's claim is settled).
     depends_on:
-      vllm-chat:
+      qwen38-chat:
         condition: service_healthy
     ports:
       - "8001:8001"
@@ -1099,6 +1319,12 @@ services:
         max-file: "5"
 
   vllm-vlm:
+    # 2026-08-27: its cached weights (Qwen2-VL-2B-Instruct-AWQ, 2.8 GB) were
+    # deleted in the hf-cache reclaim, so re-enabling this profile now costs a
+    # re-download. Re-confirmed retired-and-unused that day before deleting:
+    # not running, absent from shared-infra/bifrost/config.json, and absent
+    # from ADA's .env. ADA's vision work (chart_vision_analyzer -> Xtrades /
+    # Discord chart images) routes to CLOUD models, not here.
     # Infra-Retire-VLLM-VLM-01 (sprint 5337, 2026-05-21): RETIRED. The
     # Qwen3.6 family on vllm-chat is natively multimodal so this sidecar
     # became redundant. Bifrost logs prior to retirement showed only
@@ -1246,8 +1472,11 @@ services:
     # stall counter every poll (see vllm_wedge_monitor.py UNREACHABLE_SAMPLES).
     # service_started (not service_healthy) is enough here -- the monitor's own
     # STARTUP_GRACE_S already tolerates vllm-chat still warming up.
+    # Pass-9 (2026-08-31): monitor repointed vllm-chat -> qwen38-chat (the
+    # wedge class is a WSL2+engine property, not a Nemotron property — keep
+    # the monitor).
     depends_on:
-      vllm-chat:
+      qwen38-chat:
         condition: service_started
     command: ["python", "-u", "/monitor.py"]
     environment:
@@ -1258,8 +1487,8 @@ services:
       # left this monitor BLIND to 0-tok/s wedges for 11+ h (daily-review 2026-06-25
       # run 3). Service-name DNS re-resolves immediately after a restart and has no
       # published-port proxy in the path. vllm-chat listens on 8000 inside the net.
-      VLLM_METRICS_URL: http://vllm-chat:8000/metrics
-      VLLM_TARGET_CONTAINER: vllm-chat
+      VLLM_METRICS_URL: http://qwen38-chat:18020/metrics
+      VLLM_TARGET_CONTAINER: qwen38-chat
       POLL_INTERVAL_S: "30"
       WEDGE_SAMPLES: "4"
       STARTUP_GRACE_S: "120"
@@ -1277,5 +1506,9 @@ services:
       - ./vllm_wedge_monitor.py:/monitor.py:ro
 
 volumes:
+  qwen38-models:
+    name: qwen38-models
+  qwen38-cache:
+    name: qwen38-cache
   hf-cache:
     name: shared-hf-cache
