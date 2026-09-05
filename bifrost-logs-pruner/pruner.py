@@ -33,12 +33,18 @@ Configuration (env vars):
   PRUNE_BATCH_SIZE         Rows per DELETE batch (default: 50000)
   PRUNE_BUSY_TIMEOUT_MS    SQLite busy timeout in ms (default: 120000)
   RUN_ONCE                 If "1", run immediately and exit (for manual/CI use)
+  AUTOHEAL_DISCORD_WEBHOOK Optional Discord webhook (shared with auth_autoheal.py's
+                           sidecar) -- WAL-size alerts degrade to log-only if unset
+  PRUNE_WAL_ALERT_THRESHOLD_MB  Alert if logs.db-wal exceeds this after a checkpoint
+                                pass (default: 512)
 """
 from __future__ import annotations
 
+import json
 import os
 import sqlite3
 import time
+import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -48,6 +54,31 @@ PRUNE_HOUR_UTC = int(os.getenv("PRUNE_HOUR_UTC", "3"))
 BATCH_SIZE = int(os.getenv("PRUNE_BATCH_SIZE", "50000"))
 BUSY_TIMEOUT_MS = int(os.getenv("PRUNE_BUSY_TIMEOUT_MS", "120000"))
 RUN_ONCE = os.getenv("RUN_ONCE", "0") == "1"
+
+# 2026-09-05 (Fix-1100000305-followup): the WAL reached 7.46 GB and hung
+# every shared-bifrost restart for minutes -- TRUNCATE had been losing its
+# race against live traffic on every scheduled run with nothing surfacing
+# that fact anywhere but this container's own stdout log, which nobody was
+# watching. Same stdlib-only Discord webhook pattern as the sibling
+# auth_autoheal.py sidecar (shared env var, no extra dependency) -- an
+# empty/unset webhook degrades to log-only, same as that sidecar today.
+DISCORD_WEBHOOK = os.environ.get("AUTOHEAL_DISCORD_WEBHOOK", "").strip()
+WAL_ALERT_THRESHOLD_MB = float(os.getenv("PRUNE_WAL_ALERT_THRESHOLD_MB", "512"))
+
+
+def _alert(text: str) -> None:
+    print(f"[pruner] ALERT: {text}", flush=True)
+    if not DISCORD_WEBHOOK:
+        return
+    try:
+        data = json.dumps({"content": f":warning: bifrost-logs-pruner: {text}"}).encode()
+        req = urllib.request.Request(
+            DISCORD_WEBHOOK, data=data, headers={"Content-Type": "application/json"},
+        )
+        urllib.request.urlopen(req, timeout=15).read()
+        print("[pruner] discord alert posted", flush=True)
+    except Exception as exc:  # noqa: BLE001 -- alerting must never crash the pruner
+        print(f"[pruner] warn: discord webhook failed ({exc!r})", flush=True)
 
 
 def _file_mb(path: Path) -> float:
@@ -257,6 +288,15 @@ def _prune_once() -> None:
                     "writer commit boundary).",
                     flush=True,
                 )
+            if wal_mb_after > WAL_ALERT_THRESHOLD_MB:
+                _alert(
+                    f"logs.db-wal is {wal_mb_after:.0f} MB after tonight's prune "
+                    f"(threshold {WAL_ALERT_THRESHOLD_MB:.0f} MB) -- TRUNCATE "
+                    f"{'succeeded' if wal_reclaimed else 'lost its race against live traffic'}. "
+                    "A WAL this size can hang shared-bifrost's next restart for minutes "
+                    "(see the 2026-09-05 incident); consider a brief Bifrost pause during "
+                    "the next prune if this recurs."
+                )
         finally:
             conn.close()
     except Exception as exc:
@@ -329,6 +369,12 @@ def _mid_day_checkpoint() -> None:
                 f"RESTART busy={busy_r} frames={frames_r} chkpt={checkpointed_r})",
                 flush=True,
             )
+            if wal_mb_after > WAL_ALERT_THRESHOLD_MB:
+                _alert(
+                    f"logs.db-wal is {wal_mb_after:.0f} MB at a midday checkpoint "
+                    f"(threshold {WAL_ALERT_THRESHOLD_MB:.0f} MB) -- PASSIVE/RESTART "
+                    "alone are not shrinking it fast enough between nightly prunes."
+                )
         except sqlite3.OperationalError as exc:
             print(f"[pruner] midday checkpoint error: {exc!r}", flush=True)
     finally:

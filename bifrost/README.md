@@ -399,10 +399,49 @@ each project is in active dev:
 
 - `sync_vk_allowlists.py` — run after ANY config.json provider/model change
   (stop bifrost → run → start bifrost). See "Stale state in config.db".
+  **2026-09-05**: now does TWO syncs, not one — `sync_provider_models()`
+  writes `config_keys.models_json`/`aliases_json` from config.json for
+  every provider key FIRST (Bifrost's own boot-time import silently skips
+  this for a key that already exists — verified live: 4 restarts across
+  several edited providers all still served the pre-2026-09-01 model list),
+  then the original VK-allowlist mirroring step runs against the now-current
+  data. Both always run together; there's no scenario where you'd want one
+  without the other.
 - `smoke_all_lanes.py` — 1-shot completion against every cloud provider/model
   lane through the gateway; prints PASS/FAIL + latency per lane.
 - `verify_local_model.py` — local-model suite: all served aliases, tool-call
   round-trip, 30K+ context needle, decode throughput, embeddings.
+
+## logs.db WAL bloat (2026-09-05 incident)
+
+`bifrost-logs-pruner`'s nightly TRUNCATE checkpoint needs a momentary
+exclusive lock that a busy Bifrost can hold indefinitely; when TRUNCATE
+loses that race night after night, `logs.db-wal` grows unbounded even
+though the pruner's own PASSIVE/RESTART fallbacks are running (they bound
+growth by moving committed pages into the main file, but only TRUNCATE
+actually shrinks the file on disk). Reached **7.46 GB** and hung
+shared-bifrost's boot for several minutes on every restart attempt (stuck
+at `"config store initialized"`, port 8080 never opened — CPU/memory on
+the container stayed near-idle the whole time, the tell that it's I/O-bound
+on the WAL replay, not a config problem). Confirmed by reverting to a
+pre-incident config.json and reproducing the identical hang; fixed with a
+manual `wal_checkpoint(PASSIVE/RESTART/TRUNCATE)` while Bifrost was
+stopped (71s, WAL → 0, main db 6.8 GB → 3.73 GB).
+
+Structural fixes, not one-off repairs:
+- `pruner.py` now alerts to Discord (`AUTOHEAL_DISCORD_WEBHOOK`, shared with
+  `auth_autoheal.py` — degrades to log-only if unset) whenever
+  `logs.db-wal` exceeds 512 MB after a nightly OR midday checkpoint pass.
+- `scripts/bifrost_model_sync.py --apply` (ADA repo) checks + checkpoints
+  `logs.db-wal` before its own restart sequence, so a scheduled apply can
+  never start into a WAL large enough to hang the boot.
+- Considered and REJECTED: disabling Bifrost's request logging entirely.
+  `logs.db` is the only source for the LLM Center's traffic panels and the
+  audit trail this whole platform's cost-governance program depends on
+  (`.claude/rules/50-llm.md`) — the fix is bounding the file's growth, not
+  losing the data it holds. Retention stays at 2 days (`LOGS_RETENTION_DAYS`
+  in `docker-compose.bifrost.yml`); revisit only if steady-state size still
+  grows unmanageably even with both checkpoint paths working.
 
 ## Calling convention from the projects
 

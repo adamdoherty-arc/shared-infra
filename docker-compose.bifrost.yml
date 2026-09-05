@@ -229,7 +229,11 @@ services:
     # would sustain a 30 GB DB that will corrupt at ~26 GB.  2d keeps the
     # DB at ~9 GB steady-state, with a comfortable margin.
     # Mounts bifrost/ read-WRITE so it can modify logs.db directly.
-    # No network access needed — pure local SQLite operation.
+    # 2026-09-05: gained outbound Discord alerting (see pruner.py's _alert())
+    # after a 7.46 GB un-checkpointed WAL hung shared-bifrost's restart for
+    # minutes with nothing surfacing that fact anywhere but this container's
+    # own stdout -- reuses AUTOHEAL_DISCORD_WEBHOOK, the same optional webhook
+    # auth_autoheal.py already uses, so no second webhook to provision.
     build:
       context: ./bifrost-logs-pruner
       dockerfile: Dockerfile
@@ -244,6 +248,8 @@ services:
       BIFROST_LOGS_DB: "/data/logs.db"
       LOGS_RETENTION_DAYS: "2"
       PRUNE_HOUR_UTC: "3"
+      # Optional Discord alerting; set AUTOHEAL_DISCORD_WEBHOOK in shared-infra/.env
+      AUTOHEAL_DISCORD_WEBHOOK: "${AUTOHEAL_DISCORD_WEBHOOK:-}"
     deploy:
       resources:
         limits:
