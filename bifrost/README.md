@@ -20,7 +20,64 @@ container removed, service block deleted from `docker-compose.vllm.yml`,
 - `hf-router`   → `https://router.huggingface.co` (13 models: DeepSeek, Kimi (incl. dedicated Kimi-K2.7-Code), MiniMax, Qwen (incl. Qwen3-Coder-480B), GLM, gpt-oss — ~100K free credits/month, thin; use as deep fallback only)
 - `groq` / `cerebras` / `mistral` — perpetual free tiers (gpt-oss-120b at 200K TPD on groq; ~1M tok/day on cerebras; ~1B tok/month on mistral — incl `mistral-large-latest` + `magistral-medium-latest` added 2026-06-11 and verified through the gateway; magistral returns content as a parts-array, callers must join text parts). Added 2026-07-08: groq gained `qwen/qwen3.6-27b` + `meta-llama/llama-4-scout-17b-16e-instruct`; cerebras gained `gemma-4-31b`; mistral's `codestral-latest` is the dedicated coder.
 - `gemini`      → **PARKED 2026-07-08** — was FLASH-ONLY (gemini-3.5-flash, gemini-3-flash-preview, 3.1-flash-lite — 1,500 req/day free; Pro previews billing-gated since ~May 2026, already removed before parking). `GEMINI_API_KEY` in `shared-infra/.env` is invalid/expired; block preserved verbatim in `disabled-providers.json`. Re-enable: refresh the key at https://aistudio.google.com/apikey, copy the block back into `config.json`, run `sync_vk_allowlists.py`, restart.
-- `zai`         → `https://api.z.ai` (glm-4.7-flash, 203K ctx, perpetually free. Uses `request_path_overrides` to hit `/api/paas/v4/chat/completions` — Z.ai doesn't serve the standard `/v1` path)
+- `zai`         → `https://api.z.ai` (glm-4.5-flash only — confirmed the ONLY free model on this account 2026-09-05; glm-4.7/glm-5.3/glm-5.3-flash all 429 "insufficient balance" even with `thinking.effort=low`, so they stay OUT of config.json. Uses `request_path_overrides` to hit `/api/paas/v4/chat/completions` — Z.ai doesn't serve the standard `/v1` path)
+
+## 2026-09-05 model hygiene sweep (ADA LLM fabric v3, WS2, Legion Feature-1001194)
+
+Live 1-token probes through Bifrost found 14 allowlisted `nvidia-nim` model names
+and 11 allowlisted `openrouter` `:free` names had gone stale upstream (every call
+404s). Removed from `config.json` and replaced with verified-alive names:
+- `nvidia-nim`: removed `z-ai/glm-5.2`, `thinkingmachines/inkling`,
+  `meta/llama-3.3-70b-instruct`, `meta/llama-3.1-8b-instruct`,
+  `nvidia/llama-3.1-nemotron-nano-vl-8b-v1`,
+  `nvidia/llama-3.3-nemotron-super-49b-v1(+v1.5)`,
+  `nvidia/nemotron-nano-12b-v2-vl`, `meta/llama-3.1-70b-instruct`,
+  `stepfun-ai/step-3.7-flash`, `nvidia/nvidia-nemotron-nano-9b-v2`,
+  `nvidia/nemotron-mini-4b-instruct`, `nvidia/nemotron-3-nano-30b-a3b`,
+  `openai/gpt-oss-120b` (all EOL 2026-08-21..09-03) + the dangling `kimi-k2.6`/
+  `kimi-nim` aliases (NIM never actually served Moonshot models — those two
+  aliases pointed at a name that was never in this key's `models[]`). Added
+  `deepseek-ai/deepseek-v4-pro-0813` and `moonshotai/kimi-k3` (both verified
+  alive).
+- `openrouter`: removed 11 dead `:free` slugs (`openai/gpt-oss-20b:free`,
+  `openai/gpt-oss-120b:free`, `nvidia/nemotron-nano-12b-v2-vl:free`,
+  `tencent/hy3:free`, `qwen/qwen3-next-80b-a3b-instruct:free`,
+  `nvidia/nemotron-3-nano-30b-a3b:free`, `nvidia/nemotron-nano-9b-v2:free`,
+  `nousresearch/hermes-3-llama-3.1-405b:free`,
+  `meta-llama/llama-3.3-70b-instruct:free`, `poolside/laguna-m.1:free`,
+  `inclusionai/ling-3.0-tiny:free`). Added `minimax/minimax-m3:free` (clean,
+  supports `response_format:json_object`), `inclusionai/ling-3.0-flash-sante:free`,
+  `inclusionai/ling-3.0-flash-fin:free` (reasoning-heavy unless the request body
+  sends `{"reasoning":{"enabled":false}}`), `dots-studio/dots-3-note-preview:free`.
+  `minimax/minimax-m2.7:free` was tested and REJECTED — it 400s "Reasoning is
+  mandatory" and cannot be run non-reasoning.
+- `groq`: added `meta-llama/llama-4-scout-17b-16e-instruct` (1M TPD) and
+  `qwen/qwen3-32b` (500K TPD); concurrency 4/100 → 8/200.
+- `cerebras`: concurrency 4/100 → 8/200 (account still 402 insufficient credits
+  as of this sweep — owner-only item; kept boxable by WS1's penalty registry).
+- `hf-router`: concurrency 4/100 → 8/200.
+- `api-airforce`: **DELETED** — global 1-req/burst limit made it useless as a
+  routing rung.
+- `freellmapi` Bifrost allowlist pruned from 85 cosmetic names (the aggregator
+  ignores the `model` field and serves whatever its own internal priority
+  chain picks) to the ~17 names its live chain can actually reach.
+- freellmapi's own admin API (`http://127.0.0.1:3015`, bearer token in `.env`):
+  disabled the `llm7` platform (5 models, upstream 502 "fetch failed") and
+  `nvidia/nemotron-3-nano-30b-a3b` (upstream 410 Gone), and reordered its
+  fallback chain to `google → sambanova → zhipu → cohere → groq → cerebras →
+  nvidia → openrouter → ollama → github → pollinations → cloudflare → mistral
+  → kilo → llm7(disabled)` via `PUT /api/fallback`.
+- 9router (`docker-compose.9router.yml`, `shared-9router` container) —
+  **REMOVED** (`docker compose down -v` + file deleted + `NINEROUTER_*` env
+  lines stripped from `.env`). It duplicated capability freellmapi already
+  covers (Cloudflare/Gemini/SambaNova/Zhipu), carried 3 CVEs in its image
+  lineage, and had zero ADA callers wired to it. Legion note filed on
+  `product_feature:llm-fabric-control-center`; Legion sprints 14149/14150
+  (its original owner-gated eval) closed with the same rationale.
+- Standing mechanism: `scripts/bifrost_model_sync.py` (ADA repo) now runs this
+  same catalog-diff + probe + apply cycle automatically (dry-run daily,
+  `--apply` weekly Sun 07:30 ET) so this list does not go stale again without
+  a human re-running it by hand.
 
 **Per-project affinity (2026-06-11)** — so the three projects don't drain each other's free rate limits: Legion→NVIDIA NIM (GLM-5.1 reasoning+code), ADA→Kimi K2.6 via NIM, Zero→Gemini Flash + Groq. Local vLLM is the shared first rung everywhere; freellm/auto is the shared emergency tail.
 

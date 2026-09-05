@@ -94,34 +94,22 @@
           "value": "env.NV_API_KEY_2",
           "models": [
             "deepseek-ai/deepseek-v4-flash-0731",
-            "meta/llama-3.1-70b-instruct",
-            "meta/llama-3.1-8b-instruct",
             "meta/llama-3.2-11b-vision-instruct",
             "meta/llama-3.2-90b-vision-instruct",
-            "meta/llama-3.3-70b-instruct",
             "minimaxai/minimax-m3",
             "mistralai/mistral-nemotron",
             "nvidia/ising-calibration-1.5-31b",
             "nvidia/llama-3.1-nemoguard-8b-content-safety",
-            "nvidia/llama-3.1-nemotron-nano-vl-8b-v1",
             "nvidia/llama-3.1-nemotron-safety-guard-8b-v3",
-            "nvidia/llama-3.3-nemotron-super-49b-v1",
-            "nvidia/llama-3.3-nemotron-super-49b-v1.5",
-            "nvidia/nemotron-3-nano-30b-a3b",
             "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
             "nvidia/nemotron-3-super-120b-a12b",
             "nvidia/nemotron-3-ultra-550b-a55b",
             "nvidia/nemotron-3.5-content-safety",
             "nvidia/nemotron-3.5-lightning-30b-a3b",
-            "nvidia/nemotron-mini-4b-instruct",
-            "nvidia/nemotron-nano-12b-v2-vl",
-            "nvidia/nvidia-nemotron-nano-9b-v2",
-            "openai/gpt-oss-120b",
             "openai/gpt-oss-20b",
             "poolside/laguna-xs-2.1",
-            "stepfun-ai/step-3.7-flash",
-            "thinkingmachines/inkling",
-            "z-ai/glm-5.2"
+            "deepseek-ai/deepseek-v4-pro-0813",
+            "moonshotai/kimi-k3"
           ],
           "weight": 1.0,
           "aliases": {
@@ -136,41 +124,27 @@
           "value": "env.NV_API_KEY",
           "models": [
             "deepseek-ai/deepseek-v4-flash-0731",
-            "meta/llama-3.1-70b-instruct",
-            "meta/llama-3.1-8b-instruct",
             "meta/llama-3.2-11b-vision-instruct",
             "meta/llama-3.2-90b-vision-instruct",
-            "meta/llama-3.3-70b-instruct",
             "minimaxai/minimax-m3",
             "mistralai/mistral-nemotron",
             "nvidia/ising-calibration-1.5-31b",
             "nvidia/llama-3.1-nemoguard-8b-content-safety",
-            "nvidia/llama-3.1-nemotron-nano-vl-8b-v1",
             "nvidia/llama-3.1-nemotron-safety-guard-8b-v3",
-            "nvidia/llama-3.3-nemotron-super-49b-v1",
-            "nvidia/llama-3.3-nemotron-super-49b-v1.5",
-            "nvidia/nemotron-3-nano-30b-a3b",
             "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
             "nvidia/nemotron-3-super-120b-a12b",
             "nvidia/nemotron-3-ultra-550b-a55b",
             "nvidia/nemotron-3.5-content-safety",
             "nvidia/nemotron-3.5-lightning-30b-a3b",
-            "nvidia/nemotron-mini-4b-instruct",
-            "nvidia/nemotron-nano-12b-v2-vl",
-            "nvidia/nvidia-nemotron-nano-9b-v2",
-            "openai/gpt-oss-120b",
             "openai/gpt-oss-20b",
             "poolside/laguna-xs-2.1",
-            "stepfun-ai/step-3.7-flash",
-            "thinkingmachines/inkling",
-            "z-ai/glm-5.2"
+            "deepseek-ai/deepseek-v4-pro-0813",
+            "moonshotai/kimi-k3"
           ],
           "weight": 1.0,
           "aliases": {
             "glm-5.1": "z-ai/glm-5.2",
             "glm-5.2": "z-ai/glm-5.2",
-            "kimi-k2.6": "moonshotai/kimi-k2.6",
-            "kimi-nim": "moonshotai/kimi-k2.6",
             "minimax-m2.7": "minimaxai/minimax-m2.7",
             "nemotron-ultra-550b": "nvidia/nemotron-3-ultra-550b-a55b",
             "qwen-122b": "qwen/qwen3.5-122b-a10b",
@@ -194,34 +168,22 @@
           "value": "env.NV_API_KEY_3",
           "models": [
             "deepseek-ai/deepseek-v4-flash-0731",
-            "meta/llama-3.1-70b-instruct",
-            "meta/llama-3.1-8b-instruct",
             "meta/llama-3.2-11b-vision-instruct",
             "meta/llama-3.2-90b-vision-instruct",
-            "meta/llama-3.3-70b-instruct",
             "minimaxai/minimax-m3",
             "mistralai/mistral-nemotron",
             "nvidia/ising-calibration-1.5-31b",
             "nvidia/llama-3.1-nemoguard-8b-content-safety",
-            "nvidia/llama-3.1-nemotron-nano-vl-8b-v1",
             "nvidia/llama-3.1-nemotron-safety-guard-8b-v3",
-            "nvidia/llama-3.3-nemotron-super-49b-v1",
-            "nvidia/llama-3.3-nemotron-super-49b-v1.5",
-            "nvidia/nemotron-3-nano-30b-a3b",
             "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
             "nvidia/nemotron-3-super-120b-a12b",
             "nvidia/nemotron-3-ultra-550b-a55b",
             "nvidia/nemotron-3.5-content-safety",
             "nvidia/nemotron-3.5-lightning-30b-a3b",
-            "nvidia/nemotron-mini-4b-instruct",
-            "nvidia/nemotron-nano-12b-v2-vl",
-            "nvidia/nvidia-nemotron-nano-9b-v2",
-            "openai/gpt-oss-120b",
             "openai/gpt-oss-20b",
             "poolside/laguna-xs-2.1",
-            "stepfun-ai/step-3.7-flash",
-            "thinkingmachines/inkling",
-            "z-ai/glm-5.2"
+            "deepseek-ai/deepseek-v4-pro-0813",
+            "moonshotai/kimi-k3"
           ],
           "weight": 1.0,
           "aliases": {
@@ -259,37 +221,30 @@
             "cohere/north-mini-code:free",
             "deepseek/deepseek-v4-flash",
             "deepseek/deepseek-v4-flash-0731",
+            "dots-studio/dots-3-note-preview:free",
             "google/gemini-3.7-flash",
             "google/gemma-4-26b-a4b-it:free",
             "google/gemma-4-31b-it:free",
             "inclusionai/ling-3.0-flash",
+            "inclusionai/ling-3.0-flash-fin:free",
+            "inclusionai/ling-3.0-flash-sante:free",
             "inclusionai/ling-3.0-tiny",
-            "inclusionai/ling-3.0-tiny:free",
-            "meta-llama/llama-3.3-70b-instruct:free",
             "minimax/minimax-m3",
+            "minimax/minimax-m3:free",
             "moonshotai/kimi-k2.5",
             "moonshotai/kimi-k2.6",
             "moonshotai/kimi-k3",
-            "nousresearch/hermes-3-llama-3.1-405b:free",
-            "nvidia/nemotron-3-nano-30b-a3b:free",
             "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
             "nvidia/nemotron-3-super-120b-a12b:free",
             "nvidia/nemotron-3-ultra-550b-a55b:free",
             "nvidia/nemotron-3.5-content-safety:free",
             "nvidia/nemotron-3.5-lightning:free",
-            "nvidia/nemotron-nano-12b-v2-vl:free",
-            "nvidia/nemotron-nano-9b-v2:free",
-            "openai/gpt-oss-120b:free",
-            "openai/gpt-oss-20b:free",
             "openrouter/free",
             "openrouter/owl-alpha",
-            "poolside/laguna-m.1:free",
             "poolside/laguna-s-2.1:free",
             "poolside/laguna-xs-2.1:free",
-            "qwen/qwen3-next-80b-a3b-instruct:free",
             "qwen/qwen3.8-27b",
             "stealth/ox-alpha",
-            "tencent/hy3:free",
             "z-ai/glm-5.2",
             "z-ai/glm-5.2:free"
           ],
@@ -297,7 +252,6 @@
           "aliases": {
             "nemotron-ultra-free": "nvidia/nemotron-3-ultra-550b-a55b:free",
             "nemotron-super-free": "nvidia/nemotron-3-super-120b-a12b:free",
-            "qwen3-coder-free": "qwen/qwen3-coder:free",
             "qwen3-next-80b-free": "qwen/qwen3-next-80b-a3b-instruct:free",
             "gpt-oss-120b-free": "openai/gpt-oss-120b:free",
             "llama-3.3-70b-free": "meta-llama/llama-3.3-70b-instruct:free",
@@ -314,7 +268,11 @@
             "kimi-k3": "moonshotai/kimi-k3",
             "minimax-m3": "minimax/minimax-m3",
             "deepseek-v4-flash-or": "deepseek/deepseek-v4-flash",
-            "ox-alpha": "stealth/ox-alpha"
+            "ox-alpha": "stealth/ox-alpha",
+            "minimax-m3-free": "minimax/minimax-m3:free",
+            "ling-flash-sante": "inclusionai/ling-3.0-flash-sante:free",
+            "ling-flash-fin": "inclusionai/ling-3.0-flash-fin:free",
+            "dots-note-preview": "dots-studio/dots-3-note-preview:free"
           }
         }
       ],
@@ -383,8 +341,8 @@
         }
       },
       "concurrency_and_buffer_size": {
-        "concurrency": 4,
-        "buffer_size": 100
+        "concurrency": 8,
+        "buffer_size": 200
       }
     },
     "cerebras": {
@@ -414,8 +372,8 @@
         }
       },
       "concurrency_and_buffer_size": {
-        "concurrency": 4,
-        "buffer_size": 100
+        "concurrency": 8,
+        "buffer_size": 200
       }
     },
     "groq": {
@@ -432,11 +390,15 @@
             "openai/gpt-oss-120b",
             "openai/gpt-oss-20b",
             "openai/gpt-oss-safeguard-20b",
-            "qwen/qwen3.6-27b"
+            "qwen/qwen3.6-27b",
+            "meta-llama/llama-4-scout-17b-16e-instruct",
+            "qwen/qwen3-32b"
           ],
           "weight": 1.0,
           "aliases": {
-            "qwen3.6-groq": "qwen/qwen3.6-27b"
+            "qwen3.6-groq": "qwen/qwen3.6-27b",
+            "qwen3-32b-groq": "qwen/qwen3-32b",
+            "llama4-scout-groq": "meta-llama/llama-4-scout-17b-16e-instruct"
           }
         }
       ],
@@ -454,8 +416,8 @@
         }
       },
       "concurrency_and_buffer_size": {
-        "concurrency": 4,
-        "buffer_size": 100
+        "concurrency": 8,
+        "buffer_size": 200
       }
     },
     "zai": {
@@ -486,8 +448,8 @@
         }
       },
       "concurrency_and_buffer_size": {
-        "concurrency": 2,
-        "buffer_size": 50
+        "concurrency": 4,
+        "buffer_size": 100
       }
     },
     "freellmapi": {
@@ -496,91 +458,23 @@
           "name": "freellmapi-primary",
           "value": "env.FREELLM_BEARER_TOKEN",
           "models": [
-            "@cf/deepseek-ai/deepseek-r1-distill-qwen-32b",
-            "@cf/ibm-granite/granite-4.0-h-micro",
-            "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
-            "@cf/meta/llama-4-scout-17b-16e-instruct",
-            "@cf/moonshotai/kimi-k2.5",
-            "@cf/moonshotai/kimi-k2.6",
-            "@cf/openai/gpt-oss-120b",
-            "@cf/qwen/qwen3-30b-a3b-fp8",
-            "@cf/zai-org/glm-4.7-flash",
-            "DeepSeek-V3.1",
-            "DeepSeek-V3.1-cb",
             "DeepSeek-V3.2",
-            "GLM-4.6V-Flash",
-            "Llama-4-Maverick-17B-128E-Instruct",
-            "Meta-Llama-3.3-70B-Instruct",
-            "codestral-latest",
-            "cogito-2.1:671b",
             "command-a-03-2025",
             "command-r-plus-08-2024",
             "deepseek-ai/deepseek-v4-pro",
-            "devstral-2:123b",
-            "devstral-latest",
             "gemini-2.5-flash",
             "gemini-2.5-flash-lite",
             "gemini-3-flash-preview",
             "gemini-3.1-flash-lite-preview",
             "gemini-3.1-pro-preview",
-            "gemma-3-12b-it",
-            "gemma4:31b",
             "glm-4.5-flash",
-            "glm-4.7",
             "glm-4.7-flash",
-            "google/gemma-4-26b-a4b-it:free",
-            "google/gemma-4-31b-it",
-            "google/gemma-4-31b-it:free",
-            "gpt-4o",
             "gpt-oss-120b",
-            "gpt-oss-20b",
-            "gpt-oss:120b",
-            "gpt-oss:20b",
-            "groq/compound",
-            "groq/compound-mini",
-            "inclusionai/ling-2.6-1t:free",
-            "kimi-k2-thinking",
-            "liquid/lfm-2.5-1.2b-instruct:free",
-            "liquid/lfm-2.5-1.2b-thinking:free",
             "llama-3.1-8b-instant",
             "llama-3.3-70b-versatile",
-            "llama3.1-8b",
-            "magistral-medium-latest",
-            "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo",
-            "meta-llama/llama-3.3-70b-instruct:free",
             "meta-llama/llama-4-scout-17b-16e-instruct",
-            "meta/llama-3.1-70b-instruct",
-            "meta/llama-3.3-70b-instruct",
-            "meta/llama-4-maverick-17b-128e-instruct",
-            "minimax/minimax-m2.5:free",
-            "minimaxai/minimax-m2.7",
-            "ministral-8b-2512",
-            "mistral-large-3:675b",
-            "mistral-large-latest",
-            "mistral-medium-latest",
-            "mistralai/mistral-large-3-675b-instruct-2512",
-            "moonshotai/kimi-k2.6",
-            "nvidia/nemotron-3-nano-30b-a3b",
-            "nvidia/nemotron-3-nano-30b-a3b:free",
-            "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
-            "nvidia/nemotron-3-super-120b-a12b",
-            "nvidia/nemotron-3-super-120b-a12b:free",
-            "nvidia/nemotron-nano-9b-v2:free",
-            "openai-fast",
-            "openai/gpt-4.1",
             "openai/gpt-oss-120b",
-            "openai/gpt-oss-120b:free",
-            "openai/gpt-oss-20b",
-            "openai/gpt-oss-20b:free",
-            "poolside/laguna-m.1:free",
-            "poolside/laguna-xs.2:free",
-            "qwen-3-235b-a22b-instruct-2507",
-            "qwen/qwen3-32b",
-            "qwen/qwen3-coder:free",
-            "qwen/qwen3-next-80b-a3b-instruct:free",
-            "qwen3-coder:480b",
-            "tencent/hy3-preview:free",
-            "z-ai/glm-4.5-air:free"
+            "qwen-3-235b-a22b-instruct-2507"
           ],
           "weight": 1.0
         }
@@ -785,43 +679,6 @@
       },
       "concurrency_and_buffer_size": {
         "concurrency": 2,
-        "buffer_size": 50
-      }
-    },
-    "api-airforce": {
-      "keys": [
-        {
-          "name": "api_airforce_api_key-primary",
-          "value": "env.API_AIRFORCE_API_KEY",
-          "models": [
-            "codestral-latest",
-            "mistral-medium-latest",
-            "qwen3-30b-a3b-fp8",
-            "minimax-m2.5",
-            "ministral-8b-latest"
-          ],
-          "weight": 1.0
-        }
-      ],
-      "network_config": {
-        "base_url": "https://api.airforce",
-        "default_request_timeout_in_seconds": 120,
-        "max_retries": 2
-      },
-      "custom_provider_config": {
-        "base_provider_type": "openai",
-        "request_path_overrides": {
-          "chat_completion": "/v1/chat/completions",
-          "chat_completion_stream": "/v1/chat/completions"
-        },
-        "allowed_requests": {
-          "chat_completion": true,
-          "chat_completion_stream": true,
-          "list_models": false
-        }
-      },
-      "concurrency_and_buffer_size": {
-        "concurrency": 1,
         "buffer_size": 50
       }
     },
