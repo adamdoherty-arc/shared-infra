@@ -54,3 +54,6 @@ __pycache__/
 
 # autoheal runtime alert trail (written by bifrost-autoheal)
 bifrost/autoheal.log
+
+# Migration-21 pre-upgrade SQLite backups (5GB+); keep local, never commit
+bifrost/pre-v2-*/
