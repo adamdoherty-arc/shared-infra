@@ -56,6 +56,20 @@ RESTART_COOLDOWN_S = int(os.environ.get("RESTART_COOLDOWN_S", "600"))
 # doesn't over-fire, but a genuinely stuck/unreachable vllm-chat still gets
 # healed instead of silently sitting dark forever.
 UNREACHABLE_SAMPLES = int(os.environ.get("UNREACHABLE_SAMPLES", str(WEDGE_N * 2)))
+# 2026-09-07 -- DECODE-STARVED wedge, a second pathology the hard-stall branch
+# above cannot see. Measured live on qwen38-chat: GPU pinned at 99%,
+# Running 2-9 / Waiting 21 / Deferred 15, generation throughput 0.25 tok/s
+# (5 tokens per 20s) while PREFILL kept moving at ~32 tok/s. `progressed` ORs
+# prompt-token movement, so every poll read as forward progress and the flat
+# counter reset before it could ever reach WEDGE_N -- the monitor logged
+# "cleared after 1-3 stall sample(s)" for hours while every ADA caller timed
+# out and the fabric reported local_saturated all day. Prefill churn with no
+# decode is not forward progress for any caller. This counter watches the
+# GENERATION rate alone, with a floor two orders of magnitude below healthy
+# (a 27B model on this box runs 30-60 tok/s) and twice the confirmation
+# window of the hard-stall branch, so a genuinely long prefill cannot trip it.
+DECODE_MIN_TOKENS_PER_S = float(os.environ.get("DECODE_MIN_TOKENS_PER_S", "1.0"))
+DECODE_STARVED_SAMPLES = int(os.environ.get("DECODE_STARVED_SAMPLES", str(WEDGE_N * 2)))
 # 2026-08-06 ROOT-CAUSE FIX — the unreachable branch was killing vllm-chat MID
 # COLD-START, in a self-sustaining loop. Numbers: UNREACHABLE_SAMPLES*POLL_S =
 # 8*30s = 4 min to fire, but a cold start of Qwen3.6-27B-AWQ-INT4 takes ~9 min
@@ -329,6 +343,7 @@ def main() -> None:
     last_gen: float | None = None
     last_prompt: float | None = None
     flat = 0
+    decode_starved = 0
     unreachable = 0
     last_restart = 0.0
     epoch = time.time()  # (re)start grace anchor
@@ -350,6 +365,21 @@ def main() -> None:
                 if flat:
                     log(f"cleared after {flat} stall sample(s): running={running:.0f} progressed={progressed}")
                 flat = 0
+            if last_gen is not None and running > 0:
+                gen_rate = (gen - last_gen) / POLL_S
+                if gen_rate < DECODE_MIN_TOKENS_PER_S:
+                    decode_starved += 1
+                    log(f"decode-starved sample {decode_starved}/{DECODE_STARVED_SAMPLES}: "
+                        f"running={running:.0f} gen_rate={gen_rate:.2f}/s "
+                        f"(floor {DECODE_MIN_TOKENS_PER_S}/s)")
+                else:
+                    if decode_starved:
+                        log(f"decode recovered after {decode_starved} sample(s): "
+                            f"gen_rate={gen_rate:.2f}/s")
+                    decode_starved = 0
+            elif running <= 0:
+                decode_starved = 0
+
             if unreachable:
                 log(f"metrics reachable again after {unreachable} unreachable poll(s)")
                 unreachable = 0
@@ -364,7 +394,7 @@ def main() -> None:
             # cooldown-related blockage debuggable from the log alone.
             since_epoch = now - epoch
             since_last_restart = now - last_restart
-            gate_flat = flat >= WEDGE_N
+            gate_flat = flat >= WEDGE_N or decode_starved >= DECODE_STARVED_SAMPLES
             gate_grace = since_epoch > GRACE_S
             gate_cooldown = since_last_restart > RESTART_COOLDOWN_S
             if gate_flat:
@@ -375,8 +405,13 @@ def main() -> None:
                     f"({'OPEN' if gate_cooldown else 'CLOSED'})"
                 )
             if gate_flat and gate_grace and gate_cooldown:
-                log(f"WEDGE DETECTED: {WEDGE_N} consecutive polls with requests running and "
-                    f"zero token progress -> restarting {TARGET}")
+                kind = (
+                    f"{WEDGE_N} consecutive polls with requests running and zero token progress"
+                    if flat >= WEDGE_N
+                    else f"{decode_starved} consecutive polls with requests running and "
+                         f"generation below {DECODE_MIN_TOKENS_PER_S} tok/s"
+                )
+                log(f"WEDGE DETECTED: {kind} -> restarting {TARGET}")
                 capture_pyspy_dump(TARGET)  # stack the frozen EngineCore before we wipe it
                 try:
                     status = docker_restart(TARGET)
@@ -385,6 +420,7 @@ def main() -> None:
                     log(f"restart FAILED: {e!r}")
                 last_restart = now
                 flat = 0
+                decode_starved = 0
                 last_gen = last_prompt = None
                 epoch = now  # re-grace after restart so the reload doesn't read as a wedge
         except Exception as e:  # noqa: BLE001 - metrics unreachable = loading/down (that is /health's job)
