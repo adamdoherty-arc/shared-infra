@@ -70,17 +70,19 @@ UNREACHABLE_SAMPLES = int(os.environ.get("UNREACHABLE_SAMPLES", str(WEDGE_N * 2)
 # window of the hard-stall branch, so a genuinely long prefill cannot trip it.
 DECODE_MIN_TOKENS_PER_S = float(os.environ.get("DECODE_MIN_TOKENS_PER_S", "1.0"))
 DECODE_STARVED_SAMPLES = int(os.environ.get("DECODE_STARVED_SAMPLES", str(WEDGE_N * 2)))
-# 2026-09-07 -- CO-TENANT escalation. The decode-starved wedge above was NOT
-# in the target's own process state: a full restart of qwen38-chat left it at
-# 0.3 tok/s, and only restarting the co-tenant vllm-embed fixed it. vllm-embed
-# had held the GPU at 99% utilization for ~47 hours on a busy-wait kernel --
-# 170W on a 500W card with 4% memory-controller activity, the signature of a
-# spin, not real work -- while still answering its own /v1/embeddings requests
-# normally, so nothing watching the embed engine could see it. Restarting it
-# took the GPU 99% -> 2% and the chat engine 0.25 tok/s -> 69.8 tok/s with the
-# whole 21-request backlog draining. So: if a decode-starved wedge recurs
-# after we already restarted the target, the target was never the problem --
-# escalate to the co-tenants sharing its GPU.
+# 2026-09-07 -- CO-TENANT escalation. A decode-starved wedge is not always in
+# the target's own process state: a full restart of qwen38-chat left it at
+# 0.3 tok/s with the GPU still pinned at 99% and only 170W on a 500W card at
+# 4% memory-controller activity -- the signature of a spin, not real work.
+# Restarting the co-tenant vllm-embed was followed by GPU 99% -> 2% and the
+# chat engine 0.25 -> 69.8 tok/s with a 21-request backlog draining to zero.
+# ATTRIBUTION IS UNPROVEN: a second trial restarted vllm-embed while the chat
+# engine was mid-wedge and the GPU stayed at 100%, so the first recovery may
+# have been the chat restart settling rather than the embed restart. What IS
+# established is that restarting the target alone did not recover it. So this
+# escalation is a second-stage heal on a recurrence, not a claim about which
+# container is at fault -- and if it starts firing regularly, that recurrence
+# rate is itself the evidence needed to find the real spinner.
 CO_TENANTS = [c for c in os.environ.get("CO_TENANT_CONTAINERS", "vllm-embed").split(",") if c.strip()]
 # 2026-08-06 ROOT-CAUSE FIX — the unreachable branch was killing vllm-chat MID
 # COLD-START, in a self-sustaining loop. Numbers: UNREACHABLE_SAMPLES*POLL_S =
