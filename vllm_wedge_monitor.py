@@ -70,6 +70,18 @@ UNREACHABLE_SAMPLES = int(os.environ.get("UNREACHABLE_SAMPLES", str(WEDGE_N * 2)
 # window of the hard-stall branch, so a genuinely long prefill cannot trip it.
 DECODE_MIN_TOKENS_PER_S = float(os.environ.get("DECODE_MIN_TOKENS_PER_S", "1.0"))
 DECODE_STARVED_SAMPLES = int(os.environ.get("DECODE_STARVED_SAMPLES", str(WEDGE_N * 2)))
+# 2026-09-07 -- CO-TENANT escalation. The decode-starved wedge above was NOT
+# in the target's own process state: a full restart of qwen38-chat left it at
+# 0.3 tok/s, and only restarting the co-tenant vllm-embed fixed it. vllm-embed
+# had held the GPU at 99% utilization for ~47 hours on a busy-wait kernel --
+# 170W on a 500W card with 4% memory-controller activity, the signature of a
+# spin, not real work -- while still answering its own /v1/embeddings requests
+# normally, so nothing watching the embed engine could see it. Restarting it
+# took the GPU 99% -> 2% and the chat engine 0.25 tok/s -> 69.8 tok/s with the
+# whole 21-request backlog draining. So: if a decode-starved wedge recurs
+# after we already restarted the target, the target was never the problem --
+# escalate to the co-tenants sharing its GPU.
+CO_TENANTS = [c for c in os.environ.get("CO_TENANT_CONTAINERS", "vllm-embed").split(",") if c.strip()]
 # 2026-08-06 ROOT-CAUSE FIX — the unreachable branch was killing vllm-chat MID
 # COLD-START, in a self-sustaining loop. Numbers: UNREACHABLE_SAMPLES*POLL_S =
 # 8*30s = 4 min to fire, but a cold start of Qwen3.6-27B-AWQ-INT4 takes ~9 min
@@ -344,6 +356,7 @@ def main() -> None:
     last_prompt: float | None = None
     flat = 0
     decode_starved = 0
+    decode_restarts = 0
     unreachable = 0
     last_restart = 0.0
     epoch = time.time()  # (re)start grace anchor
@@ -411,13 +424,29 @@ def main() -> None:
                     else f"{decode_starved} consecutive polls with requests running and "
                          f"generation below {DECODE_MIN_TOKENS_PER_S} tok/s"
                 )
-                log(f"WEDGE DETECTED: {kind} -> restarting {TARGET}")
+                decode_wedge = flat < WEDGE_N
+                escalate = decode_wedge and decode_restarts >= 1
+                log(f"WEDGE DETECTED: {kind} -> restarting {TARGET}"
+                    + (f" AND co-tenants {CO_TENANTS} (target restart did not help)"
+                       if escalate else ""))
                 capture_pyspy_dump(TARGET)  # stack the frozen EngineCore before we wipe it
                 try:
                     status = docker_restart(TARGET)
                     log(f"restart {TARGET} -> HTTP {status}")
                 except Exception as e:  # noqa: BLE001
                     log(f"restart FAILED: {e!r}")
+                if escalate:
+                    for tenant in CO_TENANTS:
+                        try:
+                            status = docker_restart(tenant)
+                            log(f"restart co-tenant {tenant} -> HTTP {status}")
+                        except Exception as e:  # noqa: BLE001
+                            log(f"restart co-tenant {tenant} FAILED: {e!r}")
+                    decode_restarts = 0
+                elif decode_wedge:
+                    decode_restarts += 1
+                else:
+                    decode_restarts = 0
                 last_restart = now
                 flat = 0
                 decode_starved = 0
