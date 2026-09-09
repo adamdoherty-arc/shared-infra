@@ -1171,23 +1171,34 @@ services:
       # dominant shape is a long stable system prompt + short tail, and dead
       # prefix caching was Pass-8 motivation #1.
       #
-      # MAX_SEQS 32 -> 16 (2026-09-09), from this engine's OWN logs. Aggregate
-      # generation throughput vs resident requests, medians over 60m:
-      #     Running=15 -> 222 tok/s aggregate / 14.9 per stream
-      #     Running=17 -> 222 / 13.1
-      #     Running=20 ->  81 /  4.0
-      #     Running=32 -> 165 /  5.2
-      # Throughput PEAKS near 15-17 and DEGRADES past 20, so 32 was strictly
-      # worse on BOTH axes: ~35% less total throughput AND 2.6x slower per
-      # stream. It ran pinned at Running:32/Waiting:0 continuously, giving
-      # vllm-local a 44s p50 (128s in one window) against groq at 571ms. KV was
-      # only 38-48% used, so this was never a memory ceiling -- purely
-      # compute-sharing past the batch knee. Past 16 the engine now QUEUES
-      # (Waiting>0) instead of admitting and slowing everyone; the queue drains
-      # faster because aggregate throughput is higher.
+      # MAX_SEQS stays 32, with Bifrost concurrency to match.
+      #
+      # 2026-09-09: 16 was tried and REVERTED within the hour -- it made things
+      # materially worse. ADA-side llm_call_log for vllm-local, same query
+      # either side of the change: MAX_SEQS=32 gave n=855 / 60% ok / p50 40.0s;
+      # MAX_SEQS=16 gave n=67 / 34% ok / p50 94.3s. Latency 2.4x worse, success
+      # rate down 26 points.
+      #
+      # The reasoning that motivated 16 was a correlational artifact, recorded
+      # here so it is not repeated: sampling this engine's own log lines pairs
+      # (Running, aggregate tok/s) and shows aggregate PEAKING near Running=15-17
+      # and falling past 20. That is not a concurrency-efficiency curve -- the
+      # low-Running samples coincide with lighter work (short prompts, short
+      # generations), so the curve measures workload mix, not batch efficiency.
+      # vLLM's decode throughput rises with batch size; halving max-num-seqs
+      # halves the decode batch and simply moves the contention into a queue
+      # (Waiting went 0 -> median 4 / max 25) without making any request faster.
+      #
+      # The real suspect for the "prompt 1137 tok/s while decode 8-12 tok/s"
+      # collapse is prefill starving decode: batch/start_qwen.sh hardcodes
+      # --max-num-batched-tokens 2048 with no env hook, so one arriving long
+      # prompt can consume an entire scheduler step's budget while every decode
+      # slot needs just 1 token. Test that via EXTRA_ARGS (last occurrence wins)
+      # against a HELD-CONSTANT workload -- not against naturally-varying load,
+      # which is what produced the false curve above.
       KV: fp8
       MAX_LEN: "65536"
-      MAX_SEQS: "16"
+      MAX_SEQS: "32"
       GPU_UTIL: "0.78"
       PREFIX_CACHE: "1"
       # Platform-wide thinking-off (same contract the Nemotron block enforced):
