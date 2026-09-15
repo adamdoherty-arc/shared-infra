@@ -1,0 +1,4 @@
+#!/bin/sh
+# shared-infra pre-commit: secrets scan (installed 2026-09-15, source scripts/pre_commit_secrets.py)
+python "$(git rev-parse --show-toplevel)/scripts/pre_commit_secrets.py" || exit 1
+python "$(git rev-parse --show-toplevel)/scripts/export_config_snapshot.py" --check || { echo "run: python scripts/export_config_snapshot.py && git add bifrost/config.snapshot.redacted.json"; exit 1; }

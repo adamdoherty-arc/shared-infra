@@ -1,0 +1,811 @@
+{
+  "_generated_by": "scripts/export_config_snapshot.py",
+  "_note": "Redacted view of bifrost/config.json + config.db. No key material. Regenerate after any config change.",
+  "providers": {
+    "vllm-local": {
+      "base_url": "http://qwen38-chat:18020",
+      "list_models": null,
+      "keys": [
+        {
+          "name": "local-noauth",
+          "value": "<literal>",
+          "models": [
+            "Qwen3-32B-AWQ",
+            "Qwen3.5-35B-A3B",
+            "Qwen3.6-27B",
+            "Qwen3.6-35B-A3B",
+            "gpt-oss-20b",
+            "local-chat",
+            "nemotron-3.5-lightning",
+            "qwen3-chat",
+            "qwen3.8-27b"
+          ],
+          "aliases": {
+            "Qwen3-32B-AWQ": "qwen3.8-27b",
+            "Qwen3.5-35B-A3B": "qwen3.8-27b",
+            "Qwen3.6-27B": "qwen3.8-27b",
+            "Qwen3.6-35B-A3B": "qwen3.8-27b",
+            "gpt-oss-20b": "qwen3.8-27b",
+            "local-chat": "qwen3.8-27b",
+            "nemotron-3.5-lightning": "qwen3.8-27b",
+            "qwen3-chat": "qwen3.8-27b"
+          },
+          "weight": 1.0
+        }
+      ],
+      "concurrency_and_buffer_size": {
+        "concurrency": 32,
+        "buffer_size": 256
+      }
+    },
+    "embed-local": {
+      "base_url": "http://vllm-embed:8001",
+      "list_models": null,
+      "keys": [
+        {
+          "name": "embed-noauth",
+          "value": "<literal>",
+          "models": [
+            "Qwen/Qwen3-Embedding-0.6B"
+          ],
+          "aliases": {},
+          "weight": 1.0
+        }
+      ],
+      "concurrency_and_buffer_size": {
+        "concurrency": 8,
+        "buffer_size": 200
+      }
+    },
+    "nvidia-nim": {
+      "base_url": "https://integrate.api.nvidia.com",
+      "list_models": null,
+      "keys": [
+        {
+          "name": "nvidia-nim-secondary",
+          "value": "env.NV_API_KEY_2",
+          "models": [
+            "deepseek-ai/deepseek-v4-flash-0731",
+            "meta/llama-3.2-11b-vision-instruct",
+            "meta/llama-3.2-90b-vision-instruct",
+            "mistralai/mistral-nemotron",
+            "moonshotai/kimi-k3",
+            "nvidia/ising-calibration-1.5-31b",
+            "nvidia/llama-3.1-nemoguard-8b-content-safety",
+            "nvidia/llama-3.1-nemotron-safety-guard-8b-v3",
+            "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
+            "nvidia/nemotron-3-super-120b-a12b",
+            "nvidia/nemotron-3-ultra-550b-a55b",
+            "nvidia/nemotron-3.5-content-safety",
+            "nvidia/nemotron-3.5-lightning-30b-a3b",
+            "nvidia/nemotron-parse-2.0",
+            "openai/gpt-oss-20b",
+            "poolside/laguna-xs-2.1"
+          ],
+          "aliases": {
+            "deepseek-v4-flash": "deepseek-ai/deepseek-v4-flash-0731",
+            "nemoguard-safety": "nvidia/llama-3.1-nemoguard-8b-content-safety",
+            "nemotron-lightning": "nvidia/nemotron-3.5-lightning-30b-a3b",
+            "nemotron-safety": "nvidia/nemotron-3.5-content-safety"
+          },
+          "weight": 1.0
+        },
+        {
+          "name": "nvidia-nim-primary",
+          "value": "env.NV_API_KEY",
+          "models": [
+            "deepseek-ai/deepseek-v4-flash-0731",
+            "meta/llama-3.2-11b-vision-instruct",
+            "meta/llama-3.2-90b-vision-instruct",
+            "mistralai/mistral-nemotron",
+            "moonshotai/kimi-k3",
+            "nvidia/ising-calibration-1.5-31b",
+            "nvidia/llama-3.1-nemoguard-8b-content-safety",
+            "nvidia/llama-3.1-nemotron-safety-guard-8b-v3",
+            "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
+            "nvidia/nemotron-3-super-120b-a12b",
+            "nvidia/nemotron-3-ultra-550b-a55b",
+            "nvidia/nemotron-3.5-content-safety",
+            "nvidia/nemotron-3.5-lightning-30b-a3b",
+            "nvidia/nemotron-parse-2.0",
+            "openai/gpt-oss-20b",
+            "poolside/laguna-xs-2.1"
+          ],
+          "aliases": {
+            "deepseek-v4": "deepseek-ai/deepseek-v4-flash",
+            "deepseek-v4-flash": "deepseek-ai/deepseek-v4-flash-0731",
+            "glm-5.1": "z-ai/glm-5.2",
+            "glm-5.2": "z-ai/glm-5.2",
+            "llama-90b-vision": "meta/llama-3.2-90b-vision-instruct",
+            "minimax-m2.7": "minimaxai/minimax-m2.7",
+            "minimax-m3": "minimaxai/minimax-m3",
+            "mistral-large-3": "mistralai/mistral-large-3-675b-instruct-2512",
+            "nemoguard-safety": "nvidia/llama-3.1-nemoguard-8b-content-safety",
+            "nemotron-lightning": "nvidia/nemotron-3.5-lightning-30b-a3b",
+            "nemotron-safety": "nvidia/nemotron-3.5-content-safety",
+            "nemotron-super-120b": "nvidia/nemotron-3-super-120b-a12b",
+            "nemotron-super-49b": "nvidia/llama-3.3-nemotron-super-49b-v1.5",
+            "nemotron-ultra-550b": "nvidia/nemotron-3-ultra-550b-a55b",
+            "nemotron-vl": "nvidia/nemotron-nano-12b-v2-vl",
+            "qwen-122b": "qwen/qwen3.5-122b-a10b",
+            "qwen-397b": "qwen/qwen3.5-397b-a17b",
+            "qwen3-next-80b": "qwen/qwen3-next-80b-a3b-instruct"
+          },
+          "weight": 1.0
+        },
+        {
+          "name": "nvidia-nim-tertiary",
+          "value": "env.NV_API_KEY_3",
+          "models": [
+            "deepseek-ai/deepseek-v4-flash-0731",
+            "meta/llama-3.2-11b-vision-instruct",
+            "meta/llama-3.2-90b-vision-instruct",
+            "mistralai/mistral-nemotron",
+            "moonshotai/kimi-k3",
+            "nvidia/ising-calibration-1.5-31b",
+            "nvidia/llama-3.1-nemoguard-8b-content-safety",
+            "nvidia/llama-3.1-nemotron-safety-guard-8b-v3",
+            "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
+            "nvidia/nemotron-3-super-120b-a12b",
+            "nvidia/nemotron-3-ultra-550b-a55b",
+            "nvidia/nemotron-3.5-content-safety",
+            "nvidia/nemotron-3.5-lightning-30b-a3b",
+            "nvidia/nemotron-parse-2.0",
+            "openai/gpt-oss-20b",
+            "poolside/laguna-xs-2.1"
+          ],
+          "aliases": {
+            "deepseek-v4-flash": "deepseek-ai/deepseek-v4-flash-0731",
+            "nemoguard-safety": "nvidia/llama-3.1-nemoguard-8b-content-safety",
+            "nemotron-lightning": "nvidia/nemotron-3.5-lightning-30b-a3b",
+            "nemotron-safety": "nvidia/nemotron-3.5-content-safety"
+          },
+          "weight": 1.0
+        }
+      ],
+      "concurrency_and_buffer_size": {
+        "concurrency": 16,
+        "buffer_size": 400
+      }
+    },
+    "openrouter": {
+      "base_url": "https://openrouter.ai/api",
+      "list_models": null,
+      "keys": [
+        {
+          "name": "openrouter-primary",
+          "value": "env.OPENROUTER_API_KEY",
+          "models": [
+            "cohere/north-mini-code:free",
+            "deepseek/deepseek-v4-flash",
+            "deepseek/deepseek-v4-flash-0731",
+            "dots-studio/dots-3-note-preview:free",
+            "google/gemini-3.7-flash",
+            "google/gemma-4-26b-a4b-it:free",
+            "google/gemma-4-31b-it:free",
+            "inclusionai/ling-3.0-flash",
+            "inclusionai/ling-3.0-flash-fin:free",
+            "inclusionai/ling-3.0-flash-sante:free",
+            "inclusionai/ling-3.0-flash-vl:free",
+            "inclusionai/ling-3.0-tiny",
+            "minimax/minimax-m3",
+            "moonshotai/kimi-k2.5",
+            "moonshotai/kimi-k2.6",
+            "moonshotai/kimi-k3",
+            "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
+            "nvidia/nemotron-3-super-120b-a12b:free",
+            "nvidia/nemotron-3-ultra-550b-a55b:free",
+            "nvidia/nemotron-3.5-content-safety:free",
+            "nvidia/nemotron-3.5-lightning:free",
+            "openrouter/free",
+            "openrouter/owl-alpha",
+            "poolside/laguna-s-2.1:free",
+            "poolside/laguna-xs-2.1:free",
+            "qwen/qwen3.8-27b",
+            "stealth/ox-alpha",
+            "z-ai/glm-5.2"
+          ],
+          "aliases": {
+            "deepseek-v4-flash-or": "deepseek/deepseek-v4-flash",
+            "dots-note-preview": "dots-studio/dots-3-note-preview:free",
+            "glm-5.2-or-free": "z-ai/glm-5.2:free",
+            "glm-5.2-paid": "z-ai/glm-5.2",
+            "gpt-oss-120b-free": "openai/gpt-oss-120b:free",
+            "hermes-405b-free": "nousresearch/hermes-3-llama-3.1-405b:free",
+            "hy3-free": "tencent/hy3:free",
+            "kimi-k2.5": "moonshotai/kimi-k2.5",
+            "kimi-k2.6-or": "moonshotai/kimi-k2.6",
+            "kimi-k3": "moonshotai/kimi-k3",
+            "ling-flash-fin": "inclusionai/ling-3.0-flash-fin:free",
+            "ling-flash-sante": "inclusionai/ling-3.0-flash-sante:free",
+            "llama-3.3-70b-free": "meta-llama/llama-3.3-70b-instruct:free",
+            "minimax-m3": "minimax/minimax-m3",
+            "minimax-m3-free": "minimax/minimax-m3:free",
+            "nemotron-lightning-free": "nvidia/nemotron-3.5-lightning:free",
+            "nemotron-super-free": "nvidia/nemotron-3-super-120b-a12b:free",
+            "nemotron-ultra-free": "nvidia/nemotron-3-ultra-550b-a55b:free",
+            "north-code-free": "cohere/north-mini-code:free",
+            "or-auto-free": "openrouter/free",
+            "ox-alpha": "stealth/ox-alpha",
+            "qwen3-next-80b-free": "qwen/qwen3-next-80b-a3b-instruct:free",
+            "qwen3.8-27b": "qwen/qwen3.8-27b"
+          },
+          "weight": 1.0
+        }
+      ],
+      "concurrency_and_buffer_size": {
+        "concurrency": 16,
+        "buffer_size": 400
+      }
+    },
+    "hf-router": {
+      "base_url": "https://router.huggingface.co",
+      "list_models": null,
+      "keys": [
+        {
+          "name": "hf-router-primary",
+          "value": "env.HF_TOKEN",
+          "models": [
+            "MiniMaxAI/MiniMax-M2.7",
+            "Qwen/Qwen3-Coder-480B-A35B-Instruct",
+            "Qwen/Qwen3-Coder-Next",
+            "Qwen/Qwen3.5-9B",
+            "Qwen/Qwen3.6-35B-A3B",
+            "deepseek-ai/DeepSeek-V4-Flash",
+            "google/gemma-4-31B-it",
+            "meta-llama/Llama-3.1-8B-Instruct",
+            "moonshotai/Kimi-K2.6",
+            "moonshotai/Kimi-K2.7-Code",
+            "openai/gpt-oss-120b",
+            "openai/gpt-oss-20b",
+            "zai-org/GLM-5.1"
+          ],
+          "aliases": {
+            "deepseek-v4-hf": "deepseek-ai/DeepSeek-V4-Flash",
+            "gemma-4-31b-hf": "google/gemma-4-31B-it",
+            "glm-5.1-hf": "zai-org/GLM-5.1",
+            "kimi-code-hf": "moonshotai/Kimi-K2.7-Code",
+            "kimi-k2.6-hf": "moonshotai/Kimi-K2.6",
+            "minimax-m2.7-hf": "MiniMaxAI/MiniMax-M2.7",
+            "qwen3-coder-480b-hf": "Qwen/Qwen3-Coder-480B-A35B-Instruct",
+            "qwen3-coder-hf": "Qwen/Qwen3-Coder-Next"
+          },
+          "weight": 1.0
+        }
+      ],
+      "concurrency_and_buffer_size": {
+        "concurrency": 8,
+        "buffer_size": 200
+      }
+    },
+    "groq": {
+      "base_url": "https://api.groq.com/openai",
+      "list_models": null,
+      "keys": [
+        {
+          "name": "groq-primary",
+          "value": "env.GROQ_API_KEY",
+          "models": [
+            "allam-2-7b",
+            "groq/compound",
+            "groq/compound-mini",
+            "llama-3.1-8b-instant",
+            "llama-3.3-70b-versatile",
+            "openai/gpt-oss-120b",
+            "openai/gpt-oss-20b",
+            "openai/gpt-oss-safeguard-20b",
+            "qwen/qwen3.6-27b",
+            "qwen/qwen3.8-27b"
+          ],
+          "aliases": {
+            "qwen3.6-groq": "qwen/qwen3.6-27b",
+            "qwen38-groq": "qwen/qwen3.8-27b"
+          },
+          "weight": 1.0
+        }
+      ],
+      "concurrency_and_buffer_size": {
+        "concurrency": 8,
+        "buffer_size": 200
+      }
+    },
+    "zai": {
+      "base_url": "https://api.z.ai",
+      "list_models": null,
+      "keys": [
+        {
+          "name": "zai-primary",
+          "value": "env.ZAI_API_KEY",
+          "models": [
+            "glm-4.5-flash"
+          ],
+          "aliases": {},
+          "weight": 1.0
+        }
+      ],
+      "concurrency_and_buffer_size": {
+        "concurrency": 4,
+        "buffer_size": 100
+      }
+    },
+    "freellmapi": {
+      "base_url": "http://shared-freellmapi:3001",
+      "list_models": null,
+      "keys": [
+        {
+          "name": "freellmapi-primary",
+          "value": "env.FREELLM_BEARER_TOKEN",
+          "models": [
+            "DeepSeek-V3.2",
+            "command-a-03-2025",
+            "command-r-plus-08-2024",
+            "deepseek-ai/deepseek-v4-pro",
+            "gemini-2.5-flash",
+            "gemini-2.5-flash-lite",
+            "gemini-3-flash-preview",
+            "gemini-3.1-flash-lite-preview",
+            "gemini-3.1-pro-preview",
+            "glm-4.5-flash",
+            "glm-4.7-flash",
+            "gpt-oss-120b",
+            "llama-3.1-8b-instant",
+            "llama-3.3-70b-versatile",
+            "meta-llama/llama-4-scout-17b-16e-instruct",
+            "openai/gpt-oss-120b",
+            "qwen-3-235b-a22b-instruct-2507"
+          ],
+          "aliases": {},
+          "weight": 1.0
+        }
+      ],
+      "concurrency_and_buffer_size": {
+        "concurrency": 8,
+        "buffer_size": 200
+      }
+    },
+    "sealion": {
+      "base_url": "https://api.sea-lion.ai",
+      "list_models": null,
+      "keys": [
+        {
+          "name": "sealion_api_key-primary",
+          "value": "env.SEALION_API_KEY",
+          "models": [
+            "aisingapore/Gemma-SEA-LION-v4-27B-IT",
+            "aisingapore/Llama-SEA-LION-v3-70B-IT",
+            "aisingapore/Qwen-SEA-LION-v4-32B-IT",
+            "aisingapore/Qwen-SEA-LION-v4.5-27B-IT"
+          ],
+          "aliases": {},
+          "weight": 1.0
+        }
+      ],
+      "concurrency_and_buffer_size": {
+        "concurrency": 2,
+        "buffer_size": 50
+      }
+    },
+    "aion": {
+      "base_url": "https://api.aionlabs.ai",
+      "list_models": null,
+      "keys": [
+        {
+          "name": "aion_api_key-primary",
+          "value": "env.AION_API_KEY",
+          "models": [
+            "aion-labs/aion-2.0",
+            "aion-labs/aion-2.5",
+            "aion-labs/aion-3.0",
+            "aion-labs/aion-3.0-mini",
+            "aion-labs/aion-rp-llama-3.1-8b"
+          ],
+          "aliases": {},
+          "weight": 1.0
+        }
+      ],
+      "concurrency_and_buffer_size": {
+        "concurrency": 2,
+        "buffer_size": 50
+      }
+    }
+  },
+  "disabled_providers": [
+    "anthropic",
+    "bazaarlink",
+    "cerebras",
+    "cloudflare-ai",
+    "cohere",
+    "gemini",
+    "groq",
+    "minimax",
+    "mistral",
+    "moonshot",
+    "moonshot-nim-compat",
+    "openrouter",
+    "ovhcloud",
+    "sambanova",
+    "siliconflow"
+  ],
+  "virtual_keys": [
+    {
+      "name": "a-finance-prod",
+      "id": "611ce8de-23c9-4dc9-a61f-dd9721a506a4",
+      "is_active": true,
+      "providers": [
+        {
+          "provider": "aion",
+          "allow_all_keys": true,
+          "allowed_models": 5
+        },
+        {
+          "provider": "embed-local",
+          "allow_all_keys": true,
+          "allowed_models": 1
+        },
+        {
+          "provider": "freellmapi",
+          "allow_all_keys": true,
+          "allowed_models": 17
+        },
+        {
+          "provider": "groq",
+          "allow_all_keys": true,
+          "allowed_models": 10
+        },
+        {
+          "provider": "hf-router",
+          "allow_all_keys": true,
+          "allowed_models": 13
+        },
+        {
+          "provider": "nvidia-nim",
+          "allow_all_keys": true,
+          "allowed_models": 16
+        },
+        {
+          "provider": "openrouter",
+          "allow_all_keys": true,
+          "allowed_models": 28
+        },
+        {
+          "provider": "sealion",
+          "allow_all_keys": true,
+          "allowed_models": 4
+        },
+        {
+          "provider": "vllm-local",
+          "allow_all_keys": true,
+          "allowed_models": 9
+        },
+        {
+          "provider": "zai",
+          "allow_all_keys": true,
+          "allowed_models": 1
+        }
+      ]
+    },
+    {
+      "name": "ada-prod",
+      "id": "390e12e3-78f6-4c78-8e62-309cf20e40c3",
+      "is_active": true,
+      "providers": [
+        {
+          "provider": "aion",
+          "allow_all_keys": true,
+          "allowed_models": 5
+        },
+        {
+          "provider": "embed-local",
+          "allow_all_keys": true,
+          "allowed_models": 1
+        },
+        {
+          "provider": "freellmapi",
+          "allow_all_keys": true,
+          "allowed_models": 17
+        },
+        {
+          "provider": "groq",
+          "allow_all_keys": true,
+          "allowed_models": 10
+        },
+        {
+          "provider": "hf-router",
+          "allow_all_keys": true,
+          "allowed_models": 13
+        },
+        {
+          "provider": "nvidia-nim",
+          "allow_all_keys": true,
+          "allowed_models": 16
+        },
+        {
+          "provider": "openrouter",
+          "allow_all_keys": true,
+          "allowed_models": 28
+        },
+        {
+          "provider": "sealion",
+          "allow_all_keys": true,
+          "allowed_models": 4
+        },
+        {
+          "provider": "vllm-local",
+          "allow_all_keys": true,
+          "allowed_models": 9
+        },
+        {
+          "provider": "zai",
+          "allow_all_keys": true,
+          "allowed_models": 1
+        }
+      ]
+    },
+    {
+      "name": "claude-code-local",
+      "id": "62f2d329-7f3a-4c02-877b-668cc99c129c",
+      "is_active": true,
+      "providers": [
+        {
+          "provider": "aion",
+          "allow_all_keys": true,
+          "allowed_models": 5
+        },
+        {
+          "provider": "embed-local",
+          "allow_all_keys": true,
+          "allowed_models": 1
+        },
+        {
+          "provider": "freellmapi",
+          "allow_all_keys": true,
+          "allowed_models": 17
+        },
+        {
+          "provider": "groq",
+          "allow_all_keys": true,
+          "allowed_models": 10
+        },
+        {
+          "provider": "hf-router",
+          "allow_all_keys": true,
+          "allowed_models": 13
+        },
+        {
+          "provider": "nvidia-nim",
+          "allow_all_keys": true,
+          "allowed_models": 16
+        },
+        {
+          "provider": "sealion",
+          "allow_all_keys": true,
+          "allowed_models": 4
+        },
+        {
+          "provider": "vllm-local",
+          "allow_all_keys": true,
+          "allowed_models": 9
+        },
+        {
+          "provider": "zai",
+          "allow_all_keys": true,
+          "allowed_models": 1
+        }
+      ]
+    },
+    {
+      "name": "fortressos-prod",
+      "id": "b47fe5e5-e832-44de-9c57-e0cd8faa1a0a",
+      "is_active": true,
+      "providers": [
+        {
+          "provider": "aion",
+          "allow_all_keys": true,
+          "allowed_models": 5
+        },
+        {
+          "provider": "embed-local",
+          "allow_all_keys": true,
+          "allowed_models": 1
+        },
+        {
+          "provider": "freellmapi",
+          "allow_all_keys": true,
+          "allowed_models": 17
+        },
+        {
+          "provider": "groq",
+          "allow_all_keys": true,
+          "allowed_models": 10
+        },
+        {
+          "provider": "hf-router",
+          "allow_all_keys": true,
+          "allowed_models": 13
+        },
+        {
+          "provider": "nvidia-nim",
+          "allow_all_keys": true,
+          "allowed_models": 16
+        },
+        {
+          "provider": "sealion",
+          "allow_all_keys": true,
+          "allowed_models": 4
+        },
+        {
+          "provider": "vllm-local",
+          "allow_all_keys": true,
+          "allowed_models": 9
+        },
+        {
+          "provider": "zai",
+          "allow_all_keys": true,
+          "allowed_models": 1
+        }
+      ]
+    },
+    {
+      "name": "hermes-prod",
+      "id": "70687f77-8d49-400a-9bae-652b83f816c7",
+      "is_active": true,
+      "providers": [
+        {
+          "provider": "aion",
+          "allow_all_keys": true,
+          "allowed_models": 5
+        },
+        {
+          "provider": "embed-local",
+          "allow_all_keys": true,
+          "allowed_models": 1
+        },
+        {
+          "provider": "freellmapi",
+          "allow_all_keys": true,
+          "allowed_models": 17
+        },
+        {
+          "provider": "groq",
+          "allow_all_keys": true,
+          "allowed_models": 10
+        },
+        {
+          "provider": "hf-router",
+          "allow_all_keys": true,
+          "allowed_models": 13
+        },
+        {
+          "provider": "nvidia-nim",
+          "allow_all_keys": true,
+          "allowed_models": 16
+        },
+        {
+          "provider": "sealion",
+          "allow_all_keys": true,
+          "allowed_models": 4
+        },
+        {
+          "provider": "vllm-local",
+          "allow_all_keys": true,
+          "allowed_models": 9
+        },
+        {
+          "provider": "zai",
+          "allow_all_keys": true,
+          "allowed_models": 1
+        }
+      ]
+    },
+    {
+      "name": "legion-prod",
+      "id": "3bdde932-6906-494a-84ea-29cba417f2de",
+      "is_active": true,
+      "providers": [
+        {
+          "provider": "aion",
+          "allow_all_keys": true,
+          "allowed_models": 5
+        },
+        {
+          "provider": "embed-local",
+          "allow_all_keys": true,
+          "allowed_models": 1
+        },
+        {
+          "provider": "freellmapi",
+          "allow_all_keys": true,
+          "allowed_models": 17
+        },
+        {
+          "provider": "groq",
+          "allow_all_keys": true,
+          "allowed_models": 10
+        },
+        {
+          "provider": "hf-router",
+          "allow_all_keys": true,
+          "allowed_models": 13
+        },
+        {
+          "provider": "nvidia-nim",
+          "allow_all_keys": true,
+          "allowed_models": 16
+        },
+        {
+          "provider": "sealion",
+          "allow_all_keys": true,
+          "allowed_models": 4
+        },
+        {
+          "provider": "vllm-local",
+          "allow_all_keys": true,
+          "allowed_models": 9
+        },
+        {
+          "provider": "zai",
+          "allow_all_keys": true,
+          "allowed_models": 1
+        }
+      ]
+    },
+    {
+      "name": "zero-prod",
+      "id": "b2adfad7-16df-4a89-a2c1-958657cd742a",
+      "is_active": true,
+      "providers": [
+        {
+          "provider": "aion",
+          "allow_all_keys": true,
+          "allowed_models": 5
+        },
+        {
+          "provider": "embed-local",
+          "allow_all_keys": true,
+          "allowed_models": 1
+        },
+        {
+          "provider": "freellmapi",
+          "allow_all_keys": true,
+          "allowed_models": 17
+        },
+        {
+          "provider": "groq",
+          "allow_all_keys": true,
+          "allowed_models": 10
+        },
+        {
+          "provider": "hf-router",
+          "allow_all_keys": true,
+          "allowed_models": 13
+        },
+        {
+          "provider": "nvidia-nim",
+          "allow_all_keys": true,
+          "allowed_models": 16
+        },
+        {
+          "provider": "sealion",
+          "allow_all_keys": true,
+          "allowed_models": 4
+        },
+        {
+          "provider": "vllm-local",
+          "allow_all_keys": true,
+          "allowed_models": 9
+        },
+        {
+          "provider": "zai",
+          "allow_all_keys": true,
+          "allowed_models": 1
+        }
+      ]
+    }
+  ],
+  "client": {
+    "_comment_drop_excess": "2026-08-10: false -> true. With false, a full provider buffer QUEUES instead of rejecting, so requests sat in Bifrost's buffer for hours (observed: 3.9h on /v1/chat/completions, 231 leaked CLOSE_WAIT sockets, 4300 open FDs). true makes an over-capacity lane return immediately so the caller's fallback chain cascades to a cloud provider. Nothing may queue unbounded.",
+    "drop_excess_requests": true,
+    "initial_pool_size": 100,
+    "enforce_auth_on_inference": true
+  }
+}

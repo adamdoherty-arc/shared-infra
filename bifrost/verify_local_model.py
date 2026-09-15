@@ -2,7 +2,32 @@
 import json, time, urllib.request
 
 GATEWAY = "http://localhost:4445/v1/chat/completions"
-VK = "sk-bf-2aec7863-1e4f-433c-8677-6919166737d1"
+import os as _os, sqlite3 as _sqlite3
+
+
+def _resolve_probe_vk() -> str:
+    """Bifrost virtual key for probes. Order: INFRA_PROBE_VK env, then the
+    `claude-code-local` / any active VK read from config.db. Never a literal
+    (the previous literal was a live production key committed to GitHub)."""
+    vk = _os.environ.get("INFRA_PROBE_VK", "").strip()
+    if vk:
+        return vk
+    db_path = _os.environ.get("BIFROST_CONFIG_DB", _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "config.db"))
+    try:
+        con = _sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        row = con.execute(
+            "SELECT value FROM governance_virtual_keys WHERE is_active=1 "
+            "ORDER BY CASE name WHEN 'claude-code-local' THEN 0 ELSE 1 END, name LIMIT 1"
+        ).fetchone()
+        con.close()
+        if row and row[0]:
+            return row[0]
+    except Exception as exc:  # noqa: BLE001
+        raise SystemExit(f"no INFRA_PROBE_VK set and config.db lookup failed: {exc}")
+    raise SystemExit("no INFRA_PROBE_VK set and no active virtual key found in config.db")
+
+
+VK = _resolve_probe_vk()
 
 def call(payload, timeout=180):
     req = urllib.request.Request(

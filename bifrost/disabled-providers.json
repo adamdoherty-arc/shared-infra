@@ -92,44 +92,36 @@
   ],
   "providers": {
     "moonshot": {
-      "_comment": "PARKED 2026-06-11 — was the only paid provider. Kimi K2.6 now routed free via nvidia-nim/moonshotai/kimi-k2.6. To restore: KIMI_API_KEY in shared-infra/.env + compose passthrough + this block into config.json + restart. NOTE: Moonshot rejects temperature!=1.0 on kimi-k2.6, and list_models is unsupported (one-shot benign startup error).",
       "keys": [
         {
           "name": "moonshot-primary",
-          "value": "env.KIMI_API_KEY",
+          "value": "env.MOONSHOT_API_KEY",
           "models": [
-            "kimi-k2.6",
             "kimi-k2.5",
-            "kimi-k2.6-thinking",
-            "moonshot-v1-32k",
-            "moonshot-v1-128k",
-            "moonshot-v1-8k-vision-preview",
-            "moonshot-v1-32k-vision-preview",
-            "moonshot-v1-128k-vision-preview"
+            "kimi-k2.6",
+            "kimi-k3"
           ],
-          "weight": 1.0,
-          "aliases": {
-            "kimi-k2.5": "kimi-k2.6",
-            "kimi-k2.6-thinking": "kimi-k2-thinking"
-          }
+          "weight": 1.0
         }
       ],
       "network_config": {
         "base_url": "https://api.moonshot.ai",
-        "default_request_timeout_in_seconds": 600,
+        "default_request_timeout_in_seconds": 120,
         "max_retries": 2
       },
       "custom_provider_config": {
         "base_provider_type": "openai",
         "allowed_requests": {
+          "list_models": false,
           "chat_completion": true,
           "chat_completion_stream": true
         }
       },
       "concurrency_and_buffer_size": {
-        "concurrency": 8,
-        "buffer_size": 200
-      }
+        "concurrency": 4,
+        "buffer_size": 100
+      },
+      "_comment": "parked 2026-09-15 Wave 0 (shared-infra control plane): MOONSHOT_API_KEY empty and not passed to container; 621/day failed. Re-enable only via infractl provider unpark after a passing confirm-probe."
     },
     "moonshot-nim-compat": {
       "_comment": "PARKED 2026-07-13 (Perf-503b-W3b) — NOT the same block as 'moonshot' above (that's the retired PAID api.moonshot.ai account). This was the free NIM-compat-shim provider named 'moonshot' in config.json from 2026-06-11 to 2026-07-13, routing legacy `moonshot/kimi-*` callers to NVIDIA NIM's moonshotai/kimi-k2.6. Parked because NVIDIA NIM now 404s that model with 'Function 23d4f03a-b8a6-4adb-a183-7daa083a09cc: Not found for account' on BOTH NV_API_KEY and NV_API_KEY_2 despite it still being listed in GET /v1/models — confirmed via direct curl to integrate.api.nvidia.com, bypassing Bifrost entirely, so this is an upstream NVIDIA catalog/serving-function bug, not a Bifrost or key problem. nvidia-nim/moonshotai/kimi-k2.6 itself was left ACTIVE in config.json's nvidia-nim provider block (NIM's own catalog still lists it — if NVIDIA redeploys the function it starts working again automatically with zero config change). TO RESTORE this compat-shim block: rename the key back to 'moonshot', copy it into config.json's `providers` object (in place of where it was, before `zai`), run sync_vk_allowlists.py, restart shared-bifrost. Re-verify first: curl -s -X POST https://integrate.api.nvidia.com/v1/chat/completions -H 'Authorization: Bearer '$NV_API_KEY -d '{\"model\":\"moonshotai/kimi-k2.6\",\"messages\":[{\"role\":\"user\",\"content\":\"ping\"}],\"max_tokens\":4}' — expect HTTP 200, not 404.",
@@ -327,35 +319,36 @@
       }
     },
     "cerebras": {
-      "_comment": "ACTIVE 2026-05-31 (moved to config.json). Free perpetual tier ~1M tokens/day, 30 RPM, 8K ctx, ~2000 tok/s. Key: https://cloud.cerebras.ai -> CEREBRAS_API_KEY. Real model IDs vary by account; this key exposes gpt-oss-120b + zai-glm-4.7 (verify via GET https://api.cerebras.ai/v1/models).",
       "keys": [
         {
           "name": "cerebras-primary",
           "value": "env.CEREBRAS_API_KEY",
           "models": [
             "gpt-oss-120b",
-            "zai-glm-4.7"
+            "zai-glm-4.7",
+            "gemma-4-31b"
           ],
           "weight": 1.0
         }
       ],
       "network_config": {
         "base_url": "https://api.cerebras.ai",
-        "default_request_timeout_in_seconds": 600,
+        "default_request_timeout_in_seconds": 120,
         "max_retries": 2
       },
       "custom_provider_config": {
         "base_provider_type": "openai",
         "allowed_requests": {
-          "list_models": true,
+          "list_models": false,
           "chat_completion": true,
           "chat_completion_stream": true
         }
       },
       "concurrency_and_buffer_size": {
-        "concurrency": 4,
-        "buffer_size": 100
-      }
+        "concurrency": 8,
+        "buffer_size": 200
+      },
+      "_comment": "parked 2026-09-15 Wave 0 (shared-infra control plane): direct probe 402 payment required; 655 err vs 0 ok/day. Re-enable only via infractl provider unpark after a passing confirm-probe."
     },
     "mistral": {
       "_comment": "Free Experiment tier ~1B tokens/month, ~1 req/s (needs phone verify). Key: https://console.mistral.ai -> MISTRAL_API_KEY. json_object + json_schema + tools; includes codestral.",
@@ -503,44 +496,118 @@
       }
     },
     "ovhcloud": {
-      "_comment": "STAGED 2026-07-23. FREE, NO KEY (anonymous tier) — but only 2 RPM per IP (verified live: 3 rapid calls -> 2x HTTP 429). EU-hosted (GDPR). Good models incl. a free VLM. Low-throughput spillover lane only. TO ENABLE: copy block to config.json (no env var / no signup needed); stop bifrost, sync_vk_allowlists.py, start. NOTE: value 'EMPTY' sends 'Authorization: Bearer EMPTY' — verify the anonymous tier accepts it (smoke-test after enabling); if it 401s, the anonymous tier needs the header omitted.",
       "keys": [
         {
           "name": "ovhcloud-anon",
           "value": "EMPTY",
           "models": [
-            "gpt-oss-120b",
-            "Qwen3.6-27B",
-            "Qwen3-32B",
+            "Mistral-7B-Instruct-v0.3",
+            "Mistral-Nemo-Instruct-2407",
             "Mistral-Small-3.2-24B-Instruct-2506",
-            "Meta-Llama-3_3-70B-Instruct",
-            "Qwen2.5-VL-72B-Instruct"
+            "Qwen2.5-VL-72B-Instruct",
+            "Qwen3-32B",
+            "Qwen3-Coder-30B-A3B-Instruct",
+            "Qwen3.5-397B-A17B",
+            "Qwen3.6-27B",
+            "gpt-oss-120b",
+            "gpt-oss-20b"
           ],
           "weight": 1.0,
           "aliases": {
-            "ovh-gpt-oss-120b": "gpt-oss-120b",
-            "ovh-qwen3.6-27b": "Qwen3.6-27B",
-            "ovh-vlm": "Qwen2.5-VL-72B-Instruct"
+            "qwen3-coder-30b": "Qwen3-Coder-30B-A3B-Instruct",
+            "qwen3.5-397b": "Qwen3.5-397B-A17B"
           }
         }
       ],
       "network_config": {
         "base_url": "https://oai.endpoints.kepler.ai.cloud.ovh.net",
         "default_request_timeout_in_seconds": 120,
-        "max_retries": 0
+        "max_retries": 2
       },
       "custom_provider_config": {
+        "is_key_less": true,
         "base_provider_type": "openai",
+        "request_path_overrides": {
+          "chat_completion": "/v1/chat/completions",
+          "chat_completion_stream": "/v1/chat/completions"
+        },
         "allowed_requests": {
-          "list_models": true,
           "chat_completion": true,
-          "chat_completion_stream": true
+          "chat_completion_stream": true,
+          "list_models": false
         }
       },
       "concurrency_and_buffer_size": {
-        "concurrency": 1,
-        "buffer_size": 20
-      }
+        "concurrency": 2,
+        "buffer_size": 50
+      },
+      "_comment": "parked 2026-09-15 Wave 0 (shared-infra control plane): direct probe 403 authentication failed (key expired); 620/day failed. Re-enable only via infractl provider unpark after a passing confirm-probe."
+    },
+    "siliconflow": {
+      "keys": [
+        {
+          "name": "siliconflow_api_key-primary",
+          "value": "env.SILICONFLOW_API_KEY",
+          "models": [],
+          "weight": 1.0
+        }
+      ],
+      "network_config": {
+        "base_url": "https://api.siliconflow.com",
+        "default_request_timeout_in_seconds": 120,
+        "max_retries": 2
+      },
+      "custom_provider_config": {
+        "base_provider_type": "openai",
+        "request_path_overrides": {
+          "chat_completion": "/v1/chat/completions",
+          "chat_completion_stream": "/v1/chat/completions"
+        },
+        "allowed_requests": {
+          "chat_completion": true,
+          "chat_completion_stream": true,
+          "list_models": false
+        }
+      },
+      "concurrency_and_buffer_size": {
+        "concurrency": 2,
+        "buffer_size": 50
+      },
+      "_comment": "parked 2026-09-15 Wave 0 (shared-infra control plane): zero models registered; 622 calls/day all failed. Re-enable only via infractl provider unpark after a passing confirm-probe."
+    },
+    "bazaarlink": {
+      "keys": [
+        {
+          "name": "bazaarlink_api_key-primary",
+          "value": "env.BAZAARLINK_API_KEY",
+          "models": [
+            "deepseek/deepseek-v4-flash:free"
+          ],
+          "weight": 1.0
+        }
+      ],
+      "network_config": {
+        "base_url": "https://bazaarlink.ai",
+        "default_request_timeout_in_seconds": 120,
+        "max_retries": 2
+      },
+      "custom_provider_config": {
+        "base_provider_type": "openai",
+        "request_path_overrides": {
+          "chat_completion": "/api/v1/chat/completions",
+          "chat_completion_stream": "/api/v1/chat/completions"
+        },
+        "allowed_requests": {
+          "chat_completion": true,
+          "chat_completion_stream": true,
+          "list_models": false
+        }
+      },
+      "concurrency_and_buffer_size": {
+        "concurrency": 2,
+        "buffer_size": 50
+      },
+      "_comment": "parked 2026-09-15 Wave 0 (shared-infra control plane): direct probe 404 only registered model gone; 604/day failed. Re-enable only via infractl provider unpark after a passing confirm-probe."
     }
   }
 }

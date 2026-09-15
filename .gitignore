@@ -57,3 +57,19 @@ bifrost/autoheal.log
 
 # Migration-21 pre-upgrade SQLite backups (5GB+); keep local, never commit
 bifrost/pre-v2-*/
+
+# 2026-09-15 (shared-infra control plane, Wave 0): config.db is the live runtime
+# SQLite holding every virtual-key VALUE in plaintext -- it was tracked for 4 months
+# and committed a live key to GitHub. Never again. The reviewable history of the
+# routing config is bifrost/config.snapshot.redacted.json (rendered by
+# scripts/export_config_snapshot.py; no key material).
+bifrost/config.db
+bifrost/.infractl.lock
+# infractl runtime state, relocated nssm output, local venvs
+state/
+.runtime/
+.venv/
+
+# live nssm output until scripts/nssm-fix-logs.ps1 relocates it (elevated)
+nssm-stdout.log
+nssm-stderr.log
