@@ -186,14 +186,23 @@ services:
       EXPORTER_STATE_DIR: "/state"
       EXPORTER_INTERVAL_S: "15"
       EXPORTER_PORT: "9100"
-      # Active lane prober (2026-06-20): actively pings each provider/model
-      # lane through the gateway and emits bifrost_lane_up so a silently-dead
-      # lane (expired key, wedged pool, delisted model) becomes alertable.
-      # Reaches bifrost by service name; VK auto-read from config.db (no secret
-      # here). Set BIFROST_LANE_PROBE_ENABLED=0 to disable.
+      # Active lane prober (2026-06-20, config-derived 2026-09-15): probes one
+      # representative model per provider that is ACTIVE in config.json and
+      # allowed for the probe VK, emitting bifrost_lane_up so a silently-dead
+      # lane (expired key, wedged pool, delisted model) becomes alertable and a
+      # parked provider never alerts. The derived lane list is written to
+      # /state/probe_lanes.json. Set BIFROST_LANE_PROBE_ENABLED=0 to disable.
       BIFROST_LANE_PROBE_ENABLED: "1"
       BIFROST_PROBE_BASE: "http://shared-bifrost:8080"
-      BIFROST_PROBE_TIMEOUT_S: "15"
+      BIFROST_CONFIG_JSON: "/data/config.json"
+      # The claude-code-local VK (INFRA_PROBE_VK in .env); falls back to the
+      # first active sk-bf- key in config.db when unset.
+      BIFROST_PROBE_VK: "${INFRA_PROBE_VK:-}"
+      # zai/glm-4.5-flash needs ~32 s for a 4-token answer; local lanes get the
+      # gateway's own 120 s budget so saturation reads as slow, not down.
+      BIFROST_PROBE_TIMEOUT_S: "60"
+      BIFROST_PROBE_TIMEOUT_LOCAL_S: "120"
+      BIFROST_PROBE_CRITICAL_PROVIDERS: "vllm-local,embed-local,nvidia-nim,groq"
     volumes:
       # Read-only mount of the bifrost data directory so the exporter can
       # query logs.db + config.db without holding write locks on bifrost.

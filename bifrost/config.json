@@ -353,17 +353,13 @@
             "allam-2-7b",
             "groq/compound",
             "groq/compound-mini",
-            "llama-3.1-8b-instant",
-            "llama-3.3-70b-versatile",
             "openai/gpt-oss-120b",
             "openai/gpt-oss-20b",
             "openai/gpt-oss-safeguard-20b",
-            "qwen/qwen3.6-27b",
             "qwen/qwen3.8-27b"
           ],
           "weight": 1.0,
           "aliases": {
-            "qwen3.6-groq": "qwen/qwen3.6-27b",
             "qwen38-groq": "qwen/qwen3.8-27b"
           }
         }
@@ -428,16 +424,12 @@
             "command-a-03-2025",
             "command-r-plus-08-2024",
             "deepseek-ai/deepseek-v4-pro",
-            "gemini-2.5-flash",
-            "gemini-2.5-flash-lite",
             "gemini-3-flash-preview",
             "gemini-3.1-flash-lite-preview",
             "gemini-3.1-pro-preview",
             "glm-4.5-flash",
             "glm-4.7-flash",
             "gpt-oss-120b",
-            "llama-3.1-8b-instant",
-            "llama-3.3-70b-versatile",
             "meta-llama/llama-4-scout-17b-16e-instruct",
             "openai/gpt-oss-120b",
             "qwen-3-235b-a22b-instruct-2507"

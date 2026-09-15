@@ -67,38 +67,60 @@ PORT = int(os.getenv("EXPORTER_PORT", "9100"))
 # critical primaries every 10m (generous quotas), fallbacks hourly.
 PROBE_ENABLED = os.getenv("BIFROST_LANE_PROBE_ENABLED", "1") == "1"
 PROBE_BASE = os.getenv("BIFROST_PROBE_BASE", "http://shared-bifrost:8080").rstrip("/")
-PROBE_TIMEOUT_S = int(os.getenv("BIFROST_PROBE_TIMEOUT_S", "15"))
+PROBE_TIMEOUT_S = int(os.getenv("BIFROST_PROBE_TIMEOUT_S", "60"))
 PROBE_TICK_S = int(os.getenv("BIFROST_PROBE_TICK_S", "60"))
 PROBE_VK_ENV = os.getenv("BIFROST_PROBE_VK", "")  # optional override; else read config.db
 
-# (provider/model, kind, tier, period_seconds). tier drives alerting:
-# "critical" lanes page; "fallback" lanes are gauge-only awareness. z.ai is
-# intentionally omitted — it hangs through the gateway (known integration
-# defect) and would stall the probe tick; it's in no active project chain.
-PROBE_LANES = [
-    # --- critical: local + each project's cloud primary (10m) ---
-    ("vllm-local/qwen3-chat", "chat", "critical", 300),
-    ("embed-local/Qwen/Qwen3-Embedding-0.6B", "embed", "critical", 300),
-    ("nvidia-nim/z-ai/glm-5.2", "chat", "critical", 300, 40),          # Legion reasoning (NIM cold-start can hit 25s). RENAMED 2026-07-13: upstream retired z-ai/glm-5.1, glm-5.2 is the live model (config.json alias `glm-5.1` still resolves for old callers)
-    ("groq/openai/gpt-oss-120b", "chat", "critical", 300),            # Zero primary (fast)
-    # --- fallback: deep lanes + parked/dead, awareness only (1h) ---
-    # kimi-k2.6 DOWNGRADED critical->fallback 2026-07-13 (Perf-503b-W3b): confirmed via
-    # direct NVIDIA NIM API call (bypassing Bifrost, both NV_API_KEY + NV_API_KEY_2) that
-    # moonshotai/kimi-k2.6 404s "Function '23d4f03a...': Not found for account" even though
-    # it's still listed in GET /v1/models — same "listed but not deployed" pattern already
-    # documented for codestral-22b/starcoder2-15b/deepseek-coder-6.7b in bifrost/README.md.
-    # This is an NVIDIA-side catalog/serving-function bug, not a Bifrost or config issue —
-    # paging every 10m for something we cannot fix is alert fatigue. Re-promote to critical
-    # once NVIDIA redeploys the function (re-test: curl integrate.api.nvidia.com directly).
-    ("nvidia-nim/moonshotai/kimi-k2.6", "chat", "fallback", 3600, 40),  # ADA primary — DOWN upstream at NVIDIA, not actionable here
-    ("moonshot/kimi-k2.6", "chat", "fallback", 3600, 40),               # compat shim -> NIM, same upstream outage
-    ("nvidia-nim/qwen/qwen3.5-122b-a10b", "chat", "fallback", 3600, 45),  # 122B: 12-17s, needs longer probe timeout
-    ("cerebras/gpt-oss-120b", "chat", "fallback", 3600),
-    ("mistral/mistral-large-latest", "chat", "fallback", 3600),
-    ("hf-router/moonshotai/Kimi-K2.6", "chat", "fallback", 3600),   # HF account-wide monthly credits depleted 2026-07-13 (402 on every hf-router model, not kimi-specific); resets monthly
-    ("openrouter/openrouter/free", "chat", "fallback", 3600),
-    ("gemini/gemini-3.5-flash", "chat", "fallback", 3600),          # dead key — stays visibly down until rotated
-]
+# Lane list is DERIVED from config.json (2026-09-15). The previous hand-written
+# PROBE_LANES tuple list went stale twice: it probed parked providers
+# (moonshot, cerebras, mistral, gemini) and a model nvidia-nim no longer lists
+# (z-ai/glm-5.2), so BifrostCriticalLaneDown fired for days on a lane nobody
+# could call. Now every ACTIVE provider in config.json gets exactly one
+# representative lane, re-read every tick so a park/unpark takes effect within
+# PROBE_TICK_S with no rebuild. Providers the probe VK is not allowed to reach
+# (openrouter is paid and only ada-prod may use it) are reported as skipped,
+# never as down.
+# config.json is the ONLY source of truth for "active": disabled-providers.json
+# is a recipe archive that still carries old groq/openrouter blocks for
+# providers that were later re-enabled, so it must not be consulted here.
+CONFIG_JSON = Path(os.getenv("BIFROST_CONFIG_JSON", "/data/config.json"))
+PROBE_LANES_OUT = STATE_DIR / "probe_lanes.json"
+PROBE_CRITICAL_PROVIDERS = {
+    p.strip()
+    for p in os.getenv(
+        "BIFROST_PROBE_CRITICAL_PROVIDERS", "vllm-local,embed-local,nvidia-nim,groq"
+    ).split(",")
+    if p.strip()
+}
+PROBE_PERIOD_CRITICAL_S = int(os.getenv("BIFROST_PROBE_PERIOD_CRITICAL_S", "600"))
+PROBE_PERIOD_FALLBACK_S = int(os.getenv("BIFROST_PROBE_PERIOD_FALLBACK_S", "3600"))
+# The local chat engine runs at 100 % GPU with MAX_SEQS=32 and ~113k
+# requests/day queued in front of the probe; a 4-token completion can wait
+# well past 15 s without the lane being dead. Real callers use 120 s.
+PROBE_TIMEOUT_LOCAL_S = int(os.getenv("BIFROST_PROBE_TIMEOUT_LOCAL_S", "120"))
+# Ordered preference of probe model per provider; the first one present in
+# the provider's config.json model list wins, else the first listed model.
+# Override/extend with BIFROST_PROBE_MODELS='{"provider": ["model", ...]}'.
+_DEFAULT_PROBE_MODEL_PREFS: dict[str, list[str]] = {
+    "vllm-local": ["qwen3.8-27b", "qwen3-chat", "local-chat"],
+    "embed-local": ["Qwen/Qwen3-Embedding-0.6B"],
+    "nvidia-nim": ["nvidia/nemotron-3.5-lightning-30b-a3b", "openai/gpt-oss-20b"],
+    "groq": ["openai/gpt-oss-20b", "openai/gpt-oss-120b", "qwen/qwen3.8-27b"],
+    "zai": ["glm-4.5-flash"],
+    "freellmapi": ["gpt-oss-120b", "openai/gpt-oss-120b", "DeepSeek-V3.2"],
+    "openrouter": ["openrouter/free", "nvidia/nemotron-3.5-lightning:free"],
+    "hf-router": ["openai/gpt-oss-20b", "meta-llama/Llama-3.1-8B-Instruct"],
+    "sealion": ["aisingapore/Gemma-SEA-LION-v4-27B-IT"],
+    "aion": ["aion-labs/aion-3.0-mini"],
+}
+try:
+    _PROBE_MODEL_PREFS = {
+        **_DEFAULT_PROBE_MODEL_PREFS,
+        **{k: list(v) for k, v in json.loads(os.getenv("BIFROST_PROBE_MODELS", "{}")).items()},
+    }
+except Exception as exc:  # malformed override must not kill the prober
+    print(f"lane-prober: ignoring BIFROST_PROBE_MODELS ({exc})", flush=True)
+    _PROBE_MODEL_PREFS = dict(_DEFAULT_PROBE_MODEL_PREFS)
 
 # Histogram buckets in milliseconds — chosen to cover the realistic Bifrost
 # range: ~30 ms for local embed, ~300 ms for vllm-local chat, ~1-3 s for
@@ -174,6 +196,16 @@ lane_probe_last_seconds = Gauge(
 lane_probe_enabled = Gauge(
     "bifrost_lane_probe_enabled",
     "1 if the active lane prober is running (probe VK resolved), else 0.",
+)
+lane_probe_skipped = Gauge(
+    "bifrost_lane_probe_skipped",
+    "1 for each active provider the prober deliberately does not probe "
+    "(reason label says why, e.g. the probe VK may not reach it).",
+    ["provider", "reason"],
+)
+lane_probe_lanes = Gauge(
+    "bifrost_lane_probe_lanes",
+    "Number of lanes currently derived from config.json for active probing.",
 )
 
 
@@ -402,6 +434,99 @@ def _resolve_probe_vk() -> str:
         return ""
 
 
+def _probe_vk_providers(vk: str) -> set[str] | None:
+    """Providers the probe VK's governance config allows. None = unknown
+    (config.db unreadable or VK not found) -> probe everything."""
+    if not CONFIG_DB.exists():
+        return None
+    try:
+        conn = sqlite3.connect(
+            f"file:{CONFIG_DB}?mode=ro&immutable=1", uri=True, timeout=5.0
+        )
+        try:
+            row = conn.execute(
+                "SELECT id FROM governance_virtual_keys WHERE value=? LIMIT 1", (vk,)
+            ).fetchone()
+            if not row:
+                return None
+            return {
+                p
+                for (p,) in conn.execute(
+                    "SELECT provider FROM governance_virtual_key_provider_configs "
+                    "WHERE virtual_key_id=?",
+                    (row[0],),
+                )
+            }
+        finally:
+            conn.close()
+    except Exception:
+        return None
+
+
+def _load_probe_lanes(vk_providers: set[str] | None) -> tuple[list[tuple], dict[str, str]]:
+    """Derive one probe lane per active provider from config.json.
+
+    Returns (lanes, skipped) where each lane is
+    (provider/model, kind, tier, period_s, timeout_s) and skipped maps a
+    provider name to the reason it is not probed. Never raises: an unreadable
+    config.json yields ([], {}) and the caller keeps the previous list.
+    """
+    try:
+        cfg = json.loads(CONFIG_JSON.read_text(encoding="utf-8"))
+    except Exception as exc:
+        print(f"lane-prober: cannot read {CONFIG_JSON}: {exc}", flush=True)
+        return [], {}
+    lanes: list[tuple] = []
+    skipped: dict[str, str] = {}
+    for provider, pcfg in sorted((cfg.get("providers") or {}).items()):
+        keys = [k for k in (pcfg.get("keys") or []) if isinstance(k, dict)]
+        models: list[str] = []
+        for k in keys:
+            for m in k.get("models") or []:
+                if isinstance(m, str) and m not in models:
+                    models.append(m)
+        if not models:
+            skipped[provider] = "no_models"
+            continue
+        if vk_providers is not None and provider not in vk_providers:
+            skipped[provider] = "vk_not_allowed"
+            continue
+        prefs = _PROBE_MODEL_PREFS.get(provider, [])
+        model = next((m for m in prefs if m in models), models[0])
+        kind = "embed" if "embed" in provider.lower() else "chat"
+        tier = "critical" if provider in PROBE_CRITICAL_PROVIDERS else "fallback"
+        period = PROBE_PERIOD_CRITICAL_S if tier == "critical" else PROBE_PERIOD_FALLBACK_S
+        timeout = PROBE_TIMEOUT_LOCAL_S if provider.endswith("-local") else PROBE_TIMEOUT_S
+        lanes.append((f"{provider}/{model}", kind, tier, period, timeout))
+    return lanes, skipped
+
+
+def _write_probe_lanes(lanes: list[tuple], skipped: dict[str, str]) -> None:
+    """Persist the derived list so operators (and infractl) can see exactly
+    what is being probed without reading Prometheus."""
+    try:
+        STATE_DIR.mkdir(parents=True, exist_ok=True)
+        tmp = PROBE_LANES_OUT.with_suffix(".tmp")
+        tmp.write_text(
+            json.dumps(
+                {
+                    "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                    "source": str(CONFIG_JSON),
+                    "lanes": [
+                        {"model": m, "kind": k, "tier": t, "period_s": p, "timeout_s": to}
+                        for (m, k, t, p, to) in lanes
+                    ],
+                    "skipped": skipped,
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        os.replace(tmp, PROBE_LANES_OUT)
+    except Exception as exc:
+        print(f"lane-prober: could not write {PROBE_LANES_OUT}: {exc}", flush=True)
+
+
 def _probe_lane(model: str, kind: str, vk: str, timeout: int) -> tuple[bool, float]:
     """Send one tiny request for `model` through the gateway. Returns (ok, latency_ms)."""
     if kind == "embed":
@@ -433,15 +558,25 @@ def _probe_lane(model: str, kind: str, vk: str, timeout: int) -> tuple[bool, flo
 def _probe_loop() -> None:
     """Probe each lane on its own period; emit bifrost_lane_up + latency.
 
-    One daemon thread woken every PROBE_TICK_S; each lane is probed only when
-    its period has elapsed (free-tier-friendly). A failed probe sets up=0 so a
-    silently-dead lane becomes visible to Prometheus within its period.
+    One daemon thread woken every PROBE_TICK_S; the lane list is re-derived
+    from config.json on every wake (cheap: one small JSON read) so parking a
+    provider drops its lane -- and its stale metric series -- within one tick.
+    Each lane is probed only when its period has elapsed (free-tier-friendly).
+    A failed probe sets up=0 so a silently-dead lane becomes visible to
+    Prometheus within its period.
     """
     if not PROBE_ENABLED:
         lane_probe_enabled.set(0)
         print("lane-prober disabled (BIFROST_LANE_PROBE_ENABLED=0)", flush=True)
         return
     last_probe: dict[str, float] = {}
+    exported_up: set[tuple[str, str, str, str]] = set()
+    exported_lat: set[tuple[str, str]] = set()
+    exported_skip: set[tuple[str, str]] = set()
+    lanes: list[tuple] = []
+    last_sig: str | None = None
+    vk_cached = ""
+    vk_providers: set[str] | None = None
     while True:
         vk = _resolve_probe_vk()
         lane_probe_enabled.set(1 if vk else 0)
@@ -449,16 +584,64 @@ def _probe_loop() -> None:
             print("lane-prober: no active VK resolved yet; retrying", flush=True)
             time.sleep(PROBE_TICK_S)
             continue
+        if vk != vk_cached or vk_providers is None:
+            vk_providers = _probe_vk_providers(vk)
+            vk_cached = vk
+        new_lanes, skipped = _load_probe_lanes(vk_providers)
+        if new_lanes:
+            sig = json.dumps([new_lanes, sorted(skipped.items())])
+            if sig != last_sig:
+                lanes = new_lanes
+                last_sig = sig
+                _write_probe_lanes(lanes, skipped)
+                lane_probe_lanes.set(len(lanes))
+                want_up = {
+                    (m.partition("/")[0], m.partition("/")[2], t, k)
+                    for (m, k, t, _p, _to) in lanes
+                }
+                for labels in exported_up - want_up:
+                    try:
+                        lane_up.remove(*labels)
+                    except KeyError:
+                        pass
+                    exported_up.discard(labels)
+                    print(f"lane-prober: dropped lane {labels[0]}/{labels[1]}", flush=True)
+                want_lat = {(a, b) for (a, b, _t, _k) in want_up}
+                for labels in exported_lat - want_lat:
+                    try:
+                        lane_probe_latency_ms.remove(*labels)
+                    except KeyError:
+                        pass
+                    exported_lat.discard(labels)
+                active_models = {l[0] for l in lanes}
+                for m in list(last_probe):
+                    if m not in active_models:
+                        last_probe.pop(m, None)
+                want_skip = set(skipped.items())
+                for labels in exported_skip - want_skip:
+                    try:
+                        lane_probe_skipped.remove(*labels)
+                    except KeyError:
+                        pass
+                for prov, reason in want_skip:
+                    lane_probe_skipped.labels(prov, reason).set(1)
+                exported_skip = want_skip
+                print(
+                    "lane-prober: lanes="
+                    + ", ".join(f"{m}[{t}]" for (m, _k, t, _p, _to) in lanes)
+                    + (f" skipped={skipped}" if skipped else ""),
+                    flush=True,
+                )
         now = time.time()
-        for lane in PROBE_LANES:
-            model, kind, tier, period = lane[0], lane[1], lane[2], lane[3]
-            timeout = lane[4] if len(lane) > 4 else PROBE_TIMEOUT_S
+        for model, kind, tier, period, timeout in lanes:
             if now - last_probe.get(model, 0.0) < period:
                 continue
             provider, _, bare = model.partition("/")
             ok, ms = _probe_lane(model, kind, vk, timeout)
             lane_up.labels(provider, bare, tier, kind).set(1 if ok else 0)
+            exported_up.add((provider, bare, tier, kind))
             lane_probe_latency_ms.labels(provider, bare).set(round(ms, 1))
+            exported_lat.add((provider, bare))
             last_probe[model] = now
             if not ok:
                 print(f"lane-prober: DOWN {model} ({tier}) after {ms:.0f}ms", flush=True)
