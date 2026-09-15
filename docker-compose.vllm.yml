@@ -1234,7 +1234,19 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "2.0"
+          # 4.0, not the 2.0 inherited from vllm-chat (2026-09-15, Legion #14967
+          # a-finance sidebar). The 2-core CFS quota was the actual bottleneck
+          # behind the "vllm-local lane stalls" family: VLLM::EngineCore is a
+          # single 100%-CPU thread and shares the quota with the API server +
+          # tokenizer, so cpu.stat showed 25% of ALL periods throttled (7.8 h
+          # of stall in 22 h of uptime) while the GPU idled at 24% with 24-32
+          # requests "running" at 4 tok/s. Bifrost logs (15 min): ada-prod 162
+          # x 504 vs 58 ok at avg 113 s for 128 output tokens; a 7-token probe
+          # took 63 s. `docker update --cpus 4` live: throttling stopped, GPU
+          # 95%, 4-token completion 0.19 s, /v1/models 45 s -> 10 ms. Host has
+          # 32 logical CPUs at load ~12, so 4 keeps the ada-backend event-loop
+          # protection the 2.0 note above was for.
+          cpus: "4.0"
         reservations:
           devices:
             - driver: nvidia
