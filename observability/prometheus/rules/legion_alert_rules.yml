@@ -58,7 +58,7 @@ groups:
           summary: "Ollama queue saturated ({{ $value }} requests queued) — requests may timeout"
 
       - alert: ContainerCPURunaway
-        expr: rate(container_cpu_usage_seconds_total[1m]) * 100 > 90
+        expr: rate(container_cpu_usage_seconds_total{name!="",name!~"qwen38-chat|vllm-.*|shared-tempo"}[1m]) * 100 > 90
         for: 5m
         labels:
           severity: critical
@@ -301,7 +301,7 @@ groups:
       - alert: ContainerMemoryHigh
         expr: |
           (container_memory_usage_bytes{name=~"ada-.*|legion-.*|zero-.*"}
-           / container_spec_memory_limit_bytes{name=~"ada-.*|legion-.*|zero-.*"}
+           / (container_spec_memory_limit_bytes{name=~"ada-.*|legion-.*|zero-.*"} > 0)
            ) > 0.85
         for: 5m
         labels:

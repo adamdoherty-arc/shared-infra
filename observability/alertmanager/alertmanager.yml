@@ -39,7 +39,7 @@ route:
     - match:
         tier: ecosystem
       receiver: 'legion-webhook'
-      repeat_interval: 15m
+      repeat_interval: 4h
       continue: false
     - match:
         severity: critical
