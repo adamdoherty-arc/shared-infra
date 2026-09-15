@@ -46,7 +46,7 @@
       "custom_provider_config": {
         "base_provider_type": "openai",
         "allowed_requests": {
-          "_comment_list_models": "MUST stay false. /v1/models fans out to every provider with list_models=true, so a model-list call joins the inference queue behind real work (Legion's stack_monitor.py documented it hanging past 150s on 2026-08-03, when vllm-chat ran --max-num-seqs 1). vllm-chat now runs --max-num-seqs 6, which makes the hang less likely but NOT impossible \u2014 model discovery must never depend on inference capacity, at any concurrency. Corrected 2026-08-11: this comment previously asserted seqs=1 as current fact.",
+          "_comment_list_models": "MUST stay false. /v1/models fans out to every provider with list_models=true, so a model-list call joins the inference queue behind real work (Legion's stack_monitor.py documented it hanging past 150s on 2026-08-03, when vllm-chat ran --max-num-seqs 1). vllm-chat now runs --max-num-seqs 6, which makes the hang less likely but NOT impossible — model discovery must never depend on inference capacity, at any concurrency. Corrected 2026-08-11: this comment previously asserted seqs=1 as current fact.",
           "list_models": false,
           "chat_completion": true,
           "chat_completion_stream": true
@@ -80,7 +80,8 @@
       "custom_provider_config": {
         "base_provider_type": "openai",
         "allowed_requests": {
-          "list_models": true,
+          "_comment_list_models": "MUST stay false, same rule as vllm-local: /v1/models fans out to every provider with list_models=true and the call joins embed-local's Bifrost concurrency gate (8, buffer 200) behind ADA's embedding bursts. Measured 2026-09-15: /v1/models 6 ms cached vs 36-72 s while a burst drained (Bifrost warn 'failed to list models with key embed-noauth'), which tripped A's verify.run llm_health (15 s read timeout) and every other /v1/models consumer. The embed model stays routable; it is simply no longer advertised by /v1/models.",
+          "list_models": false,
           "embedding": true
         }
       },
@@ -98,7 +99,6 @@
             "deepseek-ai/deepseek-v4-flash-0731",
             "meta/llama-3.2-11b-vision-instruct",
             "meta/llama-3.2-90b-vision-instruct",
-            "minimaxai/minimax-m3",
             "mistralai/mistral-nemotron",
             "nvidia/ising-calibration-1.5-31b",
             "nvidia/llama-3.1-nemoguard-8b-content-safety",
@@ -110,8 +110,8 @@
             "nvidia/nemotron-3.5-lightning-30b-a3b",
             "openai/gpt-oss-20b",
             "poolside/laguna-xs-2.1",
-            "deepseek-ai/deepseek-v4-pro-0813",
-            "moonshotai/kimi-k3"
+            "moonshotai/kimi-k3",
+            "nvidia/nemotron-parse-2.0"
           ],
           "weight": 1.0,
           "aliases": {
@@ -128,7 +128,6 @@
             "deepseek-ai/deepseek-v4-flash-0731",
             "meta/llama-3.2-11b-vision-instruct",
             "meta/llama-3.2-90b-vision-instruct",
-            "minimaxai/minimax-m3",
             "mistralai/mistral-nemotron",
             "nvidia/ising-calibration-1.5-31b",
             "nvidia/llama-3.1-nemoguard-8b-content-safety",
@@ -140,8 +139,8 @@
             "nvidia/nemotron-3.5-lightning-30b-a3b",
             "openai/gpt-oss-20b",
             "poolside/laguna-xs-2.1",
-            "deepseek-ai/deepseek-v4-pro-0813",
-            "moonshotai/kimi-k3"
+            "moonshotai/kimi-k3",
+            "nvidia/nemotron-parse-2.0"
           ],
           "weight": 1.0,
           "aliases": {
@@ -172,7 +171,6 @@
             "deepseek-ai/deepseek-v4-flash-0731",
             "meta/llama-3.2-11b-vision-instruct",
             "meta/llama-3.2-90b-vision-instruct",
-            "minimaxai/minimax-m3",
             "mistralai/mistral-nemotron",
             "nvidia/ising-calibration-1.5-31b",
             "nvidia/llama-3.1-nemoguard-8b-content-safety",
@@ -184,8 +182,8 @@
             "nvidia/nemotron-3.5-lightning-30b-a3b",
             "openai/gpt-oss-20b",
             "poolside/laguna-xs-2.1",
-            "deepseek-ai/deepseek-v4-pro-0813",
-            "moonshotai/kimi-k3"
+            "moonshotai/kimi-k3",
+            "nvidia/nemotron-parse-2.0"
           ],
           "weight": 1.0,
           "aliases": {
@@ -232,7 +230,6 @@
             "inclusionai/ling-3.0-flash-sante:free",
             "inclusionai/ling-3.0-tiny",
             "minimax/minimax-m3",
-            "minimax/minimax-m3:free",
             "moonshotai/kimi-k2.5",
             "moonshotai/kimi-k2.6",
             "moonshotai/kimi-k3",
@@ -248,7 +245,7 @@
             "qwen/qwen3.8-27b",
             "stealth/ox-alpha",
             "z-ai/glm-5.2",
-            "z-ai/glm-5.2:free"
+            "inclusionai/ling-3.0-flash-vl:free"
           ],
           "weight": 1.0,
           "aliases": {
@@ -333,37 +330,6 @@
         "base_url": "https://router.huggingface.co",
         "default_request_timeout_in_seconds": 120,
         "max_retries": 0
-      },
-      "custom_provider_config": {
-        "base_provider_type": "openai",
-        "allowed_requests": {
-          "list_models": false,
-          "chat_completion": true,
-          "chat_completion_stream": true
-        }
-      },
-      "concurrency_and_buffer_size": {
-        "concurrency": 8,
-        "buffer_size": 200
-      }
-    },
-    "cerebras": {
-      "keys": [
-        {
-          "name": "cerebras-primary",
-          "value": "env.CEREBRAS_API_KEY",
-          "models": [
-            "gpt-oss-120b",
-            "zai-glm-4.7",
-            "gemma-4-31b"
-          ],
-          "weight": 1.0
-        }
-      ],
-      "network_config": {
-        "base_url": "https://api.cerebras.ai",
-        "default_request_timeout_in_seconds": 120,
-        "max_retries": 2
       },
       "custom_provider_config": {
         "base_provider_type": "openai",
@@ -498,84 +464,6 @@
         "buffer_size": 200
       }
     },
-    "ovhcloud": {
-      "keys": [
-        {
-          "name": "ovhcloud-anon",
-          "value": "EMPTY",
-          "models": [
-            "Mistral-7B-Instruct-v0.3",
-            "Mistral-Nemo-Instruct-2407",
-            "Mistral-Small-3.2-24B-Instruct-2506",
-            "Qwen2.5-VL-72B-Instruct",
-            "Qwen3-32B",
-            "Qwen3-Coder-30B-A3B-Instruct",
-            "Qwen3.5-397B-A17B",
-            "Qwen3.6-27B",
-            "gpt-oss-120b",
-            "gpt-oss-20b"
-          ],
-          "weight": 1.0,
-          "aliases": {
-            "qwen3-coder-30b": "Qwen3-Coder-30B-A3B-Instruct",
-            "qwen3.5-397b": "Qwen3.5-397B-A17B"
-          }
-        }
-      ],
-      "network_config": {
-        "base_url": "https://oai.endpoints.kepler.ai.cloud.ovh.net",
-        "default_request_timeout_in_seconds": 120,
-        "max_retries": 2
-      },
-      "custom_provider_config": {
-        "is_key_less": true,
-        "base_provider_type": "openai",
-        "request_path_overrides": {
-          "chat_completion": "/v1/chat/completions",
-          "chat_completion_stream": "/v1/chat/completions"
-        },
-        "allowed_requests": {
-          "chat_completion": true,
-          "chat_completion_stream": true,
-          "list_models": false
-        }
-      },
-      "concurrency_and_buffer_size": {
-        "concurrency": 2,
-        "buffer_size": 50
-      }
-    },
-    "siliconflow": {
-      "keys": [
-        {
-          "name": "siliconflow_api_key-primary",
-          "value": "env.SILICONFLOW_API_KEY",
-          "models": [],
-          "weight": 1.0
-        }
-      ],
-      "network_config": {
-        "base_url": "https://api.siliconflow.com",
-        "default_request_timeout_in_seconds": 120,
-        "max_retries": 2
-      },
-      "custom_provider_config": {
-        "base_provider_type": "openai",
-        "request_path_overrides": {
-          "chat_completion": "/v1/chat/completions",
-          "chat_completion_stream": "/v1/chat/completions"
-        },
-        "allowed_requests": {
-          "chat_completion": true,
-          "chat_completion_stream": true,
-          "list_models": false
-        }
-      },
-      "concurrency_and_buffer_size": {
-        "concurrency": 2,
-        "buffer_size": 50
-      }
-    },
     "sealion": {
       "keys": [
         {
@@ -600,40 +488,6 @@
         "request_path_overrides": {
           "chat_completion": "/v1/chat/completions",
           "chat_completion_stream": "/v1/chat/completions"
-        },
-        "allowed_requests": {
-          "chat_completion": true,
-          "chat_completion_stream": true,
-          "list_models": false
-        }
-      },
-      "concurrency_and_buffer_size": {
-        "concurrency": 2,
-        "buffer_size": 50
-      }
-    },
-    "bazaarlink": {
-      "keys": [
-        {
-          "name": "bazaarlink_api_key-primary",
-          "value": "env.BAZAARLINK_API_KEY",
-          "models": [
-            "deepseek/deepseek-v4-flash:free",
-            "qwen/qwen3.7-flash:free"
-          ],
-          "weight": 1.0
-        }
-      ],
-      "network_config": {
-        "base_url": "https://bazaarlink.ai",
-        "default_request_timeout_in_seconds": 120,
-        "max_retries": 2
-      },
-      "custom_provider_config": {
-        "base_provider_type": "openai",
-        "request_path_overrides": {
-          "chat_completion": "/api/v1/chat/completions",
-          "chat_completion_stream": "/api/v1/chat/completions"
         },
         "allowed_requests": {
           "chat_completion": true,
@@ -681,37 +535,6 @@
       "concurrency_and_buffer_size": {
         "concurrency": 2,
         "buffer_size": 50
-      }
-    },
-    "moonshot": {
-      "keys": [
-        {
-          "name": "moonshot-primary",
-          "value": "env.MOONSHOT_API_KEY",
-          "models": [
-            "kimi-k2.5",
-            "kimi-k2.6",
-            "kimi-k3"
-          ],
-          "weight": 1.0
-        }
-      ],
-      "network_config": {
-        "base_url": "https://api.moonshot.ai",
-        "default_request_timeout_in_seconds": 120,
-        "max_retries": 2
-      },
-      "custom_provider_config": {
-        "base_provider_type": "openai",
-        "allowed_requests": {
-          "list_models": false,
-          "chat_completion": true,
-          "chat_completion_stream": true
-        }
-      },
-      "concurrency_and_buffer_size": {
-        "concurrency": 4,
-        "buffer_size": 100
       }
     }
   }
