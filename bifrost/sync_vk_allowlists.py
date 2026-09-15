@@ -11,8 +11,21 @@ refreshed. Run this after ANY provider/model change in config.json:
     docker start shared-bifrost
 
 For every VK x every active provider it upserts a row whose allowed_models is
-a verbatim copy of the provider's config_keys.models_json (allow_all_keys=1),
-and deletes PC rows for providers that no longer exist.
+the UNION of every key's models_json for that provider PLUS every alias name
+from aliases_json (allow_all_keys=1), and deletes PC rows for providers that
+no longer exist.
+
+ALIASES MUST BE IN allowed_models (2026-09-15): Bifrost v2.0.0 evaluates VK
+governance BEFORE alias resolution -- the string the caller sent (e.g.
+`nvidia-nim/nemotron-lightning`) is what gets checked against allowed_models,
+and only afterwards is it rewritten to the target model id. Verified live via
+the probe VK: every alias returned 403 `model_blocked` ("Model 'X' is not
+allowed for this virtual key") while the full id it points at completed fine.
+Until this fix, allowed_models carried only full ids, so NO alias had ever
+been usable through a VK; every alias-based caller was silently falling to
+the next lane in its ladder. The per-provider allowlist is therefore built
+from models UNION alias-keys across all of the provider's keys (nvidia-nim
+has three keys sharing one allowlist).
 
 SECOND SYNC ADDED 2026-09-05 (Fix-1100000305-followup): Bifrost's own
 config.json import does NOT refresh `config_keys.models_json`/`aliases_json`
@@ -53,14 +66,24 @@ def sync_provider_models(db: sqlite3.Connection, config_json_path: str = CONFIG_
     skipped -- inserting a brand-new key needs columns (value, key_id, ...)
     this function has no business fabricating; Bifrost's own import handles
     genuinely new keys correctly today, this function only closes the
-    EXISTING-key gap."""
+    EXISTING-key gap.
+
+    models_json is written as models UNION alias names. Bifrost v2 selects a
+    key with `key.Models.IsAllowed(<requested model>)` BEFORE it resolves
+    `key.Aliases` (core/bifrost.go, "key.Models ... must therefore be
+    expressed in alias keys"), so an alias name absent from `models` fails
+    with "no keys found that support model: <alias>" even when governance
+    allows it. Measured 2026-09-15: zero alias completions had ever
+    succeeded on this gateway for that reason."""
     with open(config_json_path, encoding="utf-8") as f:
         cfg = json.load(f)
 
     changed = 0
     for provider, prov_cfg in cfg.get("providers", {}).items():
         for key in prov_cfg.get("keys", []):
-            models_json = json.dumps(key.get("models", []))
+            models = list(key.get("models", []))
+            models += [a for a in (key.get("aliases") or {}) if a not in models]
+            models_json = json.dumps(models)
             aliases_json = json.dumps(key.get("aliases", {}))
             row = db.execute(
                 "SELECT models_json, COALESCE(aliases_json, '{}') FROM config_keys "
@@ -70,7 +93,12 @@ def sync_provider_models(db: sqlite3.Connection, config_json_path: str = CONFIG_
                 print(f"[sync_provider_models] NOTE: {provider}/{key['name']} not in config_keys yet "
                       "-- brand-new key, Bifrost's own import handles this on next restart")
                 continue
-            if row[0] == models_json and row[1] == aliases_json:
+            try:
+                same = (json.loads(row[0] or "[]") == models
+                        and json.loads(row[1] or "{}") == key.get("aliases", {}))
+            except ValueError:
+                same = False
+            if same:
                 continue
             db.execute(
                 "UPDATE config_keys SET models_json=?, aliases_json=? WHERE provider=? AND name=?",
@@ -78,7 +106,7 @@ def sync_provider_models(db: sqlite3.Connection, config_json_path: str = CONFIG_
             )
             changed += 1
             print(f"[sync_provider_models] updated {provider}/{key['name']}: "
-                  f"{len(key.get('models', []))} models")
+                  f"{len(models)} models (incl. alias names)")
     db.commit()
     return changed
 
@@ -99,9 +127,25 @@ db = sqlite3.connect(DB_PATH)
 _changed = sync_provider_models(db)
 print(f"synced config_keys.models_json/aliases_json from config.json: {_changed} key(s) changed")
 
-providers = {}
-for prov, models in db.execute("SELECT provider, models_json FROM config_keys"):
-    providers[prov] = models  # already a JSON array string
+def build_provider_allowlists(db: sqlite3.Connection) -> dict:
+    """provider -> JSON array string of every model id AND every alias name
+    across all config_keys rows for that provider (deduped, config order kept).
+    Alias names are included because governance runs before alias resolution
+    (see module docstring, 2026-09-15)."""
+    out = {}
+    for prov, models_json, aliases_json in db.execute(
+            "SELECT provider, models_json, COALESCE(aliases_json, '{}') FROM config_keys ORDER BY id"):
+        allow = out.setdefault(prov, [])
+        for m in json.loads(models_json or "[]"):
+            if m not in allow:
+                allow.append(m)
+        for alias in json.loads(aliases_json or "{}").keys():
+            if alias not in allow:
+                allow.append(alias)
+    return {prov: json.dumps(allow) for prov, allow in out.items()}
+
+
+providers = build_provider_allowlists(db)
 
 vks = [(r[0], r[1]) for r in db.execute("SELECT id, name FROM governance_virtual_keys")]
 

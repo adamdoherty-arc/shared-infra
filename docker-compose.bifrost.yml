@@ -259,11 +259,18 @@ services:
       PRUNE_HOUR_UTC: "3"
       # Optional Discord alerting; set AUTOHEAL_DISCORD_WEBHOOK in shared-infra/.env
       AUTOHEAL_DISCORD_WEBHOOK: "${AUTOHEAL_DISCORD_WEBHOOK:-}"
+      # 2026-09-15: nightly PRAGMA quick_check after the prune (PRUNE_INTEGRITY_CHECK=1).
+      # The check runs INSIDE this container on purpose -- a host-side open of the
+      # live WAL database deletes Bifrost's -wal/-shm on close (see pruner.py).
+      PRUNE_INTEGRITY_CHECK: "1"
     deploy:
       resources:
         limits:
           memory: 64M
-          cpus: "0.05"
+          # 0.05 -> 0.50 on 2026-09-15: quick_check over a 3.1 GB file needs ~110 s of
+          # one core; at 5 % of a core it ran for 40+ minutes. Idle cost is unchanged
+          # (the loop sleeps between the 03:00 prune and the 900 s checkpoint ticks).
+          cpus: "0.50"
     restart: unless-stopped
     logging:
       driver: json-file
@@ -349,7 +356,7 @@ services:
       AUTOHEAL_PROBE_ACTION: "alert"
       # Virtual key is read live from config.db (read-only, existing mount);
       # set a name here only to pin a specific one.
-      AUTOHEAL_PROBE_VK: "${AUTOHEAL_PROBE_VK:-}"
+      AUTOHEAL_PROBE_VK: "${AUTOHEAL_PROBE_VK:-claude-code-local}"
     volumes:
       # Docker socket so it can read shared-bifrost's logs + stop/start it.
       - /var/run/docker.sock:/var/run/docker.sock

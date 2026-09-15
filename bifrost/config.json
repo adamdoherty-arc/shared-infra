@@ -46,7 +46,7 @@
       "custom_provider_config": {
         "base_provider_type": "openai",
         "allowed_requests": {
-          "_comment_list_models": "MUST stay false. /v1/models fans out to every provider with list_models=true, so a model-list call joins the inference queue behind real work (Legion's stack_monitor.py documented it hanging past 150s on 2026-08-03, when vllm-chat ran --max-num-seqs 1). vllm-chat now runs --max-num-seqs 6, which makes the hang less likely but NOT impossible — model discovery must never depend on inference capacity, at any concurrency. Corrected 2026-08-11: this comment previously asserted seqs=1 as current fact.",
+          "_comment_list_models": "MUST stay false. /v1/models fans out to every provider with list_models=true, so a model-list call joins the inference queue behind real work (Legion's stack_monitor.py documented it hanging past 150s on 2026-08-03, when vllm-chat ran --max-num-seqs 1). vllm-chat now runs --max-num-seqs 6, which makes the hang less likely but NOT impossible \u2014 model discovery must never depend on inference capacity, at any concurrency. Corrected 2026-08-11: this comment previously asserted seqs=1 as current fact.",
           "list_models": false,
           "chat_completion": true,
           "chat_completion_stream": true
@@ -111,7 +111,11 @@
             "openai/gpt-oss-20b",
             "poolside/laguna-xs-2.1",
             "moonshotai/kimi-k3",
-            "nvidia/nemotron-parse-2.0"
+            "nvidia/nemotron-parse-2.0",
+            "nemotron-lightning",
+            "nemotron-safety",
+            "deepseek-v4-flash",
+            "nemoguard-safety"
           ],
           "weight": 1.0,
           "aliases": {
@@ -140,25 +144,23 @@
             "openai/gpt-oss-20b",
             "poolside/laguna-xs-2.1",
             "moonshotai/kimi-k3",
-            "nvidia/nemotron-parse-2.0"
+            "nvidia/nemotron-parse-2.0",
+            "nemotron-ultra-550b",
+            "nemotron-super-120b",
+            "llama-90b-vision",
+            "deepseek-v4",
+            "deepseek-v4-flash",
+            "nemotron-lightning",
+            "nemotron-safety",
+            "nemoguard-safety"
           ],
           "weight": 1.0,
           "aliases": {
-            "glm-5.1": "z-ai/glm-5.2",
-            "glm-5.2": "z-ai/glm-5.2",
-            "minimax-m2.7": "minimaxai/minimax-m2.7",
             "nemotron-ultra-550b": "nvidia/nemotron-3-ultra-550b-a55b",
-            "qwen-122b": "qwen/qwen3.5-122b-a10b",
-            "qwen-397b": "qwen/qwen3.5-397b-a17b",
-            "qwen3-next-80b": "qwen/qwen3-next-80b-a3b-instruct",
-            "mistral-large-3": "mistralai/mistral-large-3-675b-instruct-2512",
             "nemotron-super-120b": "nvidia/nemotron-3-super-120b-a12b",
-            "nemotron-super-49b": "nvidia/llama-3.3-nemotron-super-49b-v1.5",
             "llama-90b-vision": "meta/llama-3.2-90b-vision-instruct",
-            "nemotron-vl": "nvidia/nemotron-nano-12b-v2-vl",
-            "deepseek-v4": "deepseek-ai/deepseek-v4-flash",
+            "deepseek-v4": "deepseek-ai/deepseek-v4-flash-0731",
             "deepseek-v4-flash": "deepseek-ai/deepseek-v4-flash-0731",
-            "minimax-m3": "minimaxai/minimax-m3",
             "nemotron-lightning": "nvidia/nemotron-3.5-lightning-30b-a3b",
             "nemotron-safety": "nvidia/nemotron-3.5-content-safety",
             "nemoguard-safety": "nvidia/llama-3.1-nemoguard-8b-content-safety"
@@ -183,7 +185,11 @@
             "openai/gpt-oss-20b",
             "poolside/laguna-xs-2.1",
             "moonshotai/kimi-k3",
-            "nvidia/nemotron-parse-2.0"
+            "nvidia/nemotron-parse-2.0",
+            "nemotron-lightning",
+            "nemotron-safety",
+            "deepseek-v4-flash",
+            "nemoguard-safety"
           ],
           "weight": 1.0,
           "aliases": {
@@ -228,7 +234,6 @@
             "inclusionai/ling-3.0-flash",
             "inclusionai/ling-3.0-flash-fin:free",
             "inclusionai/ling-3.0-flash-sante:free",
-            "inclusionai/ling-3.0-tiny",
             "minimax/minimax-m3",
             "moonshotai/kimi-k2.5",
             "moonshotai/kimi-k2.6",
@@ -239,25 +244,38 @@
             "nvidia/nemotron-3.5-content-safety:free",
             "nvidia/nemotron-3.5-lightning:free",
             "openrouter/free",
-            "openrouter/owl-alpha",
             "poolside/laguna-s-2.1:free",
             "poolside/laguna-xs-2.1:free",
             "qwen/qwen3.8-27b",
-            "stealth/ox-alpha",
             "z-ai/glm-5.2",
-            "inclusionai/ling-3.0-flash-vl:free"
+            "inclusionai/ling-3.0-flash-vl:free",
+            "z-ai/glm-5.2:free",
+            "z-ai/glm-5.3-flash",
+            "nemotron-ultra-free",
+            "nemotron-super-free",
+            "or-auto-free",
+            "north-code-free",
+            "nemotron-lightning-free",
+            "qwen3.8-27b",
+            "glm-5.2-paid",
+            "glm-5.2-or-free",
+            "kimi-k2.5",
+            "kimi-k2.6-or",
+            "kimi-k3",
+            "minimax-m3",
+            "deepseek-v4-flash-or",
+            "ling-flash-sante",
+            "ling-flash-fin",
+            "dots-note-preview",
+            "glm-5.3-flash",
+            "ox-alpha"
           ],
           "weight": 1.0,
           "aliases": {
             "nemotron-ultra-free": "nvidia/nemotron-3-ultra-550b-a55b:free",
             "nemotron-super-free": "nvidia/nemotron-3-super-120b-a12b:free",
-            "qwen3-next-80b-free": "qwen/qwen3-next-80b-a3b-instruct:free",
-            "gpt-oss-120b-free": "openai/gpt-oss-120b:free",
-            "llama-3.3-70b-free": "meta-llama/llama-3.3-70b-instruct:free",
             "or-auto-free": "openrouter/free",
             "north-code-free": "cohere/north-mini-code:free",
-            "hy3-free": "tencent/hy3:free",
-            "hermes-405b-free": "nousresearch/hermes-3-llama-3.1-405b:free",
             "nemotron-lightning-free": "nvidia/nemotron-3.5-lightning:free",
             "qwen3.8-27b": "qwen/qwen3.8-27b",
             "glm-5.2-paid": "z-ai/glm-5.2",
@@ -267,11 +285,11 @@
             "kimi-k3": "moonshotai/kimi-k3",
             "minimax-m3": "minimax/minimax-m3",
             "deepseek-v4-flash-or": "deepseek/deepseek-v4-flash",
-            "ox-alpha": "stealth/ox-alpha",
-            "minimax-m3-free": "minimax/minimax-m3:free",
             "ling-flash-sante": "inclusionai/ling-3.0-flash-sante:free",
             "ling-flash-fin": "inclusionai/ling-3.0-flash-fin:free",
-            "dots-note-preview": "dots-studio/dots-3-note-preview:free"
+            "dots-note-preview": "dots-studio/dots-3-note-preview:free",
+            "glm-5.3-flash": "z-ai/glm-5.3-flash",
+            "ox-alpha": "z-ai/glm-5.3-flash"
           }
         }
       ],
@@ -279,14 +297,6 @@
         "base_url": "https://openrouter.ai/api",
         "default_request_timeout_in_seconds": 120,
         "max_retries": 2
-      },
-      "custom_provider_config": {
-        "base_provider_type": "openai",
-        "allowed_requests": {
-          "list_models": false,
-          "chat_completion": true,
-          "chat_completion_stream": true
-        }
       },
       "concurrency_and_buffer_size": {
         "concurrency": 16,
@@ -311,7 +321,15 @@
             "meta-llama/Llama-3.1-8B-Instruct",
             "moonshotai/Kimi-K2.7-Code",
             "Qwen/Qwen3-Coder-480B-A35B-Instruct",
-            "deepseek-ai/DeepSeek-V4-Flash"
+            "deepseek-ai/DeepSeek-V4-Flash",
+            "kimi-k2.6-hf",
+            "minimax-m2.7-hf",
+            "qwen3-coder-hf",
+            "gemma-4-31b-hf",
+            "glm-5.1-hf",
+            "kimi-code-hf",
+            "qwen3-coder-480b-hf",
+            "deepseek-v4-hf"
           ],
           "weight": 1.0,
           "aliases": {
@@ -356,10 +374,13 @@
             "openai/gpt-oss-120b",
             "openai/gpt-oss-20b",
             "openai/gpt-oss-safeguard-20b",
-            "qwen/qwen3.8-27b"
+            "qwen/qwen3.8-27b",
+            "qwen36-groq",
+            "qwen38-groq"
           ],
           "weight": 1.0,
           "aliases": {
+            "qwen36-groq": "qwen/qwen3.8-27b",
             "qwen38-groq": "qwen/qwen3.8-27b"
           }
         }
@@ -368,14 +389,6 @@
         "base_url": "https://api.groq.com/openai",
         "default_request_timeout_in_seconds": 120,
         "max_retries": 2
-      },
-      "custom_provider_config": {
-        "base_provider_type": "openai",
-        "allowed_requests": {
-          "list_models": false,
-          "chat_completion": true,
-          "chat_completion_stream": true
-        }
       },
       "concurrency_and_buffer_size": {
         "concurrency": 8,
@@ -420,13 +433,16 @@
           "name": "freellmapi-primary",
           "value": "env.FREELLM_BEARER_TOKEN",
           "models": [
+            "DeepSeek-V3.1",
             "DeepSeek-V3.2",
+            "Meta-Llama-3.3-70B-Instruct",
             "command-a-03-2025",
             "command-r-plus-08-2024",
             "deepseek-ai/deepseek-v4-pro",
             "gemini-3-flash-preview",
             "gemini-3.1-flash-lite-preview",
             "gemini-3.1-pro-preview",
+            "gemma-3-12b-it",
             "glm-4.5-flash",
             "glm-4.7-flash",
             "gpt-oss-120b",
@@ -527,6 +543,29 @@
       "concurrency_and_buffer_size": {
         "concurrency": 2,
         "buffer_size": 50
+      }
+    },
+    "mistral": {
+      "keys": [
+        {
+          "name": "mistral-primary",
+          "value": "env.MISTRAL_API_KEY",
+          "models": [
+            "codestral-latest",
+            "mistral-small-latest",
+            "mistral-large-latest"
+          ],
+          "weight": 1.0
+        }
+      ],
+      "network_config": {
+        "base_url": "https://api.mistral.ai",
+        "default_request_timeout_in_seconds": 120,
+        "max_retries": 2
+      },
+      "concurrency_and_buffer_size": {
+        "concurrency": 4,
+        "buffer_size": 100
       }
     }
   }

@@ -88,7 +88,8 @@
     "Why these are disabled-here-but-listed, not deleted:",
     "  Bifrost runs a model-discovery loop on startup AND every minute. With",
     "  invalid / missing keys, that floods logs at 4 warn/min × invalid_",
-    "  provider_count. Cheaper to leave the blocks here as recipes."
+    "  provider_count. Cheaper to leave the blocks here as recipes.",
+    "2026-09-15T19:00:11Z: reconciled by session 475ffaea -- mistral re-activated (ADA traffic works), bazaarlink parked (0 ok / 9 real chat errors in 24h); aion/hf-router/sealion KEPT (live: 54/56/39 ok chat in 24h, the ~686 errors each are list_models probe rows); stale parked copies of openrouter/groq/mistral removed (active). Active set: aion, embed-local, freellmapi, groq, hf-router, mistral, nvidia-nim, openrouter, sealion, vllm-local, zai."
   ],
   "providers": {
     "moonshot": {
@@ -262,62 +263,6 @@
         "buffer_size": 100
       }
     },
-    "openrouter": {
-      "keys": [
-        {
-          "name": "openrouter-primary",
-          "value": "env.OPENROUTER_API_KEY",
-          "models": [
-            "*"
-          ],
-          "weight": 1.0,
-          "aliases": {
-            "openrouter-auto": "openrouter/auto"
-          }
-        }
-      ],
-      "network_config": {
-        "default_request_timeout_in_seconds": 600,
-        "max_retries": 2
-      },
-      "concurrency_and_buffer_size": {
-        "concurrency": 4,
-        "buffer_size": 100
-      }
-    },
-    "groq": {
-      "_comment": "Free perpetual tier. Key: https://console.groq.com/keys -> GROQ_API_KEY. ~30 RPM / 1000+ RPD per model. json_object + json_schema (gpt-oss/llama) + tools.",
-      "keys": [
-        {
-          "name": "groq-primary",
-          "value": "env.GROQ_API_KEY",
-          "models": [
-            "llama-3.3-70b-versatile",
-            "openai/gpt-oss-120b",
-            "openai/gpt-oss-20b",
-            "llama-3.1-8b-instant"
-          ],
-          "weight": 1.0
-        }
-      ],
-      "network_config": {
-        "base_url": "https://api.groq.com/openai",
-        "default_request_timeout_in_seconds": 600,
-        "max_retries": 2
-      },
-      "custom_provider_config": {
-        "base_provider_type": "openai",
-        "allowed_requests": {
-          "list_models": true,
-          "chat_completion": true,
-          "chat_completion_stream": true
-        }
-      },
-      "concurrency_and_buffer_size": {
-        "concurrency": 4,
-        "buffer_size": 100
-      }
-    },
     "cerebras": {
       "keys": [
         {
@@ -349,38 +294,6 @@
         "buffer_size": 200
       },
       "_comment": "parked 2026-09-15 Wave 0 (shared-infra control plane): direct probe 402 payment required; 655 err vs 0 ok/day. Re-enable only via infractl provider unpark after a passing confirm-probe."
-    },
-    "mistral": {
-      "_comment": "Free Experiment tier ~1B tokens/month, ~1 req/s (needs phone verify). Key: https://console.mistral.ai -> MISTRAL_API_KEY. json_object + json_schema + tools; includes codestral.",
-      "keys": [
-        {
-          "name": "mistral-primary",
-          "value": "env.MISTRAL_API_KEY",
-          "models": [
-            "mistral-large-latest",
-            "mistral-small-latest",
-            "codestral-latest"
-          ],
-          "weight": 1.0
-        }
-      ],
-      "network_config": {
-        "base_url": "https://api.mistral.ai",
-        "default_request_timeout_in_seconds": 600,
-        "max_retries": 2
-      },
-      "custom_provider_config": {
-        "base_provider_type": "openai",
-        "allowed_requests": {
-          "list_models": true,
-          "chat_completion": true,
-          "chat_completion_stream": true
-        }
-      },
-      "concurrency_and_buffer_size": {
-        "concurrency": 4,
-        "buffer_size": 100
-      }
     },
     "cloudflare-ai": {
       "_comment": "STAGED 2026-07-23 (deep-review horsepower add). PERPETUAL FREE — 10,000 Neurons/day (~1,300 responses, resets 00:00 UTC), NO credit card, ~80 models. Best free daily headroom + best model catalog. TO ENABLE: (1) sign up https://dash.cloudflare.com -> AI/Workers AI -> create API Token (Workers AI read/run) + copy your Account ID; (2) shared-infra/.env: CLOUDFLARE_API_TOKEN=<token>; (3) replace ACCOUNT_ID in base_url below with your real account id; (4) copy this block into config.json providers; (5) add CLOUDFLARE_API_TOKEN passthrough to docker-compose.bifrost.yml; (6) stop bifrost, sync_vk_allowlists.py, start. GOTCHA: the 10k-Neuron pool is SHARED across models — a 120B response burns far more neurons than an 8B, so real 120B/70B daily count is well under 1,300.",
@@ -581,9 +494,16 @@
           "name": "bazaarlink_api_key-primary",
           "value": "env.BAZAARLINK_API_KEY",
           "models": [
-            "deepseek/deepseek-v4-flash:free"
+            "auto:free",
+            "deepseek/deepseek-v4-flash-0731free:free",
+            "qwen/qwen3.7-flash:free"
           ],
-          "weight": 1.0
+          "weight": 1.0,
+          "aliases": {
+            "bazaarlink-free": "auto:free",
+            "bazaarlink-deepseek": "deepseek/deepseek-v4-flash-0731free:free",
+            "bazaarlink-qwen": "qwen/qwen3.7-flash:free"
+          }
         }
       ],
       "network_config": {
@@ -607,7 +527,8 @@
         "concurrency": 2,
         "buffer_size": 50
       },
-      "_comment": "parked 2026-09-15 Wave 0 (shared-infra control plane): direct probe 404 only registered model gone; 604/day failed. Re-enable only via infractl provider unpark after a passing confirm-probe."
+      "_prev_comment": "parked 2026-09-15 Wave 0 (shared-infra control plane): direct probe 404 only registered model gone; 604/day failed. Re-enable only via infractl provider unpark after a passing confirm-probe.",
+      "_comment": "parked 2026-09-15T19:00:11Z (session 475ffaea, DECISIONS.md 2026-09-15 dead-lane reconcile): 0 ok in 24h; 9 real chat attempts (qwen/qwen3.7-flash:free, auto:free, deepseek-v4-flash variants) all error, 634 rows total. TO RE-ENABLE: copy this block back into config.json providers, run sync_vk_allowlists.py (bifrost stopped), restart; only after the weekly confirm-probe passes."
     }
   }
 }

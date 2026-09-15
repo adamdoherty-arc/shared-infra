@@ -135,6 +135,13 @@ requests_total = Counter(
     "Total inference requests routed through Bifrost.",
     ["provider", "model", "status", "request_type"],
 )
+list_models_probe_total = Counter(
+    "bifrost_list_models_probe_total",
+    "GET /v1/models fan-out rows per provider (one row per provider per catalog probe; "
+    "custom providers without list_models answer unsupported_operation). Kept out of "
+    "bifrost_requests_total so catalog probes never read as inference errors.",
+    ["provider", "status"],
+)
 latency_hist = Histogram(
     "bifrost_request_latency_ms",
     "Bifrost request latency in milliseconds.",
@@ -304,6 +311,11 @@ def _scrape_logs(cursor_ts: str) -> str:
                 model = model or ""
                 status = status or "unknown"
                 request_type = obj_type or "unknown"
+                if request_type == "list_models":
+                    list_models_probe_total.labels(provider, status).inc()
+                    if isinstance(row_ts, str) and row_ts > max_ts:
+                        max_ts = row_ts
+                    continue
                 requests_total.labels(provider, model, status, request_type).inc()
                 if latency is not None:
                     try:
@@ -423,11 +435,21 @@ def _resolve_probe_vk() -> str:
             f"file:{CONFIG_DB}?mode=ro&immutable=1", uri=True, timeout=5.0
         )
         try:
+            # Only an infra-owned key may probe. Auto-pick used to be
+            # ORDER BY name LIMIT 1, which silently chose a-finance-prod (the
+            # erpnext consumer's key) and charged ~600 probe rows/day to it
+            # (measured 2026-09-15). Consumer keys (*-prod) are never eligible.
             row = conn.execute(
                 "SELECT value FROM governance_virtual_keys "
-                "WHERE is_active=1 AND value LIKE 'sk-bf-%' ORDER BY name LIMIT 1"
+                "WHERE is_active=1 AND value LIKE 'sk-bf-%' "
+                "AND name NOT LIKE '%-prod' "
+                "ORDER BY CASE name WHEN 'claude-code-local' THEN 0 ELSE 1 END, name "
+                "LIMIT 1"
             ).fetchone()
-            return row[0] if row and row[0] else ""
+            if not row or not row[0]:
+                print("[exporter] no infra-owned probe VK (set BIFROST_PROBE_VK); lane probes disabled", flush=True)
+                return ""
+            return row[0]
         finally:
             conn.close()
     except Exception:

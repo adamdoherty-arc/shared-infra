@@ -83,6 +83,7 @@ PROTECTED = {
 BIFROST_CONTAINER = os.environ.get("AUTOHEAL_BIFROST_CONTAINER", "shared-bifrost")
 STOP_TIMEOUT_S = int(os.environ.get("AUTOHEAL_STOP_TIMEOUT_S", "60"))
 DISCORD_WEBHOOK = os.environ.get("AUTOHEAL_DISCORD_WEBHOOK", "").strip()
+DISCORD_USER_AGENT = "shared-infra-bifrost-autoheal/1.1 (+https://github.com/adamdoherty-arc/shared-infra)"
 
 # ── hang detection (synthetic completion probe) ─────────────────────────────
 # The auth pass above only reads LOG LINES. On 2026-07-25 the gateway exhausted
@@ -140,7 +141,7 @@ PROBE_ACTION = os.environ.get("AUTOHEAL_PROBE_ACTION", "alert").strip().lower()
 PROBE_UPSTREAM_BASE = os.environ.get("AUTOHEAL_PROBE_UPSTREAM_BASE", "http://vllm-chat:8000").rstrip("/")
 PROBE_UPSTREAM_MODEL = os.environ.get("AUTOHEAL_PROBE_UPSTREAM_MODEL", "qwen3-chat")
 PROBE_UPSTREAM_TIMEOUT_S = int(os.environ.get("AUTOHEAL_PROBE_UPSTREAM_TIMEOUT_S", "60"))
-PROBE_VK_NAME = os.environ.get("AUTOHEAL_PROBE_VK", "").strip()  # "" = auto-pick an active VK
+PROBE_VK_NAME = os.environ.get("AUTOHEAL_PROBE_VK", "claude-code-local").strip()  # infra-owned probe VK
 
 _probe_streak = 0
 _probe_last_restart = 0.0
@@ -343,13 +344,20 @@ def probe_vk() -> str | None:
                 log(f"probe: VK '{PROBE_VK_NAME}' not found or inactive; falling back to auto-pick")
             else:
                 return row[0]
+        # Auto-pick is restricted to infra-owned keys. Until 2026-09-15 this was
+        # ORDER BY k.name LIMIT 1 and silently probed as a-finance-prod (the
+        # erpnext consumer's key), charging ~220 probe rows/day to it.
         row = db.execute(
             "SELECT k.value FROM governance_virtual_keys k "
             "JOIN governance_virtual_key_provider_configs c ON c.virtual_key_id = k.id "
-            "WHERE k.is_active=1 AND c.provider=? ORDER BY k.name LIMIT 1",
+            "WHERE k.is_active=1 AND c.provider=? AND k.name NOT LIKE '%-prod' "
+            "ORDER BY CASE k.name WHEN 'claude-code-local' THEN 0 ELSE 1 END, k.name LIMIT 1",
             (PROBE_PROVIDER,),
         ).fetchone()
-        return row[0] if row else None
+        if not row:
+            log("probe: no infra-owned VK available (set AUTOHEAL_PROBE_VK); completion probe disabled")
+            return None
+        return row[0]
     except Exception as e:  # noqa: BLE001
         log(f"probe: VK lookup failed ({e!r})")
         return None
@@ -609,7 +617,7 @@ def _alert(text: str) -> None:
             data = json.dumps({"content": f":robot: bifrost-autoheal: {text}"}).encode()
             req = urllib.request.Request(
                 DISCORD_WEBHOOK, data=data,
-                headers={"Content-Type": "application/json"},
+                headers={"Content-Type": "application/json", "User-Agent": DISCORD_USER_AGENT},
             )
             urllib.request.urlopen(req, timeout=15).read()
             log("discord alert posted")

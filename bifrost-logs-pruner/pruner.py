@@ -37,6 +37,28 @@ Configuration (env vars):
                            sidecar) -- WAL-size alerts degrade to log-only if unset
   PRUNE_WAL_ALERT_THRESHOLD_MB  Alert if logs.db-wal exceeds this after a checkpoint
                                 pass (default: 512)
+  PRUNE_INTEGRITY_CHECK    If "1" (default), run PRAGMA quick_check after each nightly
+                           prune and alert (Discord + stdout) when it reports anything
+                           but "ok". 2026-09-15: a 3.1 GB logs.db takes ~110 s. The
+                           check MUST run inside a container on the same bind mount as
+                           Bifrost, never from the Windows host: Docker Desktop's 9p
+                           (drvfs) mount does not share SQLite's fcntl locks with
+                           host-side processes, so a host-side open of the live WAL
+                           database (a) can read torn pages during a Bifrost checkpoint
+                           and report "database disk image is malformed" on a healthy
+                           file, and (b) on close believes it is the LAST connection,
+                           checkpoints, and DELETES logs.db-wal / logs.db-shm out from
+                           under Bifrost. Measured live 2026-09-15 17:09 UTC: after one
+                           host-side quick_check the container-side names became
+                           delete-pending ghosts (O_CREAT -> ENOENT, listing empty),
+                           every new in-container open failed SQLITE_CANTOPEN, Bifrost
+                           kept writing frames into a WAL nobody else could open, and the
+                           metrics exporter's cursor froze at 17:08:58 until Bifrost was
+                           stopped (sidecars first) and started again.
+  AUTOHEAL_DISCORD_WEBHOOK posts carry an explicit User-Agent: Discord's Cloudflare edge
+                           answers the default "Python-urllib/x.y" UA with 403 (error
+                           code 1010), which silently muted every sidecar alert until
+                           2026-09-15.
 """
 from __future__ import annotations
 
@@ -64,6 +86,8 @@ RUN_ONCE = os.getenv("RUN_ONCE", "0") == "1"
 # empty/unset webhook degrades to log-only, same as that sidecar today.
 DISCORD_WEBHOOK = os.environ.get("AUTOHEAL_DISCORD_WEBHOOK", "").strip()
 WAL_ALERT_THRESHOLD_MB = float(os.getenv("PRUNE_WAL_ALERT_THRESHOLD_MB", "512"))
+INTEGRITY_CHECK = os.getenv("PRUNE_INTEGRITY_CHECK", "1") == "1"
+DISCORD_USER_AGENT = "shared-infra-bifrost-logs-pruner/1.1 (+https://github.com/adamdoherty-arc/shared-infra)"
 
 
 def _alert(text: str) -> None:
@@ -73,7 +97,9 @@ def _alert(text: str) -> None:
     try:
         data = json.dumps({"content": f":warning: bifrost-logs-pruner: {text}"}).encode()
         req = urllib.request.Request(
-            DISCORD_WEBHOOK, data=data, headers={"Content-Type": "application/json"},
+            DISCORD_WEBHOOK,
+            data=data,
+            headers={"Content-Type": "application/json", "User-Agent": DISCORD_USER_AGENT},
         )
         urllib.request.urlopen(req, timeout=15).read()
         print("[pruner] discord alert posted", flush=True)
@@ -313,6 +339,45 @@ def _prune_once() -> None:
     )
 
 
+def _integrity_check() -> bool:
+    """Nightly PRAGMA quick_check; True when SQLite reports "ok".
+
+    Runs after the prune so a corrupt page is caught the same night it
+    appears instead of weeks later when a query happens to touch it (the
+    2026-06-11 8.3 GB corruption was only discovered by hand). Any result
+    other than "ok" is alerted through the same Discord path as the WAL
+    alerts. The check never raises past this function: the pruner's loop
+    must survive a corrupt file so the alert actually gets sent nightly.
+    """
+    if not INTEGRITY_CHECK or not LOGS_DB.exists():
+        return True
+    started = time.monotonic()
+    try:
+        conn = _connect_rw()
+    except Exception as exc:  # noqa: BLE001
+        _alert(f"quick_check could not open logs.db: {exc!r}")
+        return False
+    try:
+        rows = conn.execute("PRAGMA quick_check").fetchall()
+    except sqlite3.DatabaseError as exc:
+        _alert(f"quick_check raised on logs.db: {exc!r}")
+        return False
+    finally:
+        conn.close()
+    elapsed = time.monotonic() - started
+    findings = [r[0] for r in rows if r and r[0] != "ok"]
+    if not findings:
+        print(f"[pruner] quick_check ok ({elapsed:.0f}s)", flush=True)
+        return True
+    detail = " | ".join(str(f)[:300] for f in findings[:5])
+    _alert(
+        f"logs.db quick_check FAILED ({len(findings)} finding(s), {elapsed:.0f}s): {detail}. "
+        "Recover with a brief Bifrost stop + `.recover` into a fresh file, or let "
+        "infractl's logsdb_recover action do it."
+    )
+    return False
+
+
 def _seconds_until_next_prune() -> float:
     """Return seconds until the next PRUNE_HOUR_UTC:00:00 UTC."""
     now_utc = datetime.now(timezone.utc)
@@ -385,6 +450,7 @@ def main() -> None:
     if RUN_ONCE:
         print("[pruner] RUN_ONCE=1 — running prune immediately", flush=True)
         _prune_once()
+        _integrity_check()
         return
 
     print(
@@ -414,6 +480,7 @@ def main() -> None:
                 break
             _mid_day_checkpoint()
         _prune_once()
+        _integrity_check()
 
 
 if __name__ == "__main__":
