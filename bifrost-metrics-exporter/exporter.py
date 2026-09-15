@@ -106,7 +106,6 @@ _DEFAULT_PROBE_MODEL_PREFS: dict[str, list[str]] = {
     "embed-local": ["Qwen/Qwen3-Embedding-0.6B"],
     "nvidia-nim": ["nvidia/nemotron-3.5-lightning-30b-a3b", "openai/gpt-oss-20b"],
     "groq": ["openai/gpt-oss-20b", "openai/gpt-oss-120b", "qwen/qwen3.8-27b"],
-    "zai": ["glm-4.5-flash"],
     "freellmapi": ["gpt-oss-120b", "openai/gpt-oss-120b", "DeepSeek-V3.2"],
     "openrouter": ["openrouter/free", "nvidia/nemotron-3.5-lightning:free"],
     "hf-router": ["openai/gpt-oss-20b", "meta-llama/Llama-3.1-8B-Instruct"],

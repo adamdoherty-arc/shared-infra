@@ -5,70 +5,70 @@
     "config.json is: vllm-local + embed-local + nvidia-nim + openrouter +",
     "hf-router + cerebras + groq + mistral + zai + github-models (10 total,",
     "github-models added 2026-07-13). (gemini + moonshot both",
-    "parked — see below.) ALL-FREE stack — no paid providers. Everything",
+    "parked \u2014 see below.) ALL-FREE stack \u2014 no paid providers. Everything",
     "else is shaped here for fast restoration.",
     "",
     "Status (2026-06-11):",
-    "  moonshot   — PARKED 2026-06-11. Was the only PAID provider. Kimi K2.6",
+    "  moonshot   \u2014 PARKED 2026-06-11. Was the only PAID provider. Kimi K2.6",
     "               is now free via nvidia-nim/moonshotai/kimi-k2.6 (40 RPM,",
     "               200 on request) so paid Moonshot was removed. KIMI_API_KEY",
     "               blanked in shared-infra/.env; operator to cancel Moonshot",
     "               billing/auto-recharge. Restore this block + key + compose",
     "               passthrough to re-enable.",
-    "  anthropic  — env empty; user disabled intentionally.",
+    "  anthropic  \u2014 env empty; user disabled intentionally.",
     "",
-    "Status (2026-07-13, Perf-503b-W3b — VK/provider health sweep):",
-    "  moonshot-nim-compat — PARKED 2026-07-13. This is a SEPARATE block from",
-    "               the paid 'moonshot' above — it's the free NIM-compat shim",
+    "Status (2026-07-13, Perf-503b-W3b \u2014 VK/provider health sweep):",
+    "  moonshot-nim-compat \u2014 PARKED 2026-07-13. This is a SEPARATE block from",
+    "               the paid 'moonshot' above \u2014 it's the free NIM-compat shim",
     "               that lived in config.json as provider name 'moonshot' from",
     "               2026-06-11 to 2026-07-13. Parked because NVIDIA NIM 404s",
     "               moonshotai/kimi-k2.6 with 'Function ... Not found for",
     "               account' on BOTH API keys despite it being listed in",
-    "               /v1/models — confirmed upstream NVIDIA bug, not a config",
+    "               /v1/models \u2014 confirmed upstream NVIDIA bug, not a config",
     "               problem. nvidia-nim/moonshotai/kimi-k2.6 was LEFT ACTIVE",
     "               in the nvidia-nim provider block itself (NIM's own catalog",
     "               still lists it); if NVIDIA redeploys the function it just",
     "               starts working again with zero config change. See the",
     "               moonshot-nim-compat block's own _comment for the exact",
     "               restore steps + a re-verify curl.",
-    "  gemini     — was ACTIVE since 2026-05-31 (FLASH-ONLY as of 2026-06-11:",
+    "  gemini     \u2014 was ACTIVE since 2026-05-31 (FLASH-ONLY as of 2026-06-11:",
     "               gemini-3.x Pro previews are billing-gated, no free API",
-    "               tier since ~May 2026). PARKED 2026-07-08 — GEMINI_API_KEY",
+    "               tier since ~May 2026). PARKED 2026-07-08 \u2014 GEMINI_API_KEY",
     "               invalid/expired, was flooding logs at ~4 warn/min. The",
     "               'gemini' block below in this file IS the exact known-good",
-    "               flash-only config that was live (verified 2026-07-13 — its",
+    "               flash-only config that was live (verified 2026-07-13 \u2014 its",
     "               models[] matches config.json.bak.parkgemini-20260708 byte",
     "               for byte). Restore: refresh GEMINI_API_KEY at",
     "               https://aistudio.google.com/apikey, copy the block below",
     "               back into config.json's providers, run",
     "               sync_vk_allowlists.py, restart. The wildcard block below",
     "               re-enables Pro IF billing is ever added.",
-    "  minimax    — key still active upstream as of 2026-05-14 but user wants",
+    "  minimax    \u2014 key still active upstream as of 2026-05-14 but user wants",
     "               it disabled. Either blank MINIMAX_API_KEY in shared-infra/",
     "               .env or revoke at MiniMax dashboard before restoring.",
     "               (MiniMax M2.7 is available FREE via nvidia-nim instead.)",
-    "  openrouter — ACTIVE again since 2026-05-27 with a curated :free list",
+    "  openrouter \u2014 ACTIVE again since 2026-05-27 with a curated :free list",
     "               in config.json (refreshed 2026-06-11; one-time $10 topup",
-    "               applied → 1,000 free req/day). The wildcard block below",
+    "               applied \u2192 1,000 free req/day). The wildcard block below",
     "               is only for routing PAID OpenRouter models.",
     "",
     "FREE perpetual-tier providers added 2026-05-31 (ready-to-enable recipes):",
-    "  groq      — GROQ_API_KEY      (https://console.groq.com/keys; ~30 RPM, json_schema+tools)",
-    "  cerebras  — CEREBRAS_API_KEY  (https://cloud.cerebras.ai; ~1M tok/day, 8K ctx)",
-    "  mistral   — MISTRAL_API_KEY   (https://console.mistral.ai; ~1B tok/month, codestral)",
-    "  gemini    — GEMINI_API_KEY    (https://aistudio.google.com/apikey; best json_schema; native provider block below)",
+    "  groq      \u2014 GROQ_API_KEY      (https://console.groq.com/keys; ~30 RPM, json_schema+tools)",
+    "  cerebras  \u2014 CEREBRAS_API_KEY  (https://cloud.cerebras.ai; ~1M tok/day, 8K ctx)",
+    "  mistral   \u2014 MISTRAL_API_KEY   (https://console.mistral.ai; ~1B tok/month, codestral)",
+    "  gemini    \u2014 GEMINI_API_KEY    (https://aistudio.google.com/apikey; best json_schema; native provider block below)",
     "  These are OpenAI-compatible custom providers; Bifrost appends /v1 so the",
     "  base_url omits it. Gemini uses the native gemini provider block (models:[*]).",
     "",
     "TO RE-ENABLE one of these providers:",
     "  1. Set / refresh the corresponding env var in shared-infra/.env:",
-    "       anthropic  → ANTHROPIC_API_KEY",
-    "       gemini     → GEMINI_API_KEY",
-    "       groq       → GROQ_API_KEY",
-    "       cerebras   → CEREBRAS_API_KEY",
-    "       mistral    → MISTRAL_API_KEY",
-    "       minimax    → MINIMAX_API_KEY",
-    "       openrouter → OPENROUTER_API_KEY",
+    "       anthropic  \u2192 ANTHROPIC_API_KEY",
+    "       gemini     \u2192 GEMINI_API_KEY",
+    "       groq       \u2192 GROQ_API_KEY",
+    "       cerebras   \u2192 CEREBRAS_API_KEY",
+    "       mistral    \u2192 MISTRAL_API_KEY",
+    "       minimax    \u2192 MINIMAX_API_KEY",
+    "       openrouter \u2192 OPENROUTER_API_KEY",
     "  2. Add the matching env var passthrough back to",
     "     docker-compose.bifrost.yml under `environment:` (as of 2026-07-13",
     "     the compose file already passes NV_API_KEY/NV_API_KEY_2,",
@@ -87,9 +87,10 @@
     "",
     "Why these are disabled-here-but-listed, not deleted:",
     "  Bifrost runs a model-discovery loop on startup AND every minute. With",
-    "  invalid / missing keys, that floods logs at 4 warn/min × invalid_",
+    "  invalid / missing keys, that floods logs at 4 warn/min \u00d7 invalid_",
     "  provider_count. Cheaper to leave the blocks here as recipes.",
-    "2026-09-15T19:00:11Z: reconciled by session 475ffaea -- mistral re-activated (ADA traffic works), bazaarlink parked (0 ok / 9 real chat errors in 24h); aion/hf-router/sealion KEPT (live: 54/56/39 ok chat in 24h, the ~686 errors each are list_models probe rows); stale parked copies of openrouter/groq/mistral removed (active). Active set: aion, embed-local, freellmapi, groq, hf-router, mistral, nvidia-nim, openrouter, sealion, vllm-local, zai."
+    "2026-09-15T19:00:11Z: reconciled by session 475ffaea -- mistral re-activated (ADA traffic works), bazaarlink parked (0 ok / 9 real chat errors in 24h); aion/hf-router/sealion KEPT (live: 54/56/39 ok chat in 24h, the ~686 errors each are list_models probe rows); stale parked copies of openrouter/groq/mistral removed (active). Active set: aion, embed-local, freellmapi, groq, hf-router, mistral, nvidia-nim, openrouter, sealion, vllm-local, zai.",
+    "2026-09-15T20:56:38Z parked zai (ZAI-side 429 rate limit on ada-prod volume, successes ~61 s). Active set: vllm-local, embed-local, nvidia-nim, openrouter, hf-router, groq, freellmapi, sealion, aion, mistral."
   ],
   "providers": {
     "moonshot": {
@@ -125,7 +126,7 @@
       "_comment": "parked 2026-09-15 Wave 0 (shared-infra control plane): MOONSHOT_API_KEY empty and not passed to container; 621/day failed. Re-enable only via infractl provider unpark after a passing confirm-probe."
     },
     "moonshot-nim-compat": {
-      "_comment": "PARKED 2026-07-13 (Perf-503b-W3b) — NOT the same block as 'moonshot' above (that's the retired PAID api.moonshot.ai account). This was the free NIM-compat-shim provider named 'moonshot' in config.json from 2026-06-11 to 2026-07-13, routing legacy `moonshot/kimi-*` callers to NVIDIA NIM's moonshotai/kimi-k2.6. Parked because NVIDIA NIM now 404s that model with 'Function 23d4f03a-b8a6-4adb-a183-7daa083a09cc: Not found for account' on BOTH NV_API_KEY and NV_API_KEY_2 despite it still being listed in GET /v1/models — confirmed via direct curl to integrate.api.nvidia.com, bypassing Bifrost entirely, so this is an upstream NVIDIA catalog/serving-function bug, not a Bifrost or key problem. nvidia-nim/moonshotai/kimi-k2.6 itself was left ACTIVE in config.json's nvidia-nim provider block (NIM's own catalog still lists it — if NVIDIA redeploys the function it starts working again automatically with zero config change). TO RESTORE this compat-shim block: rename the key back to 'moonshot', copy it into config.json's `providers` object (in place of where it was, before `zai`), run sync_vk_allowlists.py, restart shared-bifrost. Re-verify first: curl -s -X POST https://integrate.api.nvidia.com/v1/chat/completions -H 'Authorization: Bearer '$NV_API_KEY -d '{\"model\":\"moonshotai/kimi-k2.6\",\"messages\":[{\"role\":\"user\",\"content\":\"ping\"}],\"max_tokens\":4}' — expect HTTP 200, not 404.",
+      "_comment": "PARKED 2026-07-13 (Perf-503b-W3b) \u2014 NOT the same block as 'moonshot' above (that's the retired PAID api.moonshot.ai account). This was the free NIM-compat-shim provider named 'moonshot' in config.json from 2026-06-11 to 2026-07-13, routing legacy `moonshot/kimi-*` callers to NVIDIA NIM's moonshotai/kimi-k2.6. Parked because NVIDIA NIM now 404s that model with 'Function 23d4f03a-b8a6-4adb-a183-7daa083a09cc: Not found for account' on BOTH NV_API_KEY and NV_API_KEY_2 despite it still being listed in GET /v1/models \u2014 confirmed via direct curl to integrate.api.nvidia.com, bypassing Bifrost entirely, so this is an upstream NVIDIA catalog/serving-function bug, not a Bifrost or key problem. nvidia-nim/moonshotai/kimi-k2.6 itself was left ACTIVE in config.json's nvidia-nim provider block (NIM's own catalog still lists it \u2014 if NVIDIA redeploys the function it starts working again automatically with zero config change). TO RESTORE this compat-shim block: rename the key back to 'moonshot', copy it into config.json's `providers` object (in place of where it was, before `zai`), run sync_vk_allowlists.py, restart shared-bifrost. Re-verify first: curl -s -X POST https://integrate.api.nvidia.com/v1/chat/completions -H 'Authorization: Bearer '$NV_API_KEY -d '{\"model\":\"moonshotai/kimi-k2.6\",\"messages\":[{\"role\":\"user\",\"content\":\"ping\"}],\"max_tokens\":4}' \u2014 expect HTTP 200, not 404.",
       "keys": [
         {
           "name": "moonshot-compat-nim-2",
@@ -203,7 +204,7 @@
       }
     },
     "gemini": {
-      "_comment": "PARKED 2026-07-08 by operator — GEMINI_API_KEY in shared-infra/.env is invalid/expired and was flooding Bifrost logs at ~4 warn/min ('failed to list models for provider gemini: invalid authentication credentials'). This is the exact FLASH-ONLY known-good block that was live in config.json (gemini-3.x Pro previews are billing-gated / no free tier since ~May 2026). TO RE-ENABLE: refresh GEMINI_API_KEY (https://aistudio.google.com/apikey) in .env, copy this block back into config.json providers, run sync_vk_allowlists.py (with bifrost stopped), restart. The bifrost-autoheal sidecar will auto-park it again if the key is still bad.",
+      "_comment": "PARKED 2026-07-08 by operator \u2014 GEMINI_API_KEY in shared-infra/.env is invalid/expired and was flooding Bifrost logs at ~4 warn/min ('failed to list models for provider gemini: invalid authentication credentials'). This is the exact FLASH-ONLY known-good block that was live in config.json (gemini-3.x Pro previews are billing-gated / no free tier since ~May 2026). TO RE-ENABLE: refresh GEMINI_API_KEY (https://aistudio.google.com/apikey) in .env, copy this block back into config.json providers, run sync_vk_allowlists.py (with bifrost stopped), restart. The bifrost-autoheal sidecar will auto-park it again if the key is still bad.",
       "keys": [
         {
           "name": "gemini-primary",
@@ -296,7 +297,7 @@
       "_comment": "parked 2026-09-15 Wave 0 (shared-infra control plane): direct probe 402 payment required; 655 err vs 0 ok/day. Re-enable only via infractl provider unpark after a passing confirm-probe."
     },
     "cloudflare-ai": {
-      "_comment": "STAGED 2026-07-23 (deep-review horsepower add). PERPETUAL FREE — 10,000 Neurons/day (~1,300 responses, resets 00:00 UTC), NO credit card, ~80 models. Best free daily headroom + best model catalog. TO ENABLE: (1) sign up https://dash.cloudflare.com -> AI/Workers AI -> create API Token (Workers AI read/run) + copy your Account ID; (2) shared-infra/.env: CLOUDFLARE_API_TOKEN=<token>; (3) replace ACCOUNT_ID in base_url below with your real account id; (4) copy this block into config.json providers; (5) add CLOUDFLARE_API_TOKEN passthrough to docker-compose.bifrost.yml; (6) stop bifrost, sync_vk_allowlists.py, start. GOTCHA: the 10k-Neuron pool is SHARED across models — a 120B response burns far more neurons than an 8B, so real 120B/70B daily count is well under 1,300.",
+      "_comment": "STAGED 2026-07-23 (deep-review horsepower add). PERPETUAL FREE \u2014 10,000 Neurons/day (~1,300 responses, resets 00:00 UTC), NO credit card, ~80 models. Best free daily headroom + best model catalog. TO ENABLE: (1) sign up https://dash.cloudflare.com -> AI/Workers AI -> create API Token (Workers AI read/run) + copy your Account ID; (2) shared-infra/.env: CLOUDFLARE_API_TOKEN=<token>; (3) replace ACCOUNT_ID in base_url below with your real account id; (4) copy this block into config.json providers; (5) add CLOUDFLARE_API_TOKEN passthrough to docker-compose.bifrost.yml; (6) stop bifrost, sync_vk_allowlists.py, start. GOTCHA: the 10k-Neuron pool is SHARED across models \u2014 a 120B response burns far more neurons than an 8B, so real 120B/70B daily count is well under 1,300.",
       "keys": [
         {
           "name": "cloudflare-primary",
@@ -335,7 +336,7 @@
       }
     },
     "sambanova": {
-      "_comment": "STAGED 2026-07-23. PERPETUAL FREE (no credit card) — fastest inference on the market (RDU hardware, hundreds of tok/s). Free tier = 20 RPM + 200,000 tokens/day (per docs.sambanova.ai/docs/en/models/rate-limits; ignore marketing '600 RPM' claims). Route latency-sensitive / reasoning traffic here. TO ENABLE: sign up https://cloud.sambanova.ai -> API key; .env SAMBANOVA_API_KEY=<key>; copy block to config.json; add env passthrough to docker-compose.bifrost.yml; stop bifrost, sync_vk_allowlists.py, start.",
+      "_comment": "STAGED 2026-07-23. PERPETUAL FREE (no credit card) \u2014 fastest inference on the market (RDU hardware, hundreds of tok/s). Free tier = 20 RPM + 200,000 tokens/day (per docs.sambanova.ai/docs/en/models/rate-limits; ignore marketing '600 RPM' claims). Route latency-sensitive / reasoning traffic here. TO ENABLE: sign up https://cloud.sambanova.ai -> API key; .env SAMBANOVA_API_KEY=<key>; copy block to config.json; add env passthrough to docker-compose.bifrost.yml; stop bifrost, sync_vk_allowlists.py, start.",
       "keys": [
         {
           "name": "sambanova-primary",
@@ -374,7 +375,7 @@
       }
     },
     "cohere": {
-      "_comment": "STAGED 2026-07-23. Trial keys are PERPETUAL (rate-limited, not time-limited) — but hard cap 1,000 API calls/MONTH. Strong tool-use/RAG models. Low-volume PREMIUM lane only, not a workhorse. TO ENABLE: key at https://dashboard.cohere.com/api-keys (no CC); .env COHERE_API_KEY=<key>; copy block to config.json; add env passthrough; stop bifrost, sync_vk_allowlists.py, start. Uses Cohere's OpenAI-Compatibility API (/compatibility/v1).",
+      "_comment": "STAGED 2026-07-23. Trial keys are PERPETUAL (rate-limited, not time-limited) \u2014 but hard cap 1,000 API calls/MONTH. Strong tool-use/RAG models. Low-volume PREMIUM lane only, not a workhorse. TO ENABLE: key at https://dashboard.cohere.com/api-keys (no CC); .env COHERE_API_KEY=<key>; copy block to config.json; add env passthrough; stop bifrost, sync_vk_allowlists.py, start. Uses Cohere's OpenAI-Compatibility API (/compatibility/v1).",
       "keys": [
         {
           "name": "cohere-primary",
@@ -529,6 +530,39 @@
       },
       "_prev_comment": "parked 2026-09-15 Wave 0 (shared-infra control plane): direct probe 404 only registered model gone; 604/day failed. Re-enable only via infractl provider unpark after a passing confirm-probe.",
       "_comment": "parked 2026-09-15T19:00:11Z (session 475ffaea, DECISIONS.md 2026-09-15 dead-lane reconcile): 0 ok in 24h; 9 real chat attempts (qwen/qwen3.7-flash:free, auto:free, deepseek-v4-flash variants) all error, 634 rows total. TO RE-ENABLE: copy this block back into config.json providers, run sync_vk_allowlists.py (bifrost stopped), restart; only after the weekly confirm-probe passes."
+    },
+    "zai": {
+      "keys": [
+        {
+          "name": "zai-primary",
+          "value": "env.ZAI_API_KEY",
+          "models": [
+            "glm-4.5-flash"
+          ],
+          "weight": 1.0
+        }
+      ],
+      "network_config": {
+        "base_url": "https://api.z.ai",
+        "default_request_timeout_in_seconds": 120,
+        "max_retries": 2
+      },
+      "custom_provider_config": {
+        "base_provider_type": "openai",
+        "request_path_overrides": {
+          "chat_completion": "/api/paas/v4/chat/completions",
+          "chat_completion_stream": "/api/paas/v4/chat/completions"
+        },
+        "allowed_requests": {
+          "chat_completion": true,
+          "chat_completion_stream": true
+        }
+      },
+      "concurrency_and_buffer_size": {
+        "concurrency": 4,
+        "buffer_size": 100
+      },
+      "_comment": "parked 2026-09-15T20:56:38Z (session 475ffaea, DECISIONS.md 2026-09-15 zai park): 24h logs.db 733 x HTTP 429 code 1302 'Rate limit reached for requests' against ada-prod, 178 ok @ ~61 s avg latency, 47 x Bifrost 504; manual 1-token probes 5-8 s (thinking mode). Direct /api/paas/v4/models on the key lists glm-4.5, glm-4.5-air, glm-4.6, glm-4.7, glm-5, glm-5-turbo, glm-5.1, glm-5.2, glm-5.3, glm-5.3-flash. TO RE-ENABLE: copy this block back into config.json providers (consider glm-5.3-flash), run sync_vk_allowlists.py (bifrost stopped), restart; only after the weekly confirm-probe passes and a per-VK rate cap exists so ada-prod cannot 429 the lane."
     }
   }
 }

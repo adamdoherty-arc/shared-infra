@@ -395,38 +395,6 @@
         "buffer_size": 200
       }
     },
-    "zai": {
-      "keys": [
-        {
-          "name": "zai-primary",
-          "value": "env.ZAI_API_KEY",
-          "models": [
-            "glm-4.5-flash"
-          ],
-          "weight": 1.0
-        }
-      ],
-      "network_config": {
-        "base_url": "https://api.z.ai",
-        "default_request_timeout_in_seconds": 120,
-        "max_retries": 2
-      },
-      "custom_provider_config": {
-        "base_provider_type": "openai",
-        "request_path_overrides": {
-          "chat_completion": "/api/paas/v4/chat/completions",
-          "chat_completion_stream": "/api/paas/v4/chat/completions"
-        },
-        "allowed_requests": {
-          "chat_completion": true,
-          "chat_completion_stream": true
-        }
-      },
-      "concurrency_and_buffer_size": {
-        "concurrency": 4,
-        "buffer_size": 100
-      }
-    },
     "freellmapi": {
       "keys": [
         {

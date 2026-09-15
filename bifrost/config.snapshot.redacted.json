@@ -334,25 +334,6 @@
         "buffer_size": 200
       }
     },
-    "zai": {
-      "base_url": "https://api.z.ai",
-      "list_models": null,
-      "keys": [
-        {
-          "name": "zai-primary",
-          "value": "env.ZAI_API_KEY",
-          "models": [
-            "glm-4.5-flash"
-          ],
-          "aliases": {},
-          "weight": 1.0
-        }
-      ],
-      "concurrency_and_buffer_size": {
-        "concurrency": 4,
-        "buffer_size": 100
-      }
-    },
     "freellmapi": {
       "base_url": "http://shared-freellmapi:3001",
       "list_models": null,
@@ -466,7 +447,8 @@
     "moonshot-nim-compat",
     "ovhcloud",
     "sambanova",
-    "siliconflow"
+    "siliconflow",
+    "zai"
   ],
   "virtual_keys": [
     {
@@ -523,11 +505,6 @@
           "provider": "vllm-local",
           "allow_all_keys": true,
           "allowed_models": 9
-        },
-        {
-          "provider": "zai",
-          "allow_all_keys": true,
-          "allowed_models": 1
         }
       ]
     },
@@ -585,11 +562,6 @@
           "provider": "vllm-local",
           "allow_all_keys": true,
           "allowed_models": 9
-        },
-        {
-          "provider": "zai",
-          "allow_all_keys": true,
-          "allowed_models": 1
         }
       ]
     },
@@ -642,11 +614,6 @@
           "provider": "vllm-local",
           "allow_all_keys": true,
           "allowed_models": 9
-        },
-        {
-          "provider": "zai",
-          "allow_all_keys": true,
-          "allowed_models": 1
         }
       ]
     },
@@ -699,11 +666,6 @@
           "provider": "vllm-local",
           "allow_all_keys": true,
           "allowed_models": 9
-        },
-        {
-          "provider": "zai",
-          "allow_all_keys": true,
-          "allowed_models": 1
         }
       ]
     },
@@ -756,11 +718,6 @@
           "provider": "vllm-local",
           "allow_all_keys": true,
           "allowed_models": 9
-        },
-        {
-          "provider": "zai",
-          "allow_all_keys": true,
-          "allowed_models": 1
         }
       ]
     },
@@ -813,11 +770,6 @@
           "provider": "vllm-local",
           "allow_all_keys": true,
           "allowed_models": 9
-        },
-        {
-          "provider": "zai",
-          "allow_all_keys": true,
-          "allowed_models": 1
         }
       ]
     },
@@ -870,11 +822,6 @@
           "provider": "vllm-local",
           "allow_all_keys": true,
           "allowed_models": 9
-        },
-        {
-          "provider": "zai",
-          "allow_all_keys": true,
-          "allowed_models": 1
         }
       ]
     }

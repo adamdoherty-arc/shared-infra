@@ -206,3 +206,54 @@ best-effort fallback only and no consumer may depend on it.
 `smoke_all_lanes.py` / `verify_local_model.py`; both scripts now read `INFRA_PROBE_VK`.
 Legion's sampler timed out against vllm-local during the GPU-saturated window; that is
 capacity (9,737 local 504s/day at 100 % GPU), not a routing defect.
+
+---
+
+## 2026-09-15 — zai parked: ZAI rate-limits ada-prod's volume, successes take a minute
+
+**Decision.** `zai` moves from `config.json` to `disabled-providers.json`. Active set is now
+ten providers: vllm-local, embed-local, nvidia-nim, openrouter, hf-router, groq, freellmapi,
+sealion, aion, mistral.
+
+**Evidence (logs.db, 24 h to 2026-09-15 20:00Z).** `zai/glm-4.5-flash` from ada-prod:
+763 errors at 11.1 s average, 178 successes at ~61 s average; 733 of the errors were
+HTTP 429 `{"code":"1302","message":"Rate limit reached for requests"}` from ZAI's side,
+47 were Bifrost 504s. `list_models is not supported by zai provider` accounted for a
+further 759 rows of pure noise. Manual 1-token probes succeeded 3/3 at 5-8 s, so the key is
+valid; the lane simply cannot carry ADA's request rate. A direct call to ZAI's
+`/api/paas/v4/models` on the same key lists glm-4.5, glm-4.5-air, glm-4.6, glm-4.7, glm-5,
+glm-5-turbo, glm-5.1, glm-5.2, glm-5.3 and glm-5.3-flash (glm-4.5-flash is not listed but
+still answers).
+
+**Re-enable rule.** Copy the block back (consider `glm-5.3-flash`), delete nothing else,
+run the sync with Bifrost stopped, restart. Only after the weekly confirm-probe passes AND a
+per-VK rate cap exists so ada-prod cannot 429 the lane for every other consumer.
+
+**Mechanics learned while parking.** `bifrost/sync_vk_allowlists.py` derives its set of
+retired providers from `config_keys` rows in `config.db`, not from `config.json`. Deleting
+only the `config_providers` row leaves the seven per-VK provider-config rows in place; the
+key row (`zai-primary`) has to go first, then the sync deletes them ("deleted PC rows for
+retired providers: 7"). The script has no `--help`; any invocation runs the sync. The
+exporter's `_DEFAULT_PROBE_MODEL_PREFS` lost its `zai` line and `bifrost-metrics` was
+rebuilt (its image is built from `bifrost-metrics-exporter/`, so an edit needs
+`docker compose -f docker-compose.bifrost.yml build bifrost-metrics` plus a force-recreate);
+after the restart `bifrost_lane_up` lists nine lanes, all 1.0, none zai. `openrouter` is
+skipped by the prober as `vk_not_allowed` because the probe VK (claude-code-local) does not
+carry openrouter; that lane is on 402 (no credits) and is an owner sign-off item anyway.
+
+## 2026-09-15 — Who was probing Bifrost, and with which key
+
+Four separate probers were attributed while chasing "who is hammering dead lanes":
+
+- **bifrost-metrics exporter**: its auto-picked probe model was hitting a-finance's
+  allowlist; fixed earlier today, now probes with `BIFROST_PROBE_VK` = claude-code-local.
+- **Zero**: an httpx prober on zero-prod. Zero is intentionally OFF; the prober stopped with it.
+- **Legion `stack_monitor`**: the hourly `legion-llm-ops/1.0` sweep sends no VK at all; it is
+  the source of the `virtual_key_required` 401 rows on every provider. It moves into
+  `infractl` with the llm_ops role.
+- **Manual curl tests** from this session, all under `INFRA_PROBE_VK`.
+
+Legion's `VLLM_API_KEY` was stale (pointed at a revoked VK); fixed in Legion's `.env` and both
+containers force-recreated (`docker restart` does not re-read `.env`). Stray VK files under
+`C:\tmp` were deleted. The host-side env var for the probe key is `INFRA_PROBE_VK`;
+`BIFROST_PROBE_VK` is only the exporter container's own variable name.
