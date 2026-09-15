@@ -279,6 +279,35 @@ def write_text(path, text):
         fh.write(text)
 
 
+WEBHOOK_ENV_NAMES = ("CLAUDE_USAGE_DISCORD_WEBHOOK", "DISCORD_INFRA_WEBHOOK", "AUTOHEAL_DISCORD_WEBHOOK")
+REPO_ENV_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env")
+
+
+def resolve_webhook():
+    """Process env first, then shared-infra/.env (the Windows task has no env of its own).
+    The value is returned for the POST only and is never printed."""
+    for name in WEBHOOK_ENV_NAMES:
+        v = os.environ.get(name, "").strip()
+        if v:
+            return v
+    if not os.path.exists(REPO_ENV_FILE):
+        return ""
+    found = {}
+    with open(REPO_ENV_FILE, encoding="utf-8", errors="replace") as fh:
+        for raw in fh:
+            s = raw.strip()
+            if not s or s.startswith("#") or "=" not in s:
+                continue
+            k, v = s.split("=", 1)
+            k = k.strip()
+            if k in WEBHOOK_ENV_NAMES:
+                found[k] = v.strip().strip('"').strip("'")
+    for name in WEBHOOK_ENV_NAMES:
+        if found.get(name):
+            return found[name]
+    return ""
+
+
 def main():
     ap = argparse.ArgumentParser(description="Claude Code usage/cost forensics (stdlib only)")
     ap.add_argument("--days", type=int, default=7)
@@ -568,14 +597,18 @@ def main():
                 "avg_top_cache_read=%.0f (target<=200000) subagent_top_share=%.1f%% (target<=5%%)") % (
             args.days, report["total_est_cost"], families_report["top"]["share_of_cost"] * 100,
             avg_top_cache_read, subagent_top_share * 100)
-        webhook = os.environ.get("CLAUDE_USAGE_DISCORD_WEBHOOK")
+        webhook = resolve_webhook()
         if not webhook:
             print("")
-            print("No CLAUDE_USAGE_DISCORD_WEBHOOK set; summary line:")
+            print("No Discord webhook (CLAUDE_USAGE_DISCORD_WEBHOOK / DISCORD_INFRA_WEBHOOK / AUTOHEAL_DISCORD_WEBHOOK); summary line:")
             print(line)
         else:
             payload = json.dumps({"content": line}).encode("utf-8")
-            req = urllib.request.Request(webhook, data=payload, headers={"Content-Type": "application/json"})
+            req = urllib.request.Request(webhook, data=payload, headers={
+                "Content-Type": "application/json",
+                # Cloudflare returns 1010 for urllib's default User-Agent.
+                "User-Agent": "shared-infra-claude-usage-forensics/1.0",
+            })
             try:
                 with urllib.request.urlopen(req, timeout=15) as resp:
                     resp.read()
