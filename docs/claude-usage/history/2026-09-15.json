@@ -1,22 +1,22 @@
 {
-  "generated_at": "2026-09-15T17:44:21Z",
+  "generated_at": "2026-09-15T17:49:25Z",
   "window_days": 7,
   "cutoff_date": "2026-09-08",
   "files_scanned": 1846,
   "files_failed": 0,
-  "lines_scanned": 893948,
-  "assistant_turns_in_window": 90254,
+  "lines_scanned": 894406,
+  "assistant_turns_in_window": 90365,
   "families": {
     "top": {
-      "turns": 27533,
+      "turns": 27644,
       "tokens": {
-        "input": 200579,
-        "output": 27477740,
-        "cache_read": 9739684877,
-        "cache_write": 273636963
+        "input": 200801,
+        "output": 27564644,
+        "cache_read": 9759256007,
+        "cache_write": 275122792
       },
-      "est_cost": 21804.0596,
-      "share_of_cost": 0.7203
+      "est_cost": 21867.7967,
+      "share_of_cost": 0.7209
     },
     "sonnet": {
       "turns": 62534,
@@ -27,7 +27,7 @@
         "cache_write": 298881518
       },
       "est_cost": 8462.5691,
-      "share_of_cost": 0.2796
+      "share_of_cost": 0.279
     },
     "haiku": {
       "turns": 110,
@@ -52,14 +52,14 @@
       "share_of_cost": 0.0
     }
   },
-  "total_est_cost": 30269.0169,
+  "total_est_cost": 30332.754,
   "main_vs_subagent": {
-    "main_est_cost": 16057.1772,
+    "main_est_cost": 16120.9143,
     "subagent_est_cost": 14211.8397,
-    "main_share": 0.5305,
-    "subagent_share": 0.4695
+    "main_share": 0.5315,
+    "subagent_share": 0.4685
   },
-  "avg_top_cache_read_per_turn": 353745.9,
+  "avg_top_cache_read_per_turn": 353033.4,
   "cost_by_day": {
     "2026-09-08": 8330.9218,
     "2026-09-09": 3949.6512,
@@ -68,7 +68,7 @@
     "2026-09-12": 0.0,
     "2026-09-13": 0.0,
     "2026-09-14": 5248.422,
-    "2026-09-15": 5948.0545
+    "2026-09-15": 6011.7916
   },
   "top_sessions": [
     {
@@ -113,23 +113,34 @@
     },
     {
       "project": "c--code-ADA",
+      "session_id": "4c34cb26-cfaa-4138-8160-57bdc4a4f1f7",
+      "est_cost": 1726.3631,
+      "turns": 5085,
+      "model_mix": {
+        "top": 878,
+        "other": 21,
+        "sonnet": 4186
+      }
+    },
+    {
+      "project": "c--code-ADA",
+      "session_id": "e6f55a63-ec4f-4e31-b405-8bccf07d4e9a",
+      "est_cost": 1721.1,
+      "turns": 5256,
+      "model_mix": {
+        "top": 1067,
+        "other": 6,
+        "sonnet": 4183
+      }
+    },
+    {
+      "project": "c--code-ADA",
       "session_id": "fe9c26a4-8400-4461-95b7-5d6c9d98faef",
       "est_cost": 1718.9611,
       "turns": 5586,
       "model_mix": {
         "top": 1136,
         "sonnet": 4450
-      }
-    },
-    {
-      "project": "c--code-ADA",
-      "session_id": "4c34cb26-cfaa-4138-8160-57bdc4a4f1f7",
-      "est_cost": 1715.0381,
-      "turns": 5067,
-      "model_mix": {
-        "top": 860,
-        "other": 21,
-        "sonnet": 4186
       }
     },
     {
@@ -141,17 +152,6 @@
         "top": 693,
         "other": 10,
         "sonnet": 8230
-      }
-    },
-    {
-      "project": "c--code-ADA",
-      "session_id": "e6f55a63-ec4f-4e31-b405-8bccf07d4e9a",
-      "est_cost": 1707.3383,
-      "turns": 5234,
-      "model_mix": {
-        "top": 1045,
-        "other": 6,
-        "sonnet": 4183
       }
     },
     {
@@ -177,12 +177,12 @@
   "subagent_top_share_of_subagent_spend": 0.4141,
   "targets": {
     "top_tier_share": {
-      "value": 0.7203,
+      "value": 0.7209,
       "target": 0.3,
       "ok": false
     },
     "avg_top_cache_read": {
-      "value": 353745.9,
+      "value": 353033.4,
       "target": 200000,
       "ok": false
     },
