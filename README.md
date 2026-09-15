@@ -60,3 +60,20 @@ Each project calls Bifrost with a per-project virtual key and `provider/model` s
 - Total pinned: ~26 GB (0.92 util cap on chat, 0.12 on embed)
 
 If KV pressure shows up, lower `--max-model-len` on `vllm-chat` (currently 16384) or reduce `--gpu-memory-utilization` (currently 0.92). Do NOT switch KV off fp8.
+
+## Claude Code usage (weekly forensics)
+
+The token-spend forensics for every Claude Code session on this box live here so they have a
+tracked, viewable home: **[docs/claude-usage/README.md](docs/claude-usage/README.md)** (rendered
+page: targets vs. actuals, spend by model family, cost by day, top sessions, agent-model-gate
+decisions, week-over-week trend), `docs/claude-usage/latest.json` (raw) and
+`docs/claude-usage/history/<date>.json` (one per run). `scripts/claude_usage_forensics.py` is
+stdlib-only and walks `~/.claude/projects/**/*.jsonl`; the Windows task
+"Claude Usage Forensics - Weekly" (Sundays 08:00) runs `scripts/run-usage-forensics.cmd`, which
+re-renders the page and commits `docs/claude-usage` path-scoped (no push). Targets and the
+rules that move the numbers: Enhancement-1001070 / `~/.claude/CLAUDE.md` TOKEN DISCIPLINE.
+Run it by hand any time:
+
+```bash
+python scripts/claude_usage_forensics.py --days 7 --json docs/claude-usage/latest.json --history-dir docs/claude-usage/history --markdown docs/claude-usage/README.md
+```

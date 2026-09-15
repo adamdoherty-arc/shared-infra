@@ -40,3 +40,27 @@ again (eight such alerts and one `BifrostCriticalLaneDown` for `nvidia-nim z-ai/
 had been firing since 2026-09-14 on lanes nobody could call). Local lanes get a 120 s probe
 budget because the chat engine runs saturated and a slow answer is not a dead lane.
 `disabled-providers.json` stays a recipe archive and is never read as "parked".
+
+## 2026-09-15 — Claude Code usage forensics live in shared-infra, rendered to `docs/claude-usage/`
+
+**Decision.** `scripts/claude_usage_forensics.py` (moved from `~/.claude/bin/`, which is not
+git-tracked) is the one home of the weekly Claude Code token/cost forensics. Every run writes
+`docs/claude-usage/latest.json`, `docs/claude-usage/history/<date>.json` and renders
+`docs/claude-usage/README.md`; `scripts/run-usage-forensics.cmd` (the Windows task
+"Claude Usage Forensics - Weekly", Sundays 08:00) commits those paths path-scoped and never
+pushes. `~/.claude/bin/claude_usage_forensics.py` is now a shim that executes the repo copy, so
+the references in `~/.claude/CLAUDE.md` keep working.
+
+**Evidence.** Baseline week of 2026-09-08 (first tracked run, 2026-09-15): 90,254 assistant turns,
+top-tier 72.0% of estimated spend (target <= 30%), 353,746 avg cache-read tokens per top-tier
+turn (target <= 200,000), 41.4% of subagent spend on Fable/Opus (target <= 5%). The output was
+sitting in `~/.claude/state/usage-weekly.json`, where nobody would open it.
+
+**Why not Prometheus/Grafana.** The numbers change once a week and are already tabular; a page in
+the repo is the right surface. The exporter lives in `docker-compose.bifrost.yml` and reads only
+Bifrost's SQLite, so wiring a weekly JSON into it would add a bind mount and a compose change for
+one scrape a week. Revisit only if the weekly cadence changes.
+
+**Consequences.** `docs/claude-usage/` is written by a scheduled job; do not hand-edit the page.
+The report carries no key material (project folder names, session ids, token counts, model
+families, gate reasons), and the pre-commit secrets scan runs on every weekly commit.

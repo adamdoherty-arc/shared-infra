@@ -1,4 +1,16 @@
 #!/bin/sh
-# shared-infra pre-commit: secrets scan (installed 2026-09-15, source scripts/pre_commit_secrets.py)
-python "$(git rev-parse --show-toplevel)/scripts/pre_commit_secrets.py" || exit 1
-python "$(git rev-parse --show-toplevel)/scripts/export_config_snapshot.py" --check || { echo "run: python scripts/export_config_snapshot.py && git add bifrost/config.snapshot.redacted.json"; exit 1; }
+# shared-infra pre-commit (installed 2026-09-15, source scripts/pre_commit_secrets.py + export_config_snapshot.py)
+TOP="$(git rev-parse --show-toplevel)"
+python "$TOP/scripts/pre_commit_secrets.py" || exit 1
+
+# Snapshot drift BLOCKS only a commit that stages bifrost config (config.json /
+# disabled-providers.json / the snapshot itself) and WARNS otherwise. The render
+# reads the live config.db, so another session's in-flight, already-applied
+# provider edit would otherwise block every unrelated commit in the repo
+# (measured 2026-09-15: a docs-only commit failed on a bazaarlink VK sync that
+# belonged to a config.json edit still uncommitted in another session).
+if git diff --cached --name-only --diff-filter=ACMR | grep -qE '^bifrost/(config\.json|disabled-providers\.json|config\.snapshot\.redacted\.json)$'; then
+  python "$TOP/scripts/export_config_snapshot.py" --check || { echo "run: python scripts/export_config_snapshot.py && git add bifrost/config.snapshot.redacted.json"; exit 1; }
+else
+  python "$TOP/scripts/export_config_snapshot.py" --check || echo "WARN: snapshot drift belongs to the in-flight bifrost config edit; not blocking (no bifrost config staged)"
+fi

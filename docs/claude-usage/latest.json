@@ -1,0 +1,206 @@
+{
+  "generated_at": "2026-09-15T17:44:21Z",
+  "window_days": 7,
+  "cutoff_date": "2026-09-08",
+  "files_scanned": 1846,
+  "files_failed": 0,
+  "lines_scanned": 893948,
+  "assistant_turns_in_window": 90254,
+  "families": {
+    "top": {
+      "turns": 27533,
+      "tokens": {
+        "input": 200579,
+        "output": 27477740,
+        "cache_read": 9739684877,
+        "cache_write": 273636963
+      },
+      "est_cost": 21804.0596,
+      "share_of_cost": 0.7203
+    },
+    "sonnet": {
+      "turns": 62534,
+      "tokens": {
+        "input": 125068,
+        "output": 16499917,
+        "cache_read": 23646298048,
+        "cache_write": 298881518
+      },
+      "est_cost": 8462.5691,
+      "share_of_cost": 0.2796
+    },
+    "haiku": {
+      "turns": 110,
+      "tokens": {
+        "input": 910,
+        "output": 16527,
+        "cache_read": 7200400,
+        "cache_write": 1267739
+      },
+      "est_cost": 2.3883,
+      "share_of_cost": 0.0001
+    },
+    "other": {
+      "turns": 77,
+      "tokens": {
+        "input": 0,
+        "output": 0,
+        "cache_read": 0,
+        "cache_write": 0
+      },
+      "est_cost": 0.0,
+      "share_of_cost": 0.0
+    }
+  },
+  "total_est_cost": 30269.0169,
+  "main_vs_subagent": {
+    "main_est_cost": 16057.1772,
+    "subagent_est_cost": 14211.8397,
+    "main_share": 0.5305,
+    "subagent_share": 0.4695
+  },
+  "avg_top_cache_read_per_turn": 353745.9,
+  "cost_by_day": {
+    "2026-09-08": 8330.9218,
+    "2026-09-09": 3949.6512,
+    "2026-09-10": 3908.2197,
+    "2026-09-11": 2883.7477,
+    "2026-09-12": 0.0,
+    "2026-09-13": 0.0,
+    "2026-09-14": 5248.422,
+    "2026-09-15": 5948.0545
+  },
+  "top_sessions": [
+    {
+      "project": "c--code-ADA",
+      "session_id": "d5eb0b27-f986-43e2-b92c-531591093dec",
+      "est_cost": 3781.6881,
+      "turns": 15585,
+      "model_mix": {
+        "top": 1995,
+        "sonnet": 13590
+      }
+    },
+    {
+      "project": "c--code-erpnext",
+      "session_id": "fd19579a-8e29-4199-80b6-60b5e614f7a2",
+      "est_cost": 3055.0432,
+      "turns": 4063,
+      "model_mix": {
+        "top": 4060,
+        "other": 3
+      }
+    },
+    {
+      "project": "c--code-ADA",
+      "session_id": "7b39a28f-003d-4af8-92a4-fc8415952bac",
+      "est_cost": 2596.3703,
+      "turns": 7987,
+      "model_mix": {
+        "top": 2213,
+        "sonnet": 5774
+      }
+    },
+    {
+      "project": "c--code-ADA",
+      "session_id": "bd3eb007-3344-426c-bbfc-4b9e46ba07ea",
+      "est_cost": 2130.9134,
+      "turns": 8704,
+      "model_mix": {
+        "top": 569,
+        "sonnet": 8135
+      }
+    },
+    {
+      "project": "c--code-ADA",
+      "session_id": "fe9c26a4-8400-4461-95b7-5d6c9d98faef",
+      "est_cost": 1718.9611,
+      "turns": 5586,
+      "model_mix": {
+        "top": 1136,
+        "sonnet": 4450
+      }
+    },
+    {
+      "project": "c--code-ADA",
+      "session_id": "4c34cb26-cfaa-4138-8160-57bdc4a4f1f7",
+      "est_cost": 1715.0381,
+      "turns": 5067,
+      "model_mix": {
+        "top": 860,
+        "other": 21,
+        "sonnet": 4186
+      }
+    },
+    {
+      "project": "c--code-ADA",
+      "session_id": "802d7e67-5178-4fca-9a7d-8386d1bbd884",
+      "est_cost": 1710.7995,
+      "turns": 8933,
+      "model_mix": {
+        "top": 693,
+        "other": 10,
+        "sonnet": 8230
+      }
+    },
+    {
+      "project": "c--code-ADA",
+      "session_id": "e6f55a63-ec4f-4e31-b405-8bccf07d4e9a",
+      "est_cost": 1707.3383,
+      "turns": 5234,
+      "model_mix": {
+        "top": 1045,
+        "other": 6,
+        "sonnet": 4183
+      }
+    },
+    {
+      "project": "c--code-ADA",
+      "session_id": "7270f6c2-120c-4844-8736-7ee2b31a6b3b",
+      "est_cost": 1328.9764,
+      "turns": 3340,
+      "model_mix": {
+        "top": 983,
+        "sonnet": 2357
+      }
+    },
+    {
+      "project": "c--code-ADA",
+      "session_id": "345616d2-c27a-4b41-ac94-540a35350170",
+      "est_cost": 1166.3716,
+      "turns": 1452,
+      "model_mix": {
+        "top": 1452
+      }
+    }
+  ],
+  "subagent_top_share_of_subagent_spend": 0.4141,
+  "targets": {
+    "top_tier_share": {
+      "value": 0.7203,
+      "target": 0.3,
+      "ok": false
+    },
+    "avg_top_cache_read": {
+      "value": 353745.9,
+      "target": 200000,
+      "ok": false
+    },
+    "subagent_top_share": {
+      "value": 0.4141,
+      "target": 0.05,
+      "ok": false
+    }
+  },
+  "gate": {
+    "present": true,
+    "counts_by_reason": {
+      "top_tier_to_sonnet": 2,
+      "haiku_tier": 1,
+      "opus_required_token_capped_fable": 1,
+      "absent_to_sonnet": 1,
+      "explicit_cheap_tier_honoured": 4,
+      "opus_required_token": 2
+    }
+  }
+}
