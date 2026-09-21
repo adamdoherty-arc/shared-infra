@@ -168,3 +168,110 @@ never launches by default and never contends with the live engine.
 2. **WS2 Bifrost.1**: prefer the Postgres log-store move over the Docker-volume move — same
    owner-sign-off gate, strictly better fix (removes the SQLite lock class entirely, not just
    the fsync-cost multiplier). Both options are documented so the owner can pick either.
+
+## WS4.2 isolated bench results (2026-09-21, ~18:00-19:00 ET, off-hours, owner-approved)
+
+The 13:50 ET baseline attempt above produced no usable numbers (live engine saturated,
+every probe timed out). This is the isolated re-run: each canary variant benched with
+qwen38-chat fully stopped (no production contention), then qwen38-chat restored and
+benched immediately at the same levels as the "clean" comparison point. Concurrency
+1/8/16/32, n=8/level, max_tokens=1000, real ADA prompt mix (`llm_call_log` top-8 call
+sites), via the extended `scripts/engine_bench.py` (added `--max-tokens`, per-request
+tok/s, a `vllm:num_requests_running` metrics read, and a thinking-disabled probe that
+checks for a literal think tag in the response).
+
+**Two structural bugs found and fixed in this pass, before any variant could be
+measured cleanly** (both previously "verified by inspection only", never executed):
+
+1. `scripts/engine_cutover.sh` exported `MSYS_NO_PATHCONV=1` globally. That broke every
+   `docker compose -f "$VLLM_COMPOSE"` call (`$VLLM_COMPOSE` is a Git-Bash-style
+   `/c/...` path from `cd && pwd`, which needs normal MSYS translation to reach
+   docker.exe) with `open C:\c\code\shared-infra\docker-compose.vllm.yml: The system
+   cannot find the path specified.` Fixed: the override is now scoped to only the one
+   `docker run` inside `launch_canary_variant` that has container-side paths needing
+   protection; every `docker compose -f` call relies on normal conversion.
+2. `vllm-wedge-monitor` had `depends_on: qwen38-chat` (a static compose key) plus
+   hardcoded (non-interpolated) `VLLM_METRICS_URL`/`VLLM_TARGET_CONTAINER` values, so
+   `VLLM_TARGET_CONTAINER=qwen38-nvfp4 docker compose up -d --force-recreate
+   vllm-wedge-monitor` (step 1 of `cmd_commit`/`cmd_bench_variants`, run immediately
+   after stopping qwen38-chat) **always restarted qwen38-chat as a compose
+   dependency**, regardless of the env var. Live-observed: qwen38-chat came back
+   up seconds after being stopped, fighting the canary for the same 32.6 GiB card.
+   Fixed: `depends_on` removed (the monitor's own `STARTUP_GRACE_S` /
+   `UNREACHABLE_STARTUP_GRACE_S` already tolerate the target being down or still
+   warming up) and both env values now interpolate
+   `${VLLM_TARGET_CONTAINER:-qwen38-chat}` for real.
+
+**Capacity finding (the main result of this pass): the researched single-card recipe
+does not fit ADA's actual card.** vLLM 0.29.0 measured the `Inferact/Qwen3.8-27B-NVFP4`
+checkpoint at **24.18-24.99 GiB of GPU weight memory** — 8-9 GiB more than the WS4
+research doc's ~16 GiB assumption (itself the vLLM recipe's own *exclusive*-card
+arithmetic). vLLM also reports the card as **31.84 GiB total / ~30.2 GiB free** even
+with qwen38-chat fully stopped (vllm-embed + Windows WDDM desktop reservation account
+for the rest), not the 32.6 GiB nvidia-smi reports as "total". At the plan's spec'd
+`--max-num-seqs 32 --max-model-len 32768 --gpu-memory-utilization 0.78`: hard failure,
+`Available KV cache memory: -6.86 GiB` (ValueError, no room for cache blocks) right
+after weight load. At `--gpu-memory-utilization 0.95`: refused at the pre-flight check
+before loading anything (free memory below the requested utilization). At a reduced
+`--max-num-seqs 8 --max-model-len 16384 --gpu-memory-utilization 0.92`: no hard error,
+but the boot stalled indefinitely inside the encoder-cache profiling step (CPU pegged
+near 100 percent on one core, GPU memory pinned near-full) past the 15-minute cutoff,
+both for `eager` and for `graphs` (which also never got past a slow safetensors
+reload — checkpoint 24.57 GiB against 23.5-26.1 GiB measured available host RAM
+triggers vLLM's own auto-prefetch-disable path and repeated full-disk shard reads on
+every fresh boot, 3.5-4 min just for I/O). `mtp` was not attempted: it can only add
+VRAM pressure on top of a config (`eager`) that already measured negative KV-cache
+headroom, so a time-boxed attempt would not have told us anything eager's hard failure
+had not already.
+
+| Variant | Boot result | Bench | Notes |
+|---|---|---|---|
+| eager (spec: 32 seqs / 32768 ctx / util 0.78) | FAILED - ValueError, KV cache -6.86 GiB | not run | weights alone measured 24.18-24.99 GiB |
+| eager (reduced: 8 seqs / 16384 ctx / util 0.92) | FAILED - stalled >15 min in encoder-cache profiling | not run | CPU 100% one core, GPU near-full, no crash, no progress |
+| graphs (65536 ctx, CUDA graph capture) | FAILED - stalled >15 min in safetensors reload | not run | same RAM-vs-checkpoint thrashing pattern |
+| mtp (eager + speculative decode) | NOT ATTEMPTED | not run | strictly worse VRAM than eager, which already failed |
+| qwen38-chat (current engine, clean, isolated re-bench) | healthy | see below | qwen38-chat had already auto-recovered from an unrelated mid-session CUDA driver crash (`torch.AcceleratorError: CUDA error: unknown error`) via `restart: unless-stopped` before this bench ran |
+
+### Clean current-engine (qwen38-chat) bench - `reports/engine-bench-2026-09-21-current-clean.json`
+
+| Concurrency | Success % | p50 | p95 | Aggregate tok/s | Per-req tok/s (median / p95) | num_requests_running before / during |
+|---|---|---|---|---|---|---|
+| 1 | 100.0 | 5.516s | 11.614s | 33.91 | 48.96 / 53.7 | 2 / 14 |
+| 8 | 100.0 | 3.931s | 8.163s | 165.6 | 39.45 / 44.92 | 14 / 9 |
+| 16 | 100.0 | 3.497s | 6.381s | 173.31 | 36.72 / 38.26 | 9 / 8 |
+| 32 | 100.0 | 3.736s | 12.755s | 98.73 | 27.3 / 37.63 | 8 / 7 |
+
+Probes: tool-call PASS (0.727s), guided-JSON PASS (0.581s), thinking-disabled PASS (no
+think tag emitted, 35 completion tokens), prefix-cache likely-hit (0.985s to 0.197s, 80
+percent faster on the repeat). `num_requests_running` was never 0 during this "clean"
+run - ADA's admission cap (10, since the 22:00 UTC restart) plus this bench's own
+concurrent load together explain the 7-14 range; this is the realistic operating
+point, not an idle-engine number, matching the plan's own framing of what a clean
+baseline means here.
+
+### Recommendation
+
+Do not cut over. No NVFP4 canary variant produced a servable engine in this pass -
+`eager` hard-failed on VRAM, `graphs` and the reduced-`eager` retry both stalled past
+the time budget, and `mtp` was not worth attempting given eager's failure. The
+acceptance bar (success >= 95.6 percent, tool + guided-JSON pass, aggregate tok/s at 32
+concurrent >= 2x current) cannot be evaluated because no variant reached a bench-able
+state. The current engine (qwen38-chat) is confirmed healthy and productive
+post-bench: 100 percent success at every concurrency level tested (1/8/16/32), all
+four probes pass, health endpoint returns 200, a live 5-token completion returns
+"OK." - left running, untouched otherwise, as required.
+
+What would need to change before a re-attempt is worth scheduling: either (a) a
+smaller or different NVFP4 build with a genuinely single-digit-GiB-smaller weight
+footprint (the plan's own doc already named `unsloth/Qwen3.8-27B-NVFP4` and
+`RedHatAI/Qwen3.8-27B-NVFP4` as untried alternates - worth checking their measured
+footprint before assuming they fit either), or (b) freeing more of the card (stopping
+`vllm-embed` for the duration of a bench, which was not done in this pass since
+production embedding calls were still a live concern during the off-hours window), or
+(c) more host RAM or a faster checkpoint path so the 24.57 GiB weight file does not
+thrash against a 24-26 GiB RAM ceiling on every fresh load. None of these were tried
+here - recording them as the next steps rather than doing them unauthorized mid-pass.
+
+Raw reports: `reports/engine-bench-2026-09-21-eager.json` (+ `-eager-boot-log.txt`),
+`reports/engine-bench-2026-09-21-graphs.json` (+ `-graphs-boot-log.txt`),
+`reports/engine-bench-2026-09-21-mtp.json`, `reports/engine-bench-2026-09-21-current-clean.json`.

@@ -1,0 +1,5 @@
+{
+  "variant": "mtp",
+  "status": "NOT_ATTEMPTED",
+  "reason": "Skipped deliberately (not a fabricated boot-failure) after eager and graphs both failed to produce a servable engine on this card at the same 24.2-25.0 GiB measured weight footprint. mtp = eager base config + a speculative-decode draft path, which strictly ADDS VRAM (draft model activations/buffers) on top of a configuration (eager) that already measured a NEGATIVE KV-cache budget (-6.86 GiB at the plan's spec'd settings) and, at reduced concurrency, stalled rather than booting within the time budget. Spending another 10-15 min time-boxed attempt on a strictly-worse-for-memory variant was not a good use of the remaining off-hours window versus getting the clean current-engine baseline (the one number this pass can actually compare against production). This finding + its reasoning is what would need re-verifying, live, before mtp could be scored -- it is not scored here."
+}

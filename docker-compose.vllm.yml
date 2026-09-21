@@ -1655,9 +1655,26 @@ services:
     # Pass-9 (2026-08-31): monitor repointed vllm-chat -> qwen38-chat (the
     # wedge class is a WSL2+engine property, not a Nemotron property — keep
     # the monitor).
-    depends_on:
-      qwen38-chat:
-        condition: service_started
+    #
+    # CORRECTION (verified live 2026-09-21, WS4.2 isolated-bench run):
+    # `depends_on: qwen38-chat` used to be a static key, and `VLLM_METRICS_URL`
+    # / `VLLM_TARGET_CONTAINER` below were hardcoded literals rather than
+    # interpolated from the shell `VLLM_TARGET_CONTAINER` env var --
+    # `engine_cutover.sh`'s own header comment claims "the wedge monitor ...
+    # must be recreated with the NEW VLLM_TARGET_CONTAINER in the SAME
+    # command" but that env var was never wired to anything in this file, so
+    # every `VLLM_TARGET_CONTAINER=qwen38-nvfp4 docker compose up -d
+    # --force-recreate vllm-wedge-monitor` silently kept pointing at
+    # qwen38-chat AND (via the static `depends_on`) restarted qwen38-chat
+    # right after the preceding `stop qwen38-chat` step -- defeating the
+    # entire point of an isolated canary bench. Live-observed: qwen38-chat
+    # came back `Up 14s (health: starting)` seconds after being stopped,
+    # while qwen38-nvfp4 was also up, both fighting for the same 32.6 GiB
+    # card. `depends_on` cannot itself be parameterized by an env var
+    # (compose requires a static service-name key) and the monitor's own
+    # STARTUP_GRACE_S/UNREACHABLE_STARTUP_GRACE_S already tolerate the
+    # target being down or still warming up (vllm_wedge_monitor.py), so it
+    # is removed rather than hardcoded to either container.
     command: ["python", "-u", "/monitor.py"]
     environment:
       # Reach vLLM container->container on the shared bridge (both on
@@ -1667,8 +1684,10 @@ services:
       # left this monitor BLIND to 0-tok/s wedges for 11+ h (daily-review 2026-06-25
       # run 3). Service-name DNS re-resolves immediately after a restart and has no
       # published-port proxy in the path. vllm-chat listens on 8000 inside the net.
-      VLLM_METRICS_URL: http://qwen38-chat:18020/metrics
-      VLLM_TARGET_CONTAINER: qwen38-chat
+      # ${VLLM_TARGET_CONTAINER:-qwen38-chat} now actually interpolates from the
+      # shell env var the same name -- previously a literal that ignored it.
+      VLLM_METRICS_URL: http://${VLLM_TARGET_CONTAINER:-qwen38-chat}:18020/metrics
+      VLLM_TARGET_CONTAINER: ${VLLM_TARGET_CONTAINER:-qwen38-chat}
       POLL_INTERVAL_S: "30"
       WEDGE_SAMPLES: "4"
       STARTUP_GRACE_S: "120"

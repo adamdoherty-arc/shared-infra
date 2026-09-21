@@ -140,9 +140,10 @@ async def _load_prompt_mix(dsn: str, retries: int = 6, delay_s: float = 3.0) -> 
 
 
 def _post_chat(base_url: str, api_key: str | None, model: str, messages: list[dict],
-               extra: dict | None = None, timeout: float = 120.0) -> tuple[bool, float, int, str | None]:
+               extra: dict | None = None, timeout: float = 120.0,
+               max_tokens: int = 256) -> tuple[bool, float, int, str | None, str]:
     url = base_url.rstrip("/") + "/chat/completions"
-    payload = {"model": model, "messages": messages, "max_tokens": 256, "temperature": 0.2}
+    payload = {"model": model, "messages": messages, "max_tokens": max_tokens, "temperature": 0.2}
     if extra:
         payload.update(extra)
     data = json.dumps(payload).encode("utf-8")
@@ -159,18 +160,48 @@ def _post_chat(base_url: str, api_key: str | None, model: str, messages: list[di
         usage = body.get("usage", {}) or {}
         completion_tokens = int(usage.get("completion_tokens", 0) or 0)
         choice = (body.get("choices") or [{}])[0]
+        message = choice.get("message") or {}
         finish_ok = choice.get("message") is not None or choice.get("delta") is not None
-        return finish_ok, latency, completion_tokens, None
+        content = message.get("content") or ""
+        return finish_ok, latency, completion_tokens, None, content
     except urllib.error.HTTPError as e:
         latency = time.monotonic() - t0
         try:
             err_body = e.read().decode("utf-8")[:300]
         except Exception:
             err_body = str(e)
-        return False, latency, 0, f"HTTP {e.code}: {err_body}"
+        return False, latency, 0, f"HTTP {e.code}: {err_body}", ""
     except Exception as e:  # noqa: BLE001
         latency = time.monotonic() - t0
-        return False, latency, 0, str(e)
+        return False, latency, 0, str(e), ""
+
+
+def fetch_num_requests_running(base_url: str) -> float | None:
+    """Reads vLLM's native `/metrics` (Prometheus text) for
+    `vllm:num_requests_running`, summed across label sets. `base_url` is the
+    OpenAI-compatible `/v1` URL; metrics live one level up at the server
+    root. Returns None (never a fabricated 0) when the endpoint is
+    unreachable or the metric is absent, so a caller can tell "not running
+    yet" apart from "couldn't measure"."""
+    root = base_url.rstrip("/")
+    if root.endswith("/v1"):
+        root = root[: -len("/v1")]
+    url = root + "/metrics"
+    try:
+        with urllib.request.urlopen(url, timeout=5) as resp:
+            text = resp.read().decode("utf-8")
+    except Exception:
+        return None
+    total = 0.0
+    found = False
+    for line in text.splitlines():
+        if line.startswith("vllm:num_requests_running"):
+            try:
+                total += float(line.rsplit(" ", 1)[-1])
+                found = True
+            except ValueError:
+                continue
+    return total if found else None
 
 
 def _pctile(values: list[float], p: float) -> float:
@@ -185,7 +216,7 @@ def _pctile(values: list[float], p: float) -> float:
 
 
 def run_concurrency_level(cases: list[PromptCase], base_url: str, api_key: str | None,
-                           model: str, concurrency: int, n: int) -> dict:
+                           model: str, concurrency: int, n: int, max_tokens: int = 256) -> dict:
     import concurrent.futures as cf
 
     jobs = []
@@ -197,29 +228,40 @@ def run_concurrency_level(cases: list[PromptCase], base_url: str, api_key: str |
         ]
         jobs.append((case, messages))
 
+    running_before = fetch_num_requests_running(base_url)
     results: list[CallResult] = []
     t_start = time.monotonic()
     with cf.ThreadPoolExecutor(max_workers=concurrency) as ex:
         futures = [
-            ex.submit(_post_chat, base_url, api_key, model, messages)
+            ex.submit(_post_chat, base_url, api_key, model, messages, None, 120.0, max_tokens)
             for _case, messages in jobs
         ]
         for fut in cf.as_completed(futures):
-            ok, latency, ctoks, err = fut.result()
+            ok, latency, ctoks, err, _content = fut.result()
             results.append(CallResult(ok=ok, latency_s=latency, completion_tokens=ctoks, error=err))
     wall_s = time.monotonic() - t_start
+    running_during = fetch_num_requests_running(base_url)
 
     n_ok = sum(1 for r in results if r.ok)
     latencies = [r.latency_s for r in results]
     total_ctoks = sum(r.completion_tokens for r in results)
+    per_request_tok_s = [
+        round(r.completion_tokens / r.latency_s, 2) for r in results if r.ok and r.latency_s > 0
+    ]
     return {
         "concurrency": concurrency,
         "n": n,
+        "max_tokens": max_tokens,
         "success_pct": round(100.0 * n_ok / len(results), 1) if results else 0.0,
         "p50_s": round(_pctile(latencies, 0.50), 3),
         "p95_s": round(_pctile(latencies, 0.95), 3),
         "wall_s": round(wall_s, 3),
-        "tok_s": round(total_ctoks / wall_s, 2) if wall_s > 0 else 0.0,
+        "aggregate_tok_s": round(total_ctoks / wall_s, 2) if wall_s > 0 else 0.0,
+        "per_request_tok_s_median": round(statistics.median(per_request_tok_s), 2) if per_request_tok_s else 0.0,
+        "per_request_tok_s_p95": round(_pctile(per_request_tok_s, 0.95), 2) if per_request_tok_s else 0.0,
+        "per_request_tok_s_samples": per_request_tok_s,
+        "vllm_num_requests_running_before": running_before,
+        "vllm_num_requests_running_during_sample": running_during,
         "errors": [r.error for r in results if r.error][:5],
     }
 
@@ -240,7 +282,7 @@ def run_tool_call_probe(base_url: str, api_key: str | None, model: str) -> dict:
         }
     ]
     messages = [{"role": "user", "content": "What is the current quote for AAPL? Use the tool."}]
-    ok, latency, _ctoks, err = _post_chat(
+    ok, latency, _ctoks, err, _content = _post_chat(
         base_url, api_key, model, messages, extra={"tools": tools, "tool_choice": "auto"}
     )
     return {"pass": ok, "latency_s": round(latency, 3), "error": err}
@@ -259,7 +301,7 @@ def run_guided_json_probe(base_url: str, api_key: str | None, model: str) -> dic
         },
     }
     messages = [{"role": "user", "content": "Return a verdict object for AAPL earnings beat, JSON only."}]
-    ok, latency, _ctoks, err = _post_chat(
+    ok, latency, _ctoks, err, _content = _post_chat(
         base_url, api_key, model, messages, extra={"response_format": schema}
     )
     return {"pass": ok, "latency_s": round(latency, 3), "error": err}
@@ -271,14 +313,35 @@ def run_prefix_cache_probe(base_url: str, api_key: str | None, model: str) -> di
         {"role": "system", "content": long_prefix},
         {"role": "user", "content": "Say OK."},
     ]
-    ok1, lat1, _c1, err1 = _post_chat(base_url, api_key, model, messages)
-    ok2, lat2, _c2, err2 = _post_chat(base_url, api_key, model, messages)
+    ok1, lat1, _c1, err1, _content1 = _post_chat(base_url, api_key, model, messages)
+    ok2, lat2, _c2, err2, _content2 = _post_chat(base_url, api_key, model, messages)
     hit_likely = ok1 and ok2 and lat2 < lat1 * 0.9
     return {
         "first_call_s": round(lat1, 3),
         "second_call_s": round(lat2, 3),
         "prefix_cache_hit_likely": hit_likely,
         "errors": [e for e in (err1, err2) if e],
+    }
+
+
+def run_thinking_disabled_probe(base_url: str, api_key: str | None, model: str) -> dict:
+    """`enable_thinking:false` is set on the canary via
+    `--default-chat-template-kwargs`; this proves it is actually honoured
+    by the served model rather than assumed from the launch flag. A
+    reasoning-tuned Qwen3 model that ignores the kwarg emits a `<think>...
+    </think>` block before its answer — this probe fails if that block
+    appears anywhere in the response."""
+    messages = [
+        {"role": "user", "content": "A stock rallied 8% on no news. Give one sentence explaining the likely cause."}
+    ]
+    ok, latency, ctoks, err, content = _post_chat(base_url, api_key, model, messages, max_tokens=300)
+    has_think_tag = "<think" in content.lower() or "</think>" in content.lower()
+    return {
+        "pass": ok and not has_think_tag,
+        "latency_s": round(latency, 3),
+        "completion_tokens": ctoks,
+        "think_tag_found": has_think_tag,
+        "error": err,
     }
 
 
@@ -289,6 +352,7 @@ async def main() -> int:
     ap.add_argument("--api-key", default=os.environ.get("BIFROST_VK", ""))
     ap.add_argument("--concurrency", nargs="+", type=int, default=[1, 8])
     ap.add_argument("--n", type=int, default=6)
+    ap.add_argument("--max-tokens", type=int, default=256)
     ap.add_argument("--db-dsn", default=os.environ.get("ADA_DB_DSN", DB_DSN_DEFAULT))
     ap.add_argument("--out", default=None)
     args = ap.parse_args()
@@ -299,6 +363,7 @@ async def main() -> int:
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
         "base_url": args.base_url,
         "model": args.model,
+        "max_tokens": args.max_tokens,
         "prompt_mix": [
             {"call_site": c.call_site, "prompt_slug": c.prompt_slug} for c in cases
         ],
@@ -306,8 +371,8 @@ async def main() -> int:
     }
 
     for c in args.concurrency:
-        print(f"[engine_bench] concurrency={c} n={args.n} ...", file=sys.stderr)
-        level = run_concurrency_level(cases, args.base_url, args.api_key, args.model, c, args.n)
+        print(f"[engine_bench] concurrency={c} n={args.n} max_tokens={args.max_tokens} ...", file=sys.stderr)
+        level = run_concurrency_level(cases, args.base_url, args.api_key, args.model, c, args.n, args.max_tokens)
         result["concurrency_results"].append(level)
         print(json.dumps(level), file=sys.stderr)
 
@@ -315,6 +380,8 @@ async def main() -> int:
     result["tool_call_probe"] = run_tool_call_probe(args.base_url, args.api_key, args.model)
     print("[engine_bench] guided-json probe ...", file=sys.stderr)
     result["guided_json_probe"] = run_guided_json_probe(args.base_url, args.api_key, args.model)
+    print("[engine_bench] thinking-disabled probe ...", file=sys.stderr)
+    result["thinking_disabled_probe"] = run_thinking_disabled_probe(args.base_url, args.api_key, args.model)
     print("[engine_bench] prefix-cache probe ...", file=sys.stderr)
     result["prefix_cache_probe"] = run_prefix_cache_probe(args.base_url, args.api_key, args.model)
 

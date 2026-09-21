@@ -33,11 +33,25 @@ set -euo pipefail
 # ... -e HF_HOME=/cache -v shared-hf-cache:/cache ...` landed a 17 GiB
 # download at `/C:/Program Files/Git/cache/...` INSIDE the container's
 # writable layer instead of the named volume, because HF_HOME got rewritten
-# too. This script's docker-compose invocations don't take raw `/path`
-# arguments on the command line (paths live inside the YAML, which MSYS does
-# not touch), but exporting this here is the correct default for anyone
-# copying a one-off `docker run`/`docker exec` from this file.
-export MSYS_NO_PATHCONV=1
+# too.
+#
+# CORRECTION (verified live 2026-09-21, WS4.2 isolated-bench run): the
+# previous version of this comment claimed exporting MSYS_NO_PATHCONV=1
+# globally here was safe because "this script's docker-compose invocations
+# don't take raw /path arguments on the command line" -- that premise was
+# never actually run and is false. `docker compose -f "$VLLM_COMPOSE"` DOES
+# pass a raw absolute Git-Bash-style path (`$SCRIPT_DIR`/`$INFRA_DIR` come
+# from `cd ... && pwd`, e.g. `/c/code/shared-infra/...`) as a bare CLI
+# argument, and with MSYS_NO_PATHCONV=1 set globally it is never translated
+# to a Windows path -- docker.exe then fails with
+# `open C:\c\code\shared-infra\docker-compose.vllm.yml: The system cannot
+# find the path specified.` on every `docker compose -f` call in this file.
+# The fix is to scope the override to exactly the one command that needs
+# it -- the `docker run` inside `launch_canary_variant`, which has
+# container-side paths (`HOME=/cache`, `-v ...:/cache/...`) that DO need
+# protecting from the same conversion. Every `docker compose -f` call in
+# this script relies on normal MSYS path conversion and must NOT have
+# MSYS_NO_PATHCONV set in its environment.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INFRA_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -49,6 +63,18 @@ CONFIG_JSON="$INFRA_DIR/bifrost/config.json"
 REPORT_DIR="$INFRA_DIR/reports"
 NOW_TAG="$(date -u +%Y%m%dT%H%M%SZ)"
 
+# Sourcing guard: a sibling script (e.g. an isolated off-hours bench driver
+# that needs launch_canary_variant/stop_canary/wait_for_models/bench_gate
+# without re-running the argv dispatch below) sources this file with
+# `source engine_cutover.sh`. `set -euo pipefail` above means any `exit`
+# hit while sourced would kill the CALLER's shell, not just this script --
+# so argv validation and the final dispatch are gated on running as the
+# top-level script, never on being sourced.
+IS_SOURCED=0
+if [[ "${BASH_SOURCE[0]}" != "${0}" ]]; then
+  IS_SOURCED=1
+fi
+
 MODE="${1:-}"
 VARIANT="eager"
 for arg in "$@"; do
@@ -56,13 +82,15 @@ for arg in "$@"; do
     --variant=*) VARIANT="${arg#--variant=}" ;;
   esac
 done
-if [[ "$MODE" != "--commit" && "$MODE" != "--rollback" && "$MODE" != "--dry-run" && "$MODE" != "--bench-variants" ]]; then
-  echo "usage: $0 --dry-run|--commit [--variant=eager|graphs|mtp]|--rollback|--bench-variants" >&2
-  exit 2
-fi
-if [[ "$VARIANT" != "eager" && "$VARIANT" != "graphs" && "$VARIANT" != "mtp" ]]; then
-  echo "unknown --variant=$VARIANT (want eager|graphs|mtp)" >&2
-  exit 2
+if [[ "$IS_SOURCED" == "0" ]]; then
+  if [[ "$MODE" != "--commit" && "$MODE" != "--rollback" && "$MODE" != "--dry-run" && "$MODE" != "--bench-variants" ]]; then
+    echo "usage: $0 --dry-run|--commit [--variant=eager|graphs|mtp]|--rollback|--bench-variants" >&2
+    exit 2
+  fi
+  if [[ "$VARIANT" != "eager" && "$VARIANT" != "graphs" && "$VARIANT" != "mtp" ]]; then
+    echo "unknown --variant=$VARIANT (want eager|graphs|mtp)" >&2
+    exit 2
+  fi
 fi
 
 log() { echo "[engine_cutover $(date -u +%H:%M:%S)] $*" >&2; }
@@ -93,7 +121,9 @@ launch_canary_variant() {
     mtp)    variant_flags=(--max-model-len 32768 --enforce-eager --speculative-config '{"method":"mtp","num_speculative_tokens":3}') ;;
   esac
   docker rm -f qwen38-nvfp4 >/dev/null 2>&1 || true
-  docker run -d --name qwen38-nvfp4 \
+  # MSYS_NO_PATHCONV scoped to THIS command only (see the header comment) --
+  # every `docker compose -f` call elsewhere in this file needs the opposite.
+  MSYS_NO_PATHCONV=1 docker run -d --name qwen38-nvfp4 \
     --ipc host --shm-size 4gb \
     -e HF_TOKEN="$(grep '^HF_TOKEN=' "$ENV_FILE" | cut -d= -f2-)" -e HOME=/cache \
     -e VLLM_WSL2_ENABLE_PIN_MEMORY=1 -e FLASHINFER_DISABLE_VERSION_CHECK=1 \
@@ -290,13 +320,15 @@ cmd_bench_variants() {
   done
 }
 
-case "$MODE" in
-  --dry-run)
-    log "dry-run: would stop qwen38-chat, recreate wedge-monitor -> qwen38-nvfp4, start canary,"
-    log "  wait for /v1/models, bench at 1/8/32, then (only with --commit) cut Bifrost over."
-    log "no commands executed."
-    ;;
-  --commit) cmd_commit ;;
-  --rollback) cmd_rollback ;;
-  --bench-variants) cmd_bench_variants ;;
-esac
+if [[ "$IS_SOURCED" == "0" ]]; then
+  case "$MODE" in
+    --dry-run)
+      log "dry-run: would stop qwen38-chat, recreate wedge-monitor -> qwen38-nvfp4, start canary,"
+      log "  wait for /v1/models, bench at 1/8/32, then (only with --commit) cut Bifrost over."
+      log "no commands executed."
+      ;;
+    --commit) cmd_commit ;;
+    --rollback) cmd_rollback ;;
+    --bench-variants) cmd_bench_variants ;;
+  esac
+fi

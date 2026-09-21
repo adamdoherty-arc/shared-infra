@@ -1,0 +1,12 @@
+{
+  "variant": "eager",
+  "status": "BOOT_FAILED",
+  "reason": "Stalled >15 min at encoder_runner cache-profiling step (last log line 22:44:41 UTC, declared failed ~22:53 UTC) with CPU pegged at ~100% single-core and GPU memory near-full (31.5/32.6 GiB); never reached 'Available KV cache memory' or /v1/models ready. Also observed on an earlier attempt at the plan's spec'd --max-num-seqs 32 --max-model-len 32768 --gpu-memory-utilization 0.78: engine loaded weights (24.18-24.99 GiB measured -- far above the WS4 research doc's assumed ~16 GiB), then failed hard with 'Available KV cache memory: -6.86 GiB' (ValueError, no available memory for cache blocks) before even reaching the encoder-cache step. At --gpu-memory-utilization 0.95 it failed the pre-flight check outright: 'Free memory on device cuda:0 (30.2/31.84 GiB) on startup is less than desired GPU memory utilization (0.95, 30.25 GiB)' -- vLLM sees only 31.84 GiB total (nvidia-smi's 32607 MiB) with ~1.6 GiB already resident (vllm-embed + Windows WDDM desktop reservation) even with qwen38-chat fully stopped.",
+  "measured_weight_footprint_gib": [24.18, 24.99],
+  "recipe_assumed_weight_footprint_gib": 16,
+  "config_tried": [
+    {"max_num_seqs": 32, "max_model_len": 32768, "gpu_memory_utilization": 0.78, "result": "ValueError: Available KV cache memory -6.86 GiB"},
+    {"max_num_seqs": 8, "max_model_len": 16384, "gpu_memory_utilization": 0.92, "result": "stalled >15 min at encoder cache profiling, declared BOOT_FAILED"}
+  ],
+  "conclusion": "The Inferact/Qwen3.8-27B-NVFP4 checkpoint measures 24.2-25.0 GiB of GPU weight memory on this vLLM 0.29.0/sm120 stack -- 8-9 GiB larger than the WS4 research doc's ~16 GiB assumption (itself carried from the vLLM recipe's EXCLUSIVE-card arithmetic). Combined with vLLM's own pre-flight check showing only 31.84 GiB total / ~30.2 GiB free on this card even with qwen38-chat stopped and only vllm-embed + Windows desktop resident, there is insufficient headroom for a usable KV cache at the plan's spec'd 32 concurrent / 32768 context, and reducing to 8 concurrent / 16384 context did not clear a hard boot gate either -- it stalled instead of erroring, in the same GDN-hybrid-architecture startup path this program's own research already flags as an open defect class (HyperQwen issue #107) for a different symptom (mid-generation wedge, not startup stall). This is a genuine capacity finding: the researched single-card recipe does not fit ADA's actual shared card as specified, and no config tried in this pass produced a servable engine."
+}

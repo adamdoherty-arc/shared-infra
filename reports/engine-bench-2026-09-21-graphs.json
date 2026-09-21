@@ -1,0 +1,7 @@
+{
+  "variant": "graphs",
+  "status": "BOOT_FAILED",
+  "reason": "Launched 22:47:02 UTC, declared failed 22:58:34 UTC (~11.5 min, exceeding the practical time budget for this pass) still inside the safetensors checkpoint-load step, having never reached weight-load completion. Same host-RAM-vs-checkpoint-size thrashing pattern observed on every attempt in this pass: checkpoint 24.57 GiB vs measured available RAM 23.5-26.1 GiB forces disk re-reads each load (auto-prefetch explicitly disabled by vLLM's own loader because checkpoint exceeds 90% of available RAM), producing 3-5 min+ safetensors-shard load times even from a warm shared-hf-cache volume, before any CUDA-graph capture or KV-cache profiling could even begin.",
+  "config_tried": {"max_num_seqs": 8, "max_model_len": 16384, "gpu_memory_utilization": 0.92, "compilation_config": {"max_cudagraph_capture_size": 8}},
+  "conclusion": "Not evaluated on its own merits (CUDA graph capture behavior, VRAM cost of capture buffers) because the run never got past weight loading in the time budget. Given the eager variant's harder failure (negative KV cache budget) at the SAME weight footprint, and that CUDA graph capture only adds VRAM pressure on top of eager's already-negative headroom, graphs is expected to fail the same KV-cache gate as eager, not to succeed where eager did not -- but this is an inference, not a measurement, and is reported as such."
+}
