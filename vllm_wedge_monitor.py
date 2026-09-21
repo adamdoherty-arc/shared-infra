@@ -70,6 +70,42 @@ UNREACHABLE_SAMPLES = int(os.environ.get("UNREACHABLE_SAMPLES", str(WEDGE_N * 2)
 # window of the hard-stall branch, so a genuinely long prefill cannot trip it.
 DECODE_MIN_TOKENS_PER_S = float(os.environ.get("DECODE_MIN_TOKENS_PER_S", "1.0"))
 DECODE_STARVED_SAMPLES = int(os.environ.get("DECODE_STARVED_SAMPLES", str(WEDGE_N * 2)))
+# 2026-09-21 -- SATURATED-STARVED wedge, a third pathology neither branch above
+# catches. Measured live on qwen38-chat 2026-09-21: after two container
+# restarts, Running sat at 29-32 (>= MAX_SEQS=32) for 2+ hours while the TOTAL
+# generation rate oscillated between ~75 tok/s and 0.0 tok/s poll to poll. The
+# decode-starved branch above resets its counter the instant TOTAL throughput
+# clears its 1.0 tok/s floor -- a single 75 tok/s poll (one of 30+ in-flight
+# requests finishing a token) was enough to read as "recovered" and zero the
+# counter before DECODE_STARVED_SAMPLES could ever accumulate. That is the
+# root cause named in Fix-1100000608: 32 concurrent long generations sharing
+# ~75 tok/s of engine throughput means EACH request gets ~2.3 tok/s, and once
+# ADA's own client abandons a slow request at its own timeout the slot never
+# frees (Bifrost does not propagate a non-streaming client disconnect to
+# vLLM), so the engine is doing real but functionally useless work forever.
+# This detector divides the SAME two numbers the decode-starved branch already
+# reads (gen_rate, running) instead of adding a new metric, and requires
+# `Running` to be genuinely near capacity (>= 0.9*MAX_SEQS) before judging
+# per-request throughput -- an engine running 2 requests at 2 tok/s each is
+# healthy (nothing queued behind it), the same 2 tok/s PER REQUEST spread
+# across 30+ running requests is the overload signature this pathology is
+# named for.
+VLLM_MAX_SEQS = int(os.environ.get("VLLM_MAX_SEQS", "32"))
+SATURATED_MIN_RUNNING_FRACTION = float(os.environ.get("SATURATED_MIN_RUNNING_FRACTION", "0.9"))
+SATURATED_MIN_TOKENS_PER_REQUEST_S = float(os.environ.get("SATURATED_MIN_TOKENS_PER_REQUEST_S", "1.0"))
+SATURATED_STARVED_SAMPLES = int(os.environ.get("SATURATED_STARVED_SAMPLES", str(WEDGE_N)))
+
+
+def is_saturated_starved_sample(running: float, gen_rate: float) -> bool:
+    """Pure predicate for one poll: True when the engine is running at/near
+    its concurrency ceiling AND the per-request share of the measured
+    generation rate is below the starvation floor. Extracted so the exact
+    Fix-1100000608 incident numbers (Running 29-32, gen_rate oscillating
+    ~75/0.0) can be replayed in a unit test without a live engine."""
+    if running < SATURATED_MIN_RUNNING_FRACTION * VLLM_MAX_SEQS:
+        return False
+    per_request_rate = gen_rate / running if running > 0 else 0.0
+    return per_request_rate < SATURATED_MIN_TOKENS_PER_REQUEST_S
 # 2026-09-07 -- CO-TENANT escalation. A decode-starved wedge is not always in
 # the target's own process state: a full restart of qwen38-chat left it at
 # 0.3 tok/s with the GPU still pinned at 99% and only 170W on a 500W card at
@@ -358,6 +394,7 @@ def main() -> None:
     last_prompt: float | None = None
     flat = 0
     decode_starved = 0
+    saturated_starved = 0
     decode_restarts = 0
     unreachable = 0
     last_restart = 0.0
@@ -392,8 +429,21 @@ def main() -> None:
                         log(f"decode recovered after {decode_starved} sample(s): "
                             f"gen_rate={gen_rate:.2f}/s")
                     decode_starved = 0
+
+                if is_saturated_starved_sample(running, gen_rate):
+                    saturated_starved += 1
+                    log(f"saturated-starved sample {saturated_starved}/{SATURATED_STARVED_SAMPLES}: "
+                        f"running={running:.0f}/{VLLM_MAX_SEQS} gen_rate={gen_rate:.2f}/s "
+                        f"per_request={gen_rate / running:.2f}/s "
+                        f"(floor {SATURATED_MIN_TOKENS_PER_REQUEST_S}/s)")
+                else:
+                    if saturated_starved:
+                        log(f"saturated-starved recovered after {saturated_starved} sample(s): "
+                            f"running={running:.0f} gen_rate={gen_rate:.2f}/s")
+                    saturated_starved = 0
             elif running <= 0:
                 decode_starved = 0
+                saturated_starved = 0
 
             if unreachable:
                 log(f"metrics reachable again after {unreachable} unreachable poll(s)")
@@ -409,7 +459,11 @@ def main() -> None:
             # cooldown-related blockage debuggable from the log alone.
             since_epoch = now - epoch
             since_last_restart = now - last_restart
-            gate_flat = flat >= WEDGE_N or decode_starved >= DECODE_STARVED_SAMPLES
+            gate_flat = (
+                flat >= WEDGE_N
+                or decode_starved >= DECODE_STARVED_SAMPLES
+                or saturated_starved >= SATURATED_STARVED_SAMPLES
+            )
             gate_grace = since_epoch > GRACE_S
             gate_cooldown = since_last_restart > RESTART_COOLDOWN_S
             if gate_flat:
