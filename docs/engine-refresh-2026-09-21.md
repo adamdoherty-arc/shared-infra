@@ -275,3 +275,31 @@ here - recording them as the next steps rather than doing them unauthorized mid-
 Raw reports: `reports/engine-bench-2026-09-21-eager.json` (+ `-eager-boot-log.txt`),
 `reports/engine-bench-2026-09-21-graphs.json` (+ `-graphs-boot-log.txt`),
 `reports/engine-bench-2026-09-21-mtp.json`, `reports/engine-bench-2026-09-21-current-clean.json`.
+
+## Addendum 2026-09-21 23:05 UTC -- model-check verdict (main loop)
+
+Checkpoint sizes measured from the Hub (`safetensors` bytes), which is why no NVFP4 build of
+Qwen3.8-27B fits beside `vllm-embed` on one 32 GiB card (vLLM sees 31.84 GiB, ~30.2 GiB free
+with the chat engine stopped; the plan's "~16 GiB" premise was wrong for this family -- the
+vision tower, GDN layers and the FP8 `lm_head` stay above 4-bit):
+
+| Checkpoint | Format | Weights on disk |
+|---|---|---|
+| `unsloth/Qwen3.8-27B-NVFP4` | compressed-tensors, Apache-2.0 | 22.57 GB + 0.85 GB MTP |
+| `RedHatAI/Qwen3.8-27B-NVFP4` | llm-compressor W4A4 | 23.84 GB + 0.85 GB MTP |
+| `Inferact/Qwen3.8-27B-NVFP4` (benched) | ModelOpt | 25.5 GB (measured 24.2-25.0 GiB GPU) |
+| `dbirks/Qwen3.8-27B-W4A16-AutoRound` (current) | Marlin int4 | fits at `GPU_UTIL=0.78` with 254k-token fp8 KV |
+
+`XingChen-AGI/Xing4.0-29B-A4B` (MoE, 4B active): BF16 only (~58 GB) plus llama.cpp GGUF
+forks as of 2026-09-21; no vLLM-loadable NVFP4/AWQ/GPTQ build exists, so it is not a
+candidate for the batch lane yet. Re-check when an official 4-bit build lands.
+
+Verdict: the current engine stays. In isolation it benches 100% success at concurrency
+1/8/16/32 with tool-call, guided-JSON, thinking-off and prefix-cache probes passing
+(`reports/engine-bench-2026-09-21-current-clean.json`); every 0%-success episode today was
+demand exceeding ~100-145 tok/s aggregate (raw-SDK retries + no admission), fixed on the ADA
+side (max_retries=0 everywhere, derived deadline-aware admission, direct-dial abort). The
+refresh becomes viable when either (a) a <=18 GB 4-bit Qwen3.8-27B build appears, (b)
+`vllm-embed` moves off the card (CPU embeddings for 0.6B are ~10 ms/call), or (c) the card
+is replaced. Option (b) is the cheapest and frees ~4 GiB, enough for `unsloth` NVFP4 with a
+32k context -- it is the next experiment, off-hours, behind the same canary/bench gate.
