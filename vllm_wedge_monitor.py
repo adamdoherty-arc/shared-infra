@@ -91,7 +91,14 @@ DECODE_STARVED_SAMPLES = int(os.environ.get("DECODE_STARVED_SAMPLES", str(WEDGE_
 # across 30+ running requests is the overload signature this pathology is
 # named for.
 VLLM_MAX_SEQS = int(os.environ.get("VLLM_MAX_SEQS", "32"))
-SATURATED_MIN_RUNNING_FRACTION = float(os.environ.get("SATURATED_MIN_RUNNING_FRACTION", "0.9"))
+# 2026-09-21 -- 0.9 -> 0.5. Measured live: qwen38-chat sat at Running 20-27
+# (below 0.9*32=29) with aggregate gen 0.8-2.2 tok/s for 25+ minutes, a direct
+# 5-token completion timed out at 120 s, Bifrost dropped 3,240 requests/30 min,
+# and every ADA agent session closed all_tool_capable_models_failed. The
+# decode-starved branch logged "recovered" at 1.47 tok/s and this branch never
+# armed because Running never crossed 29. Half the seq slots at < 1 tok/s each
+# is already the overload signature; nothing healthy runs 16 requests that slowly.
+SATURATED_MIN_RUNNING_FRACTION = float(os.environ.get("SATURATED_MIN_RUNNING_FRACTION", "0.5"))
 SATURATED_MIN_TOKENS_PER_REQUEST_S = float(os.environ.get("SATURATED_MIN_TOKENS_PER_REQUEST_S", "1.0"))
 SATURATED_STARVED_SAMPLES = int(os.environ.get("SATURATED_STARVED_SAMPLES", str(WEDGE_N)))
 
