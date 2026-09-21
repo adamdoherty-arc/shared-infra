@@ -46,6 +46,7 @@ import argparse
 import glob
 import json
 import os
+import socket
 import sys
 import urllib.request
 import urllib.error
@@ -179,6 +180,7 @@ def render_markdown(report, history_rows):
     lines.append("Rendered by `scripts/claude_usage_forensics.py` (Windows task \"Claude Usage Forensics - Weekly\", "
                  "Sundays 08:00, via `scripts/run-usage-forensics.cmd`). Do not hand-edit; the next run overwrites it.")
     lines.append("")
+    lines.append("- **Host:** %s" % report.get("host", "unknown"))
     lines.append("- **Generated:** %s (UTC)" % report["generated_at"])
     lines.append("- **Window:** last %d day(s), turns dated >= %s" % (report["window_days"], report["cutoff_date"]))
     lines.append("- **Transcripts scanned:** %s files (%s unreadable), %s assistant turns in window" % (
@@ -492,6 +494,7 @@ def main():
         gate_block["counts_by_reason"] = dict(counts)
 
     report = {
+        "host": socket.gethostname(),
         "generated_at": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "window_days": args.days,
         "cutoff_date": cutoff_date_str,
