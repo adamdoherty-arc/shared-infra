@@ -25,10 +25,12 @@ mid-calm.** `qwen38-chat`'s `/health` reported `healthy` (the liveness probe pas
 `docker logs` at that exact moment showed `Avg generation throughput: 0.0-2.6 tokens/s` with
 `Running: 29-31 reqs` — the wedge-monitor's own decode-starvation signature (its log shows the
 same pattern independently: `decode-starved sample 1/8` events bracketing the restart window).
-Result: 25% success at concurrency 1 (3 of 4 calls timed out at the script's 120s cap), 0% at
-concurrency 8, all three probes timed out. **This is a second real, live measurement of a defect
-this program already names** (the GDN/decode-starvation wedge class, Part D) — not a broken
-bench. A third attempt was started once generation throughput visibly recovered (35.2 tok/s
+Result: 0% success at both concurrency 1 and concurrency 8 (every call hit the script's 120s
+timeout cap — an earlier draft of this run briefly showed 25% at concurrency 1 before the file
+was overwritten by this same background invocation finishing later), all three probes timed out.
+**This is a second real, live measurement of a defect this program already names** (the
+GDN/decode-starvation wedge class, Part D) — not a broken bench. A third attempt was started once
+generation throughput visibly recovered (35.2 tok/s
 observed in logs) but its stdout was fully buffered behind a `| tail` pipe in a backgrounded
 shell and never surfaced before this pass had to hand off; the file
 `reports/engine-bench-baseline-2026-09-21-post-restart.json` therefore still holds the
@@ -153,7 +155,16 @@ never launches by default and never contends with the live engine.
    `Inferact/Qwen3.8-27B-NVFP4`, `--enforce-eager`, `--max-model-len 32768` (not 65536 — the
    plan's 64K figure is not achievable on one 5090 per vLLM's own recipe; shipping 65536 would
    either refuse to boot or silently truncate context, both worse than stating the real ceiling
-   here), MTP left off pending a soak test, tool-call-parser `qwen3_xml`, thinking off.
+   here), MTP left off pending a soak test, tool-call-parser `qwen3_xml`, thinking off. Host port
+   **18803**, not 18802 as first drafted — 18802 is already declared by `fish-speech` (`tts`
+   profile, same compose file), caught on review before the canary ever booted.
+   `engine_cutover.sh --bench-variants` boots all three candidate configs in turn (`eager`
+   = the shipped compose default; `graphs` = drops `--enforce-eager`, raises to 65536,
+   `--compilation-config max_cudagraph_capture_size=32`; `mtp` = eager base +
+   `--speculative-config method=mtp,num_speculative_tokens=3`), benches each with
+   `engine_bench.py`, and prints a summary — this is a **measurement tool**, not a claim that
+   `graphs` or `mtp` work on this card: no source found in this research confirms either beyond
+   the eager/32K config, so the script exists to find out rather than to assert.
 2. **WS2 Bifrost.1**: prefer the Postgres log-store move over the Docker-volume move — same
    owner-sign-off gate, strictly better fix (removes the SQLite lock class entirely, not just
    the fsync-cost multiplier). Both options are documented so the owner can pick either.

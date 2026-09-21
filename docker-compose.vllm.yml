@@ -1375,12 +1375,15 @@ services:
       - qwen3_xml
       - --default-chat-template-kwargs
       - '{"enable_thinking":false}'
-    # Host 18802: verified outside Windows' excluded TCP port ranges
-    # (`netsh interface ipv4 show excludedportrange protocol=tcp`, checked
-    # 2026-09-21: excluded are 1462, 5357, 50000-50059 only — 18802 is clear,
-    # same reasoning qwen38-chat's own comment applied to 18801/18020).
+    # Host 18803, NOT 18802: 18802 is already declared by fish-speech
+    # (`tts` profile, this same file, ~line 1580 -> "18802:8000") -- caught
+    # on review 2026-09-21 before this ever booted. Verified outside
+    # Windows' excluded TCP port ranges (`netsh interface ipv4 show
+    # excludedportrange protocol=tcp`, checked 2026-09-21: excluded are
+    # 1462, 5357, 50000-50059 only -- 18803 is clear), same reasoning
+    # qwen38-chat's own comment applied to 18801/18020.
     ports:
-      - "18802:18020"
+      - "18803:18020"
     labels:
       - "autoheal=true"
     deploy:

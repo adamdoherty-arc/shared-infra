@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-09-21T13:23:57-0400",
+  "timestamp": "2026-09-21T13:39:36-0400",
   "base_url": "http://127.0.0.1:4445/v1",
   "model": "vllm-local/qwen3-chat",
   "prompt_mix": [
@@ -40,12 +40,13 @@
     {
       "concurrency": 1,
       "n": 4,
-      "success_pct": 25.0,
-      "p50_s": 120.008,
-      "p95_s": 120.154,
-      "wall_s": 419.508,
-      "tok_s": 0.14,
+      "success_pct": 0.0,
+      "p50_s": 120.02,
+      "p95_s": 120.034,
+      "wall_s": 480.249,
+      "tok_s": 0.0,
       "errors": [
+        "timed out",
         "timed out",
         "timed out",
         "timed out"
@@ -55,9 +56,9 @@
       "concurrency": 8,
       "n": 4,
       "success_pct": 0.0,
-      "p50_s": 120.006,
-      "p95_s": 120.007,
-      "wall_s": 120.008,
+      "p50_s": 120.028,
+      "p95_s": 120.038,
+      "wall_s": 120.059,
       "tok_s": 0.0,
       "errors": [
         "timed out",
@@ -69,17 +70,17 @@
   ],
   "tool_call_probe": {
     "pass": false,
-    "latency_s": 120.008,
+    "latency_s": 120.057,
     "error": "timed out"
   },
   "guided_json_probe": {
     "pass": false,
-    "latency_s": 120.006,
+    "latency_s": 120.022,
     "error": "timed out"
   },
   "prefix_cache_probe": {
-    "first_call_s": 120.033,
-    "second_call_s": 120.009,
+    "first_call_s": 120.011,
+    "second_call_s": 120.017,
     "prefix_cache_hit_likely": false,
     "errors": [
       "timed out",
