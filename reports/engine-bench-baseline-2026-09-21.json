@@ -1,0 +1,90 @@
+{
+  "timestamp": "2026-09-21T13:09:07-0400",
+  "base_url": "http://127.0.0.1:4445/v1",
+  "model": "vllm-local/qwen3-chat",
+  "prompt_mix": [
+    {
+      "call_site": "case_capsule_producer._narrate",
+      "prompt_slug": "analyst_desk.case_capsule_narrative"
+    },
+    {
+      "call_site": "claude_client.brain",
+      "prompt_slug": null
+    },
+    {
+      "call_site": "conviction_orchestrator_service._run_technical_analysis",
+      "prompt_slug": "conviction.technical_analysis"
+    },
+    {
+      "call_site": "conviction_orchestrator_service._run_sentiment_analysis",
+      "prompt_slug": "conviction.sentiment_analysis"
+    },
+    {
+      "call_site": "conviction_orchestrator_service._run_options_flow_analysis",
+      "prompt_slug": "conviction.options_flow_analysis"
+    },
+    {
+      "call_site": "tasks.wait_for",
+      "prompt_slug": null
+    },
+    {
+      "call_site": "deepseek_stock_intelligence.generate",
+      "prompt_slug": null
+    },
+    {
+      "call_site": "signal_narrator._invoke_llm",
+      "prompt_slug": "signal_feed.narrator"
+    }
+  ],
+  "concurrency_results": [
+    {
+      "concurrency": 1,
+      "n": 4,
+      "success_pct": 0.0,
+      "p50_s": 0.003,
+      "p95_s": 0.035,
+      "wall_s": 0.115,
+      "tok_s": 0.0,
+      "errors": [
+        "HTTP 503: {\"is_bifrost_error\":true,\"status_code\":503,\"error\":{\"type\":\"request_dropped\",\"message\":\"request dropped: queue is full\"},\"extra_fields\":{\"routing_info\":{},\"provider\":\"vllm-local\",\"original_model_requested\":\"qwen3-chat\",\"resolved_model_used\":\"qwen3-chat\",\"request_type\":\"chat_completion\"}}\n",
+        "HTTP 503: {\"is_bifrost_error\":true,\"status_code\":503,\"error\":{\"type\":\"request_dropped\",\"message\":\"request dropped: queue is full\"},\"extra_fields\":{\"routing_info\":{},\"provider\":\"vllm-local\",\"original_model_requested\":\"qwen3-chat\",\"resolved_model_used\":\"qwen3-chat\",\"request_type\":\"chat_completion\"}}\n",
+        "HTTP 503: {\"is_bifrost_error\":true,\"status_code\":503,\"error\":{\"type\":\"request_dropped\",\"message\":\"request dropped: queue is full\"},\"extra_fields\":{\"routing_info\":{},\"provider\":\"vllm-local\",\"original_model_requested\":\"qwen3-chat\",\"resolved_model_used\":\"qwen3-chat\",\"request_type\":\"chat_completion\"}}\n",
+        "HTTP 503: {\"is_bifrost_error\":true,\"status_code\":503,\"error\":{\"type\":\"request_dropped\",\"message\":\"request dropped: queue is full\"},\"extra_fields\":{\"routing_info\":{},\"provider\":\"vllm-local\",\"original_model_requested\":\"qwen3-chat\",\"resolved_model_used\":\"qwen3-chat\",\"request_type\":\"chat_completion\"}}\n"
+      ]
+    },
+    {
+      "concurrency": 8,
+      "n": 4,
+      "success_pct": 0.0,
+      "p50_s": 0.006,
+      "p95_s": 0.007,
+      "wall_s": 0.011,
+      "tok_s": 0.0,
+      "errors": [
+        "HTTP 503: {\"is_bifrost_error\":true,\"status_code\":503,\"error\":{\"type\":\"request_dropped\",\"message\":\"request dropped: queue is full\"},\"extra_fields\":{\"routing_info\":{},\"provider\":\"vllm-local\",\"original_model_requested\":\"qwen3-chat\",\"resolved_model_used\":\"qwen3-chat\",\"request_type\":\"chat_completion\"}}\n",
+        "HTTP 503: {\"is_bifrost_error\":true,\"status_code\":503,\"error\":{\"type\":\"request_dropped\",\"message\":\"request dropped: queue is full\"},\"extra_fields\":{\"routing_info\":{},\"provider\":\"vllm-local\",\"original_model_requested\":\"qwen3-chat\",\"resolved_model_used\":\"qwen3-chat\",\"request_type\":\"chat_completion\"}}\n",
+        "HTTP 503: {\"is_bifrost_error\":true,\"status_code\":503,\"error\":{\"type\":\"request_dropped\",\"message\":\"request dropped: queue is full\"},\"extra_fields\":{\"routing_info\":{},\"provider\":\"vllm-local\",\"original_model_requested\":\"qwen3-chat\",\"resolved_model_used\":\"qwen3-chat\",\"request_type\":\"chat_completion\"}}\n",
+        "HTTP 503: {\"is_bifrost_error\":true,\"status_code\":503,\"error\":{\"type\":\"request_dropped\",\"message\":\"request dropped: queue is full\"},\"extra_fields\":{\"routing_info\":{},\"provider\":\"vllm-local\",\"original_model_requested\":\"qwen3-chat\",\"resolved_model_used\":\"qwen3-chat\",\"request_type\":\"chat_completion\"}}\n"
+      ]
+    }
+  ],
+  "tool_call_probe": {
+    "pass": false,
+    "latency_s": 0.002,
+    "error": "HTTP 503: {\"is_bifrost_error\":true,\"status_code\":503,\"error\":{\"type\":\"request_dropped\",\"message\":\"request dropped: queue is full\"},\"extra_fields\":{\"routing_info\":{},\"provider\":\"vllm-local\",\"original_model_requested\":\"qwen3-chat\",\"resolved_model_used\":\"qwen3-chat\",\"request_type\":\"chat_completion\"}}\n"
+  },
+  "guided_json_probe": {
+    "pass": false,
+    "latency_s": 0.003,
+    "error": "HTTP 503: {\"is_bifrost_error\":true,\"status_code\":503,\"error\":{\"type\":\"request_dropped\",\"message\":\"request dropped: queue is full\"},\"extra_fields\":{\"routing_info\":{},\"provider\":\"vllm-local\",\"original_model_requested\":\"qwen3-chat\",\"resolved_model_used\":\"qwen3-chat\",\"request_type\":\"chat_completion\"}}\n"
+  },
+  "prefix_cache_probe": {
+    "first_call_s": 0.018,
+    "second_call_s": 0.004,
+    "prefix_cache_hit_likely": false,
+    "errors": [
+      "HTTP 503: {\"is_bifrost_error\":true,\"status_code\":503,\"error\":{\"type\":\"request_dropped\",\"message\":\"request dropped: queue is full\"},\"extra_fields\":{\"routing_info\":{},\"provider\":\"vllm-local\",\"original_model_requested\":\"qwen3-chat\",\"resolved_model_used\":\"qwen3-chat\",\"request_type\":\"chat_completion\"}}\n",
+      "HTTP 503: {\"is_bifrost_error\":true,\"status_code\":503,\"error\":{\"type\":\"request_dropped\",\"message\":\"request dropped: queue is full\"},\"extra_fields\":{\"routing_info\":{},\"provider\":\"vllm-local\",\"original_model_requested\":\"qwen3-chat\",\"resolved_model_used\":\"qwen3-chat\",\"request_type\":\"chat_completion\"}}\n"
+    ]
+  }
+}

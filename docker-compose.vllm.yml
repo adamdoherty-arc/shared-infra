@@ -1265,6 +1265,145 @@ services:
       start_period: 900s
   # =================== end Pass-9 qwen38 block ===============================
 
+  # =========================================================================
+  # qwen38-nvfp4 — WS4 engine-refresh canary (Legion sprint 15018, 2026-09-21)
+  # =========================================================================
+  # PROFILE-GATED (nvfp4-canary): does NOT start with a plain `docker compose
+  # up -d`. This service exists to be pre-pulled/pre-benched offline while
+  # qwen38-chat keeps serving production traffic untouched; it is only ever
+  # started deliberately via `scripts/engine_cutover.sh`, which stops
+  # qwen38-chat first (the two cannot coexist on one 32.6 GiB card).
+  #
+  # Research (docs/engine-refresh-2026-09-21.md, WS4.1): the ONLY verified
+  # single-RTX-5090 (sm120) serve command for Qwen3.8-27B NVFP4 is vLLM's own
+  # recipe at https://recipes.vllm.ai/Qwen/Qwen3.8-27B, "1x RTX 5090" section
+  # (fetched 2026-09-21):
+  #   vllm serve Inferact/Qwen3.8-27B-NVFP4 --tensor-parallel-size 1
+  #     --max-model-len 32768 --kv-cache-dtype fp8 --enforce-eager
+  #     --reasoning-parser qwen3
+  # Two load-bearing deviations from the WS4 plan spec, recorded here rather
+  # than silently shipped as claimed capability that isn't real:
+  #   1. `--enforce-eager` is MANDATORY on one card ("without it, startup dies
+  #      in CUDA graph capture" — OOM). There is no CUDA-graphs-at-64K mode on
+  #      a single 5090; that combination only exists in the recipe's 2-card
+  #      section. Shipping `--max-model-len 65536` with CUDA graphs enabled
+  #      here would either refuse to boot or silently misrepresent a ceiling
+  #      that doesn't exist on this hardware — banned under NEVER SHIP STUBS.
+  #   2. Max context is capped at 32768, not 65536, per the recipe's own
+  #      31.4 GiB-usable-card VRAM ceiling (KV pool measures ~91,022 tokens at
+  #      that setting on an EXCLUSIVE card). ADA's card is not exclusive (see
+  #      VRAM arithmetic below), so 32768 is the safe starting point, not a
+  #      guess.
+  # MTP speculative decode is deliberately OFF (commented below), not "coming
+  # in a follow-up": the only source describing MTP+NVFP4 for Qwen3.8-27B on a
+  # 5090 is the TWO-card adrienbrault/qwen3.8-27b-rtx5090 build (uses
+  # VLLM_SM12X_PCIE_IPC_AR cross-card all-reduce that doesn't apply here), and
+  # the open HyperQwen GDN wedge (issue #107, vLLM 0.28.0 — engine core stops
+  # stepping in the compiled GDN linear-attention forward) is exactly the kind
+  # of compiled-path defect MTP would add a second instance of. Enabling it
+  # unsoaked would be an unverified capability claim; WS4.2's 6-hour soak is
+  # the gate that would justify turning it on, not this comment.
+  #
+  # VRAM arithmetic (ADA's actual shared card, not the recipe's exclusive one):
+  #   Card total ................................. 32.6 GiB (RTX 5090, nvidia-smi)
+  #   vllm-embed (--gpu-memory-utilization 0.12) ..  ~2.9-3.9 GiB (measured, see
+  #                                                   vllm-embed's own compose comment)
+  #   Windows WDDM desktop reservation ............  ~1.5-2.0 GiB (measured, see
+  #                                                   qwen38-chat's own compose comment)
+  #   -> free with qwen38-chat STOPPED, embed+desktop resident: ~26.0 GiB
+  #      (same number qwen38-chat's own Pass-9 comment measured live 2026-08-31
+  #      for the identical embed+desktop-resident, chat-engine-stopped state —
+  #      the canary inherits that exact budget since it never runs concurrently
+  #      with qwen38-chat).
+  #   NVFP4 weights (~16-18 GiB per HF model-card size, pre-downloaded below)
+  #      + eager-mode workspace (no CUDA-graph capture memory needed, since we
+  #      run --enforce-eager) leaves headroom for KV at 32 seqs / 32768 ctx.
+  #   --gpu-memory-utilization 0.78 (same fraction qwen38-chat uses) targets
+  #      0.78 * 32.6 = ~25.4 GiB total budget, i.e. the same measured-safe
+  #      envelope as the current engine — raise only after a boot log shows
+  #      real headroom, per the same rule qwen38-chat's own block states.
+  qwen38-nvfp4:
+    image: vllm/vllm-openai:v0.29.0
+    container_name: qwen38-nvfp4
+    profiles: ["nvfp4-canary"]
+    ipc: host
+    shm_size: "4gb"
+    stop_grace_period: 30s
+    environment:
+      HF_TOKEN: ${HF_TOKEN}
+      HOME: /cache
+      # Same WSL2/Blackwell hygiene qwen38-chat's block already needed.
+      VLLM_WSL2_ENABLE_PIN_MEMORY: "1"
+      FLASHINFER_DISABLE_VERSION_CHECK: "1"
+      FLASHINFER_CUDA_ARCH_LIST: "12.0f"
+      FLASHINFER_FORCE_SM: "120f"
+    # `command:` is an explicit YAML sequence, not a folded `>` scalar: a
+    # folded scalar gets docker-compose's shell-word-split treatment, which
+    # silently STRIPS the double quotes out of the embedded JSON below
+    # (verified live via `docker compose config` on this exact file, 2026-09-21
+    # — `{"enable_thinking":false}` came back as the invalid `{enable_thinking:false}`).
+    # A list form passes each token through literally with no shell parsing.
+    # MTP is deliberately absent from this list (see the block comment above
+    # the service) — trial only after a soak, as:
+    #   - --speculative-config
+    #   - '{"method":"mtp","num_speculative_tokens":3}'
+    command:
+      - --model
+      - Inferact/Qwen3.8-27B-NVFP4
+      - --served-model-name
+      - qwen3.8-27b
+      - --host
+      - 0.0.0.0
+      - --port
+      - "18020"
+      - --tensor-parallel-size
+      - "1"
+      - --max-model-len
+      - "32768"
+      - --max-num-seqs
+      - "32"
+      - --kv-cache-dtype
+      - fp8
+      - --enforce-eager
+      - --enable-prefix-caching
+      - --gpu-memory-utilization
+      - "0.78"
+      - --reasoning-parser
+      - qwen3
+      - --enable-auto-tool-choice
+      - --tool-call-parser
+      - qwen3_xml
+      - --default-chat-template-kwargs
+      - '{"enable_thinking":false}'
+    # Host 18802: verified outside Windows' excluded TCP port ranges
+    # (`netsh interface ipv4 show excludedportrange protocol=tcp`, checked
+    # 2026-09-21: excluded are 1462, 5357, 50000-50059 only — 18802 is clear,
+    # same reasoning qwen38-chat's own comment applied to 18801/18020).
+    ports:
+      - "18802:18020"
+    labels:
+      - "autoheal=true"
+    deploy:
+      resources:
+        limits:
+          cpus: "4.0"
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    volumes:
+      - qwen38-nvfp4-cache:/cache
+      - hf-cache:/cache/.cache/huggingface
+    restart: "no"
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:18020/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 900s
+  # =================== end WS4 nvfp4-canary block =============================
+
   vllm-embed:
     environment:
       HF_TOKEN: ${HF_TOKEN}
@@ -1548,5 +1687,7 @@ volumes:
     name: qwen38-models
   qwen38-cache:
     name: qwen38-cache
+  qwen38-nvfp4-cache:
+    name: qwen38-nvfp4-cache
   hf-cache:
     name: shared-hf-cache
