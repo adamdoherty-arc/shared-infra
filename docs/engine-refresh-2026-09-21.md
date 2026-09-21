@@ -4,6 +4,39 @@ Preparation-only research for the Qwen3.8-27B local engine refresh (current: `qw
 vLLM 0.28.0 syv-ai/HyperQwen patch stack, sm86-tuned, running on an sm120 RTX 5090). No running
 container was touched to produce this doc.
 
+## Baseline bench context — daemon restart during this pass (2026-09-21 ~13:16 ET)
+
+`reports/engine-bench-baseline-2026-09-21.json` (first run, ~13:09 ET) captured a genuine
+**0% success at Bifrost's edge** — every call at concurrency 1 and 8 got `HTTP 503
+request_dropped: queue is full`. This is a real, live measurement of the exact Part B defect
+(256-slot `vllm-local` buffer saturated during market hours), not a bench-script bug — do not
+discount it. Separately, and NOT caused by this pass: Docker Desktop's engine restarted host-wide
+at 13:16:53 ET (settings-store.json reload from another peer session — traced by the main loop,
+unrelated to WS4/WS6) and cycled every container, including `qwen38-chat`/`vllm-embed`/
+`shared-bifrost`, via the `SharedInfra-Stack`/`Legion-Stack` nssm services' own `compose up`. This
+pass touched no running container before, during, or after that restart. A second baseline run
+was taken once `qwen38-chat` reported `healthy` again post-restart —
+`reports/engine-bench-baseline-2026-09-21-post-restart.json` — to get one clean pre-cutover
+number; **both files are kept** since the first is real evidence of the saturation defect and the
+second is the calmer comparison point WS4.2's cutover gate should bench against.
+
+**The "post-restart" number is NOT a clean baseline — it caught the engine mid-recovery, not
+mid-calm.** `qwen38-chat`'s `/health` reported `healthy` (the liveness probe passed), but
+`docker logs` at that exact moment showed `Avg generation throughput: 0.0-2.6 tokens/s` with
+`Running: 29-31 reqs` — the wedge-monitor's own decode-starvation signature (its log shows the
+same pattern independently: `decode-starved sample 1/8` events bracketing the restart window).
+Result: 25% success at concurrency 1 (3 of 4 calls timed out at the script's 120s cap), 0% at
+concurrency 8, all three probes timed out. **This is a second real, live measurement of a defect
+this program already names** (the GDN/decode-starvation wedge class, Part D) — not a broken
+bench. A third attempt was started once generation throughput visibly recovered (35.2 tok/s
+observed in logs) but its stdout was fully buffered behind a `| tail` pipe in a backgrounded
+shell and never surfaced before this pass had to hand off; the file
+`reports/engine-bench-baseline-2026-09-21-post-restart.json` therefore still holds the
+mid-recovery (degraded) numbers, not a calm-state number. **WS4.2's own cutover-gate bench
+(`engine_cutover.sh`'s `bench_gate`, run fresh at cutover time) is the number that actually gates
+the swap — treat both files here as evidence of current instability, not as the pre-cutover
+control.**
+
 ## (a) vLLM release + flags for Qwen3.8-27B NVFP4 on a single RTX 5090 (sm120)
 
 **Source: https://recipes.vllm.ai/Qwen/Qwen3.8-27B — the "1x RTX 5090" section (fetched

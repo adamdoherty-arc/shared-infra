@@ -27,6 +27,18 @@
 #      served name, never only a Bifrost-side alias.
 set -euo pipefail
 
+# Git Bash / MSYS rewrites any bare-leading-slash argument on a docker CLI
+# line (e.g. `/cache`, `/app`, `-v shared-hf-cache:/cache`) into a Windows
+# path before docker ever sees it -- verified live 2026-09-21: a `docker run
+# ... -e HF_HOME=/cache -v shared-hf-cache:/cache ...` landed a 17 GiB
+# download at `/C:/Program Files/Git/cache/...` INSIDE the container's
+# writable layer instead of the named volume, because HF_HOME got rewritten
+# too. This script's docker-compose invocations don't take raw `/path`
+# arguments on the command line (paths live inside the YAML, which MSYS does
+# not touch), but exporting this here is the correct default for anyone
+# copying a one-off `docker run`/`docker exec` from this file.
+export MSYS_NO_PATHCONV=1
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INFRA_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 VLLM_COMPOSE="$INFRA_DIR/docker-compose.vllm.yml"

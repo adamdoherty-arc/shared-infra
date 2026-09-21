@@ -1,0 +1,89 @@
+{
+  "timestamp": "2026-09-21T13:23:57-0400",
+  "base_url": "http://127.0.0.1:4445/v1",
+  "model": "vllm-local/qwen3-chat",
+  "prompt_mix": [
+    {
+      "call_site": "case_capsule_producer._narrate",
+      "prompt_slug": "analyst_desk.case_capsule_narrative"
+    },
+    {
+      "call_site": "claude_client.brain",
+      "prompt_slug": null
+    },
+    {
+      "call_site": "conviction_orchestrator_service._run_technical_analysis",
+      "prompt_slug": "conviction.technical_analysis"
+    },
+    {
+      "call_site": "conviction_orchestrator_service._run_sentiment_analysis",
+      "prompt_slug": "conviction.sentiment_analysis"
+    },
+    {
+      "call_site": "conviction_orchestrator_service._run_options_flow_analysis",
+      "prompt_slug": "conviction.options_flow_analysis"
+    },
+    {
+      "call_site": "tasks.wait_for",
+      "prompt_slug": null
+    },
+    {
+      "call_site": "deepseek_stock_intelligence.generate",
+      "prompt_slug": null
+    },
+    {
+      "call_site": "signal_narrator._invoke_llm",
+      "prompt_slug": "signal_feed.narrator"
+    }
+  ],
+  "concurrency_results": [
+    {
+      "concurrency": 1,
+      "n": 4,
+      "success_pct": 25.0,
+      "p50_s": 120.008,
+      "p95_s": 120.154,
+      "wall_s": 419.508,
+      "tok_s": 0.14,
+      "errors": [
+        "timed out",
+        "timed out",
+        "timed out"
+      ]
+    },
+    {
+      "concurrency": 8,
+      "n": 4,
+      "success_pct": 0.0,
+      "p50_s": 120.006,
+      "p95_s": 120.007,
+      "wall_s": 120.008,
+      "tok_s": 0.0,
+      "errors": [
+        "timed out",
+        "timed out",
+        "timed out",
+        "timed out"
+      ]
+    }
+  ],
+  "tool_call_probe": {
+    "pass": false,
+    "latency_s": 120.008,
+    "error": "timed out"
+  },
+  "guided_json_probe": {
+    "pass": false,
+    "latency_s": 120.006,
+    "error": "timed out"
+  },
+  "prefix_cache_probe": {
+    "first_call_s": 120.033,
+    "second_call_s": 120.009,
+    "prefix_cache_hit_likely": false,
+    "errors": [
+      "timed out",
+      "timed out"
+    ]
+  }
+}
