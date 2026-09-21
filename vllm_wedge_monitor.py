@@ -100,6 +100,9 @@ VLLM_MAX_SEQS = int(os.environ.get("VLLM_MAX_SEQS", "32"))
 # is already the overload signature; nothing healthy runs 16 requests that slowly.
 SATURATED_MIN_RUNNING_FRACTION = float(os.environ.get("SATURATED_MIN_RUNNING_FRACTION", "0.5"))
 SATURATED_MIN_TOKENS_PER_REQUEST_S = float(os.environ.get("SATURATED_MIN_TOKENS_PER_REQUEST_S", "1.0"))
+# A poll at or above this aggregate rate proves the co-tenant-first heal worked,
+# so the next wedge starts the ladder from the cheap step again.
+HEALTHY_TOKENS_PER_S = float(os.environ.get("HEALTHY_TOKENS_PER_S", "10.0"))
 SATURATED_STARVED_SAMPLES = int(os.environ.get("SATURATED_STARVED_SAMPLES", str(WEDGE_N)))
 
 
@@ -126,6 +129,15 @@ def is_saturated_starved_sample(running: float, gen_rate: float) -> bool:
 # escalation is a second-stage heal on a recurrence, not a claim about which
 # container is at fault -- and if it starts firing regularly, that recurrence
 # rate is itself the evidence needed to find the real spinner.
+# 2026-09-21 -- ATTRIBUTION PROVEN, order inverted. qwen38-chat was restarted
+# twice (18:10 by autoheal, 19:09 by hand) and came back generating 16 tokens
+# in 4 minutes: GPU 99% util, 8% memory-controller, 137 W. `docker restart
+# vllm-embed` at 19:17:32 -> 8 s later 253 tok/s, 498 W, 59% memory
+# controller, 32 running / 3 waiting. The embed co-tenant is the spinner; the
+# chat restart only ever discarded in-flight work and 5 min of weight load.
+# A decode/saturated wedge therefore restarts the CO-TENANTS FIRST and leaves
+# the target alone; the target is restarted only if the wedge persists into
+# the next detection.
 CO_TENANTS = [c for c in os.environ.get("CO_TENANT_CONTAINERS", "vllm-embed").split(",") if c.strip()]
 # 2026-08-06 ROOT-CAUSE FIX — the unreachable branch was killing vllm-chat MID
 # COLD-START, in a self-sustaining loop. Numbers: UNREACHABLE_SAMPLES*POLL_S =
@@ -436,6 +448,8 @@ def main() -> None:
                         log(f"decode recovered after {decode_starved} sample(s): "
                             f"gen_rate={gen_rate:.2f}/s")
                     decode_starved = 0
+                    if gen_rate >= HEALTHY_TOKENS_PER_S:
+                        decode_restarts = 0
 
                 if is_saturated_starved_sample(running, gen_rate):
                     saturated_starved += 1
@@ -488,26 +502,30 @@ def main() -> None:
                          f"generation below {DECODE_MIN_TOKENS_PER_S} tok/s"
                 )
                 decode_wedge = flat < WEDGE_N
-                escalate = decode_wedge and decode_restarts >= 1
-                log(f"WEDGE DETECTED: {kind} -> restarting {TARGET}"
-                    + (f" AND co-tenants {CO_TENANTS} (target restart did not help)"
-                       if escalate else ""))
-                capture_pyspy_dump(TARGET)  # stack the frozen EngineCore before we wipe it
-                try:
-                    status = docker_restart(TARGET)
-                    log(f"restart {TARGET} -> HTTP {status}")
-                except Exception as e:  # noqa: BLE001
-                    log(f"restart FAILED: {e!r}")
-                if escalate:
+                cotenant_first = decode_wedge and decode_restarts == 0 and bool(CO_TENANTS)
+                escalate = decode_wedge and not cotenant_first
+                if cotenant_first:
+                    log(f"WEDGE DETECTED: {kind} -> restarting co-tenants {CO_TENANTS} first "
+                        f"(proven spinner 2026-09-21); {TARGET} kept, in-flight work preserved")
+                else:
+                    log(f"WEDGE DETECTED: {kind} -> restarting {TARGET}"
+                        + (f" AND co-tenants {CO_TENANTS} (co-tenant restart did not help)"
+                           if escalate else ""))
+                    capture_pyspy_dump(TARGET)  # stack the frozen EngineCore before we wipe it
+                    try:
+                        status = docker_restart(TARGET)
+                        log(f"restart {TARGET} -> HTTP {status}")
+                    except Exception as e:  # noqa: BLE001
+                        log(f"restart FAILED: {e!r}")
+                if cotenant_first or escalate:
                     for tenant in CO_TENANTS:
                         try:
                             status = docker_restart(tenant)
                             log(f"restart co-tenant {tenant} -> HTTP {status}")
                         except Exception as e:  # noqa: BLE001
                             log(f"restart co-tenant {tenant} FAILED: {e!r}")
-                    decode_restarts = 0
-                elif decode_wedge:
-                    decode_restarts += 1
+                if cotenant_first:
+                    decode_restarts = 1
                 else:
                     decode_restarts = 0
                 last_restart = now
