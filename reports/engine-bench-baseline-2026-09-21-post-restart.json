@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-09-21T13:39:36-0400",
+  "timestamp": "2026-09-21T13:50:17-0400",
   "base_url": "http://127.0.0.1:4445/v1",
   "model": "vllm-local/qwen3-chat",
   "prompt_mix": [
@@ -41,9 +41,9 @@
       "concurrency": 1,
       "n": 4,
       "success_pct": 0.0,
-      "p50_s": 120.02,
-      "p95_s": 120.034,
-      "wall_s": 480.249,
+      "p50_s": 120.012,
+      "p95_s": 120.042,
+      "wall_s": 480.108,
       "tok_s": 0.0,
       "errors": [
         "timed out",
@@ -56,9 +56,9 @@
       "concurrency": 8,
       "n": 4,
       "success_pct": 0.0,
-      "p50_s": 120.028,
-      "p95_s": 120.038,
-      "wall_s": 120.059,
+      "p50_s": 120.009,
+      "p95_s": 120.021,
+      "wall_s": 120.025,
       "tok_s": 0.0,
       "errors": [
         "timed out",
@@ -70,21 +70,21 @@
   ],
   "tool_call_probe": {
     "pass": false,
-    "latency_s": 120.057,
+    "latency_s": 120.005,
     "error": "timed out"
   },
   "guided_json_probe": {
     "pass": false,
-    "latency_s": 120.022,
+    "latency_s": 120.011,
     "error": "timed out"
   },
   "prefix_cache_probe": {
-    "first_call_s": 120.011,
-    "second_call_s": 120.017,
+    "first_call_s": 86.337,
+    "second_call_s": 0.525,
     "prefix_cache_hit_likely": false,
     "errors": [
-      "timed out",
-      "timed out"
+      "HTTP 502: {\"is_bifrost_error\":false,\"status_code\":502,\"error\":{\"error\":\"dial tcp 172.24.0.25:18020: connect: connection refused\",\"type\":\"provider_connection_failed\",\"message\":\"network error occurred while connecting to provider API (DNS lookup, connection refused, etc.)\"},\"extra_fields\":{\"routing_info\":{\"prov",
+      "HTTP 502: {\"is_bifrost_error\":false,\"status_code\":502,\"error\":{\"error\":\"dial tcp 172.24.0.25:18020: connect: connection refused\",\"type\":\"provider_connection_failed\",\"message\":\"network error occurred while connecting to provider API (DNS lookup, connection refused, etc.)\"},\"extra_fields\":{\"routing_info\":{\"prov"
     ]
   }
 }
