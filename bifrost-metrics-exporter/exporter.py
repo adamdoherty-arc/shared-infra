@@ -47,6 +47,13 @@ from prometheus_client import (
 )
 
 LOGS_DB = Path(os.getenv("BIFROST_LOGS_DB", "/data/logs.db"))
+LOGS_STORE_TYPE = os.getenv("BIFROST_LOGS_STORE_TYPE", "sqlite").strip().lower()
+PG_HOST = os.getenv("BIFROST_PG_HOST", "host.docker.internal")
+PG_PORT = os.getenv("BIFROST_PG_PORT", "5432")
+PG_USER = os.getenv("BIFROST_PG_USER", "bifrost")
+PG_PASSWORD = os.getenv("BIFROST_PG_PASSWORD", "")
+PG_DBNAME = os.getenv("BIFROST_PG_DBNAME", "bifrost_logs")
+PG_SSLMODE = os.getenv("BIFROST_PG_SSLMODE", "disable")
 CONFIG_DB = Path(os.getenv("BIFROST_CONFIG_DB", "/data/config.db"))
 STATE_DIR = Path(os.getenv("EXPORTER_STATE_DIR", "/state"))
 CURSOR_FILE = STATE_DIR / "cursor.txt"
@@ -247,16 +254,44 @@ def _write_cursor(cursor_ts: str) -> None:
     CURSOR_FILE.write_text(cursor_ts)
 
 
+def _pg_connect():
+    import psycopg2
+
+    return psycopg2.connect(
+        host=PG_HOST,
+        port=PG_PORT,
+        user=PG_USER,
+        password=PG_PASSWORD,
+        dbname=PG_DBNAME,
+        sslmode=PG_SSLMODE,
+        connect_timeout=5,
+    )
+
+
+def _logs_store_reachable() -> bool:
+    return LOGS_DB.exists() if LOGS_STORE_TYPE != "postgres" else True
+
+
 def _bootstrap_cursor() -> str:
     """First-run (or post-migration) cursor: jump to the current
     MAX(timestamp) so we don't ingest months of historical rows. Prometheus
     rate()/increase() only needs deltas from "now" forward; historical
-    aggregates can still be queried directly against logs.db with SQL when
-    needed.
+    aggregates can still be queried directly against the logs store with SQL
+    when needed. Supports both the legacy SQLite logs.db and the Postgres
+    logs_store (BIFROST_LOGS_STORE_TYPE=postgres) introduced by the 2026-09-22
+    lock-storm fix -- see docs/plans/sessions/reliability-bitcoin-first-2026-09-21.md.
     """
-    if not LOGS_DB.exists():
+    if not _logs_store_reachable():
         return ""
     try:
+        if LOGS_STORE_TYPE == "postgres":
+            conn = _pg_connect()
+            try:
+                cur = conn.cursor()
+                cur.execute("SELECT COALESCE(MAX(timestamp)::text, '') FROM logs")
+                return str(cur.fetchone()[0] or "")
+            finally:
+                conn.close()
         conn = sqlite3.connect(f"file:{LOGS_DB}?mode=ro", uri=True, timeout=5.0)
         try:
             cur = conn.cursor()
@@ -269,8 +304,9 @@ def _bootstrap_cursor() -> str:
 
 
 def _scrape_logs(cursor_ts: str) -> str:
-    """Pull new rows from logs.db.logs and emit counters. Returns max
-    `timestamp` value seen (as a string; the column is ISO-ish text).
+    """Pull new rows from the logs store and emit counters. Returns max
+    `timestamp` value seen (as a string; the column is ISO-ish text in
+    SQLite and a native timestamptz -- cast to text -- in Postgres).
 
     Fix-1000157 (2026-07-18): this used to cursor on SQLite's implicit
     ROWID. The `id` column on `logs` is a UUID varchar (no INTEGER PRIMARY
@@ -283,57 +319,87 @@ def _scrape_logs(cursor_ts: str) -> str:
     9+ hours straight during this investigation; likely stuck since the
     2026-07-13 mega-prune). `timestamp` is a column VALUE written once per
     row and is untouched by VACUUM's physical page reshuffling, so cursoring
-    on it is immune to this failure mode by construction.
+    on it is immune to this failure mode by construction -- and the same
+    reasoning is why the Postgres path below also cursors on `timestamp`,
+    never a server-assigned id.
+
+    2026-09-22: the SQLite `logs.db` this exporter tailed became a
+    lock-storm source under the Windows bind mount (context-deadline /
+    "database is locked" errors on Bifrost's own housekeeping). Bifrost's
+    log store moved to Postgres (BIFROST_LOGS_STORE_TYPE=postgres); this
+    function now reads whichever store is configured so the exporter's
+    metrics never silently freeze against an abandoned SQLite file.
     """
-    if not LOGS_DB.exists():
+    if not _logs_store_reachable():
         exporter_scrape_errors_total.labels(table="logs").inc()
         return cursor_ts
     max_ts = cursor_ts
     try:
-        conn = sqlite3.connect(f"file:{LOGS_DB}?mode=ro", uri=True, timeout=5.0)
-        try:
-            cur = conn.cursor()
-            cur.execute(
-                """
-                SELECT timestamp, object_type, provider, model, status, latency,
-                       prompt_tokens, completion_tokens, cost
-                FROM logs
-                WHERE timestamp > ?
-                ORDER BY timestamp ASC
-                LIMIT 5000
-                """,
-                (cursor_ts,),
-            )
-            for row in cur.fetchall():
-                row_ts, obj_type, provider, model, status, latency, p_tok, c_tok, cost = row
-                provider = provider or "unknown"
-                model = model or ""
-                status = status or "unknown"
-                request_type = obj_type or "unknown"
-                if request_type == "list_models":
-                    list_models_probe_total.labels(provider, status).inc()
-                    if isinstance(row_ts, str) and row_ts > max_ts:
-                        max_ts = row_ts
-                    continue
-                requests_total.labels(provider, model, status, request_type).inc()
-                if latency is not None:
-                    try:
-                        latency_hist.labels(provider, model, request_type).observe(float(latency))
-                    except (TypeError, ValueError):
-                        pass
-                if p_tok:
-                    prompt_tokens_total.labels(provider, model).inc(p_tok)
-                if c_tok:
-                    completion_tokens_total.labels(provider, model).inc(c_tok)
-                if cost:
-                    try:
-                        cost_total.labels(provider, model).inc(float(cost))
-                    except (TypeError, ValueError):
-                        pass
-                if isinstance(row_ts, str) and row_ts > max_ts:
+        if LOGS_STORE_TYPE == "postgres":
+            conn = _pg_connect()
+            try:
+                cur = conn.cursor()
+                cur.execute(
+                    """
+                    SELECT timestamp::text, object_type, provider, model, status, latency,
+                           prompt_tokens, completion_tokens, cost
+                    FROM logs
+                    WHERE timestamp > %s::timestamptz
+                    ORDER BY timestamp ASC
+                    LIMIT 5000
+                    """,
+                    (cursor_ts or "1970-01-01",),
+                )
+                rows = cur.fetchall()
+            finally:
+                conn.close()
+        else:
+            conn = sqlite3.connect(f"file:{LOGS_DB}?mode=ro", uri=True, timeout=5.0)
+            try:
+                cur = conn.cursor()
+                cur.execute(
+                    """
+                    SELECT timestamp, object_type, provider, model, status, latency,
+                           prompt_tokens, completion_tokens, cost
+                    FROM logs
+                    WHERE timestamp > ?
+                    ORDER BY timestamp ASC
+                    LIMIT 5000
+                    """,
+                    (cursor_ts,),
+                )
+                rows = cur.fetchall()
+            finally:
+                conn.close()
+        for row in rows:
+            row_ts, obj_type, provider, model, status, latency, p_tok, c_tok, cost = row
+            row_ts = str(row_ts) if row_ts is not None else None
+            provider = provider or "unknown"
+            model = model or ""
+            status = status or "unknown"
+            request_type = obj_type or "unknown"
+            if request_type == "list_models":
+                list_models_probe_total.labels(provider, status).inc()
+                if row_ts and row_ts > max_ts:
                     max_ts = row_ts
-        finally:
-            conn.close()
+                continue
+            requests_total.labels(provider, model, status, request_type).inc()
+            if latency is not None:
+                try:
+                    latency_hist.labels(provider, model, request_type).observe(float(latency))
+                except (TypeError, ValueError):
+                    pass
+            if p_tok:
+                prompt_tokens_total.labels(provider, model).inc(p_tok)
+            if c_tok:
+                completion_tokens_total.labels(provider, model).inc(c_tok)
+            if cost:
+                try:
+                    cost_total.labels(provider, model).inc(float(cost))
+                except (TypeError, ValueError):
+                    pass
+            if row_ts and row_ts > max_ts:
+                max_ts = row_ts
     except Exception:
         exporter_scrape_errors_total.labels(table="logs").inc()
     return max_ts
@@ -387,7 +453,18 @@ def _scrape_loop() -> None:
                 if iteration <= 3 or iteration % 60 == 0:
                     print(f"scrape #{iteration}: no new rows (cursor={cursor})", flush=True)
             _scrape_config()
-            if LOGS_DB.exists():
+            if LOGS_STORE_TYPE == "postgres":
+                try:
+                    conn = _pg_connect()
+                    try:
+                        cur = conn.cursor()
+                        cur.execute("SELECT pg_database_size(%s)", (PG_DBNAME,))
+                        logs_db_bytes.set(cur.fetchone()[0])
+                    finally:
+                        conn.close()
+                except Exception:
+                    pass
+            elif LOGS_DB.exists():
                 try:
                     logs_db_bytes.set(LOGS_DB.stat().st_size)
                 except OSError:

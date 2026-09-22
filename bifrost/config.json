@@ -96,7 +96,6 @@
           "name": "nvidia-nim-secondary",
           "value": "env.NV_API_KEY_2",
           "models": [
-            "deepseek-ai/deepseek-v4-flash-0731",
             "meta/llama-3.2-11b-vision-instruct",
             "meta/llama-3.2-90b-vision-instruct",
             "mistralai/mistral-nemotron",
@@ -129,7 +128,6 @@
           "name": "nvidia-nim-primary",
           "value": "env.NV_API_KEY",
           "models": [
-            "deepseek-ai/deepseek-v4-flash-0731",
             "meta/llama-3.2-11b-vision-instruct",
             "meta/llama-3.2-90b-vision-instruct",
             "mistralai/mistral-nemotron",
@@ -170,7 +168,6 @@
           "name": "nvidia-nim-tertiary",
           "value": "env.NV_API_KEY_3",
           "models": [
-            "deepseek-ai/deepseek-v4-flash-0731",
             "meta/llama-3.2-11b-vision-instruct",
             "meta/llama-3.2-90b-vision-instruct",
             "mistralai/mistral-nemotron",
@@ -512,29 +509,29 @@
         "concurrency": 2,
         "buffer_size": 50
       }
-    },
-    "mistral": {
-      "keys": [
-        {
-          "name": "mistral-primary",
-          "value": "env.MISTRAL_API_KEY",
-          "models": [
-            "codestral-latest",
-            "mistral-small-latest",
-            "mistral-large-latest"
-          ],
-          "weight": 1.0
-        }
-      ],
-      "network_config": {
-        "base_url": "https://api.mistral.ai",
-        "default_request_timeout_in_seconds": 120,
-        "max_retries": 2
-      },
-      "concurrency_and_buffer_size": {
-        "concurrency": 4,
-        "buffer_size": 100
-      }
     }
+  },
+  "logs_store": {
+    "_comment_logstore_migration": "2026-09-22 (Legion-Task 15016, product_feature:llm-fabric-control-center): moved off the Windows-bind-mounted SQLite logs.db, which does not share POSIX locks over a 9p mount -- measured 48x 'failed to delete stale processing async jobs: context deadline exceeded' + 48x 'database is locked' + 28x 'cleanup old processing LLM logs: database is locked' in one window, with 186+ 503 request_dropped in ADA logs. Postgres logs_store is natively supported by the v2.0.0 binary (confirmed via `strings` on the running container: 'logstore: postgres server_version_num=%d; running schema migrations', its own migration runner, and index build strings for logs(created_at)/logs(alias) -- this is a real, shipped feature, not a guess). Old logs.db is left in place, untouched, as the rollback: flip type back to 'sqlite' and restart. Role/db created native-PG: `bifrost` login role, `bifrost_logs` database it owns, on host.docker.internal:5432 (reachable from the shared-infra_default network). Pool budgeted into ADA's connection ceiling: max_open_conns=10 added to backend/tests/test_db_pool_budget_invariant.py RESERVED and .claude/rules/60-database.md's table (300 max_connections, comfortable headroom).",
+    "enabled": true,
+    "type": "postgres",
+    "config": {
+      "host": "host.docker.internal",
+      "port": "5432",
+      "user": "bifrost",
+      "password_command": {
+        "command": "printenv",
+        "args": [
+          "BIFROST_LOGSTORE_PASSWORD"
+        ]
+      },
+      "db_name": "bifrost_logs",
+      "ssl_mode": "disable",
+      "max_idle_conns": 3,
+      "max_open_conns": 10,
+      "conn_max_lifetime": "30m",
+      "conn_max_idle_time": "5m"
+    },
+    "retention_days": 2
   }
 }

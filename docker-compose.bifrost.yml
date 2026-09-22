@@ -96,6 +96,13 @@ services:
       # and referenced by config.json's freellmapi provider block as
       # `env.FREELLM_BEARER_TOKEN`.
       FREELLM_BEARER_TOKEN: ${FREELLM_BEARER_TOKEN:-}
+      # 2026-09-22 (Legion-Task 15016): logs_store moved off the Windows-bind-mounted
+      # SQLite logs.db (no shared POSIX locks over the 9p mount -> lock-storm class of
+      # failure) onto native-host Postgres. config.json's logs_store.config.password_command
+      # runs `sh -c "printenv BIFROST_LOGSTORE_PASSWORD"` inside this container -- the
+      # password itself never appears in config.json, matching the provider-key pattern
+      # above (env.<NAME>) without needing that resolver for a non-provider config path.
+      BIFROST_LOGSTORE_PASSWORD: ${BIFROST_LOGSTORE_PASSWORD:-}
     volumes:
       # Bifrost expects its config directory at /app/data — that's where
       # config.json lives, plus any persistence (logs, governance state).
@@ -183,6 +190,18 @@ services:
     environment:
       BIFROST_LOGS_DB: "/data/logs.db"
       BIFROST_CONFIG_DB: "/data/config.db"
+      # 2026-09-22 (Legion-Task 15016): logs_store moved to Postgres -- see the `bifrost`
+      # service's BIFROST_LOGSTORE_PASSWORD comment above for the incident this fixes.
+      # BIFROST_LOGS_DB above stays pointed at the frozen SQLite file (harmless dead
+      # config once STORE_TYPE=postgres; kept only so a rollback to sqlite needs no
+      # compose edit). The exporter's own connection uses these instead:
+      BIFROST_LOGS_STORE_TYPE: "postgres"
+      BIFROST_PG_HOST: "host.docker.internal"
+      BIFROST_PG_PORT: "5432"
+      BIFROST_PG_USER: "bifrost"
+      BIFROST_PG_PASSWORD: ${BIFROST_LOGSTORE_PASSWORD:-}
+      BIFROST_PG_DBNAME: "bifrost_logs"
+      BIFROST_PG_SSLMODE: "disable"
       EXPORTER_STATE_DIR: "/state"
       EXPORTER_INTERVAL_S: "15"
       EXPORTER_PORT: "9100"
@@ -229,6 +248,19 @@ services:
         max-file: "3"
 
   bifrost-logs-pruner:
+    # PARKED 2026-09-22 (Legion-Task 15016): logs_store moved to Postgres, and the
+    # v2.0.0 binary runs its OWN retention cleaner against that store natively
+    # (confirmed via `strings`: "starting log cleanup: deleting logs older than %s
+    # (retention: %d days)" / "stopping log retention cleaner..."), driven by
+    # config.json's logs_store.retention_days (set to 2, same policy this pruner
+    # enforced). This sidecar's SQLite-specific DELETE+VACUUM has nothing left to
+    # prune -- logs.db is frozen (kept only as the rollback artifact) -- so it is
+    # disabled via `profiles` rather than deleted, so a rollback to
+    # logs_store.type=sqlite can re-enable it with one flag, no compose rewrite.
+    # `docker compose -f docker-compose.bifrost.yml up -d` no longer starts it;
+    # `docker compose -f docker-compose.bifrost.yml --profile sqlite-rollback up -d bifrost-logs-pruner`
+    # does. Original pre-2026-09-22 rationale kept below for the rollback path.
+    #
     # Nightly pruner for Bifrost logs.db.  Without retention the file
     # grows without bound (reached 8.3 GB corrupt on 2026-06-11, 11.95 GB
     # on 2026-07-13 — headed for the 26 GB corruption threshold).
@@ -243,6 +275,7 @@ services:
     # minutes with nothing surfacing that fact anywhere but this container's
     # own stdout -- reuses AUTOHEAL_DISCORD_WEBHOOK, the same optional webhook
     # auth_autoheal.py already uses, so no second webhook to provision.
+    profiles: ["sqlite-rollback"]
     build:
       context: ./bifrost-logs-pruner
       dockerfile: Dockerfile
