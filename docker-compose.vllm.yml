@@ -1262,7 +1262,7 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
-      start_period: 1800s
+      start_period: 3600s
   # =================== end Pass-9 qwen38 block ===============================
 
   # =========================================================================
@@ -1398,7 +1398,7 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
-      start_period: 1800s
+      start_period: 3600s
   # =================== end WS4 nvfp4-canary block =============================
 
   # =================== embed-gpu-rollback (parked, 2026-09-22) ==============
