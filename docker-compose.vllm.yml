@@ -1271,57 +1271,51 @@ services:
   # PROFILE-GATED (nvfp4-canary): does NOT start with a plain `docker compose
   # up -d`. This service exists to be pre-pulled/pre-benched offline while
   # qwen38-chat keeps serving production traffic untouched; it is only ever
-  # started deliberately via `scripts/engine_cutover.sh`, which stops
-  # qwen38-chat first (the two cannot coexist on one 32.6 GiB card).
+  # started deliberately via `scripts/engine_cutover.sh` / `scripts/
+  # ws4_isolated_bench.sh`, which stop qwen38-chat first (the two cannot
+  # coexist on one 32.6 GiB card).
   #
-  # Research (docs/engine-refresh-2026-09-21.md, WS4.1): the ONLY verified
-  # single-RTX-5090 (sm120) serve command for Qwen3.8-27B NVFP4 is vLLM's own
-  # recipe at https://recipes.vllm.ai/Qwen/Qwen3.8-27B, "1x RTX 5090" section
-  # (fetched 2026-09-21):
-  #   vllm serve Inferact/Qwen3.8-27B-NVFP4 --tensor-parallel-size 1
-  #     --max-model-len 32768 --kv-cache-dtype fp8 --enforce-eager
-  #     --reasoning-parser qwen3
-  # Two load-bearing deviations from the WS4 plan spec, recorded here rather
-  # than silently shipped as claimed capability that isn't real:
-  #   1. `--enforce-eager` is MANDATORY on one card ("without it, startup dies
-  #      in CUDA graph capture" — OOM). There is no CUDA-graphs-at-64K mode on
-  #      a single 5090; that combination only exists in the recipe's 2-card
-  #      section. Shipping `--max-model-len 65536` with CUDA graphs enabled
-  #      here would either refuse to boot or silently misrepresent a ceiling
-  #      that doesn't exist on this hardware — banned under NEVER SHIP STUBS.
-  #   2. Max context is capped at 32768, not 65536, per the recipe's own
-  #      31.4 GiB-usable-card VRAM ceiling (KV pool measures ~91,022 tokens at
-  #      that setting on an EXCLUSIVE card). ADA's card is not exclusive (see
-  #      VRAM arithmetic below), so 32768 is the safe starting point, not a
-  #      guess.
-  # MTP speculative decode is deliberately OFF (commented below), not "coming
-  # in a follow-up": the only source describing MTP+NVFP4 for Qwen3.8-27B on a
-  # 5090 is the TWO-card adrienbrault/qwen3.8-27b-rtx5090 build (uses
-  # VLLM_SM12X_PCIE_IPC_AR cross-card all-reduce that doesn't apply here), and
-  # the open HyperQwen GDN wedge (issue #107, vLLM 0.28.0 — engine core stops
-  # stepping in the compiled GDN linear-attention forward) is exactly the kind
-  # of compiled-path defect MTP would add a second instance of. Enabling it
-  # unsoaked would be an unverified capability claim; WS4.2's 6-hour soak is
-  # the gate that would justify turning it on, not this comment.
+  # 2026-09-21 first attempt (dated, kept for the record, NOT the current
+  # config): `Inferact/Qwen3.8-27B-NVFP4` (ModelOpt format) measured
+  # 24.18-24.99 GiB of GPU weight memory alone -- 8-9 GiB over the original
+  # ~16 GiB estimate from vLLM's own single-card recipe (recipes.vllm.ai,
+  # "1x RTX 5090" section) -- and could not fit beside `vllm-embed` at the
+  # recipe's own `--enforce-eager --max-model-len 32768
+  # --gpu-memory-utilization 0.78`: hard ValueError, `Available KV cache
+  # memory: -6.86 GiB`. A reduced config (8 seqs / 16384 ctx / util 0.92)
+  # avoided the hard error but stalled >15 min in encoder-cache profiling
+  # (RAM-vs-checkpoint thrashing, not a VRAM error). Full narrative + every
+  # variant's boot log: docs/engine-refresh-2026-09-21.md.
   #
-  # VRAM arithmetic (ADA's actual shared card, not the recipe's exclusive one):
-  #   Card total ................................. 32.6 GiB (RTX 5090, nvidia-smi)
-  #   vllm-embed (--gpu-memory-utilization 0.12) ..  ~2.9-3.9 GiB (measured, see
-  #                                                   vllm-embed's own compose comment)
-  #   Windows WDDM desktop reservation ............  ~1.5-2.0 GiB (measured, see
-  #                                                   qwen38-chat's own compose comment)
-  #   -> free with qwen38-chat STOPPED, embed+desktop resident: ~26.0 GiB
-  #      (same number qwen38-chat's own Pass-9 comment measured live 2026-08-31
-  #      for the identical embed+desktop-resident, chat-engine-stopped state —
-  #      the canary inherits that exact budget since it never runs concurrently
-  #      with qwen38-chat).
-  #   NVFP4 weights (~16-18 GiB per HF model-card size, pre-downloaded below)
-  #      + eager-mode workspace (no CUDA-graph capture memory needed, since we
-  #      run --enforce-eager) leaves headroom for KV at 32 seqs / 32768 ctx.
-  #   --gpu-memory-utilization 0.78 (same fraction qwen38-chat uses) targets
-  #      0.78 * 32.6 = ~25.4 GiB total budget, i.e. the same measured-safe
-  #      envelope as the current engine — raise only after a boot log shows
-  #      real headroom, per the same rule qwen38-chat's own block states.
+  # 2026-09-22 (Fix-1100000610 unblocked this): `vllm-embed` moved OFF the
+  # GPU onto a CPU llama.cpp service (see that service's own block below),
+  # reclaiming ~2.8 GiB and leaving the RTX 5090 to `qwen38-chat` alone --
+  # vLLM now sees ~31.8 GiB total / ~30.2 GiB free with qwen38-chat stopped.
+  # This re-run swaps to the smaller, Apache-2.0 `unsloth/Qwen3.8-27B-NVFP4`
+  # build (Unsloth Dynamic V3.0, compressed-tensors mixed-precision format,
+  # `lm_head` FP8): `model.safetensors` 22.57 GB + `model_mtp.safetensors`
+  # 0.85 GB on the Hub, ~8-9 GiB smaller than the ModelOpt build benched
+  # above for the same parameter count. `--gpu-memory-utilization` raised to
+  # 0.90 (0.90 * 31.8 = ~28.6 GiB budget) now that embed no longer contends
+  # for the card.
+  #
+  # Variant order for this pass (graphs is the shipped default below; mtp
+  # and eager are launched via `launch_canary_variant` in
+  # scripts/engine_cutover.sh, which mirrors this service's image/env/
+  # volumes/ports and swaps only the command list): `graphs` (no
+  # `--enforce-eager` -- default CUDA graph capture) first, then `mtp`
+  # (`graphs` + `--speculative-config {"method":"mtp",
+  # "num_speculative_tokens":2}`) always, then `eager`
+  # (`--enforce-eager`, no CUDA graphs) ONLY if `graphs` fails to boot --
+  # eager exists purely as the capture-OOM fallback the 2026-09-21 pass
+  # found necessary on the larger checkpoint; with a ~2.9 GiB smaller
+  # checkpoint and ~2.8 GiB more free VRAM, CUDA graph capture is worth
+  # trying for real this time rather than skipping straight to eager. No
+  # source in this research confirms MTP works single-GPU under
+  # `--enforce-eager` OR under CUDA graphs on this stack (the open HyperQwen
+  # GDN wedge, issue #107, is a compiled-GDN-forward defect on the OLD
+  # 0.28.0 image, not this v0.29.0 official image) -- `mtp` here is a
+  # measurement, not a claim it is soak-ready.
   qwen38-nvfp4:
     image: vllm/vllm-openai:v0.29.0
     container_name: qwen38-nvfp4
@@ -1343,13 +1337,14 @@ services:
     # (verified live via `docker compose config` on this exact file, 2026-09-21
     # — `{"enable_thinking":false}` came back as the invalid `{enable_thinking:false}`).
     # A list form passes each token through literally with no shell parsing.
-    # MTP is deliberately absent from this list (see the block comment above
-    # the service) — trial only after a soak, as:
-    #   - --speculative-config
-    #   - '{"method":"mtp","num_speculative_tokens":3}'
+    # This is the "graphs" variant (default CUDA graph capture, no
+    # `--enforce-eager`) -- the shipped default per the 2026-09-22 addendum
+    # above. `mtp` and `eager` are launched via
+    # scripts/engine_cutover.sh's launch_canary_variant, which mirrors this
+    # exact image/env/volumes/ports and only swaps the command list.
     command:
       - --model
-      - Inferact/Qwen3.8-27B-NVFP4
+      - unsloth/Qwen3.8-27B-NVFP4
       - --served-model-name
       - qwen3.8-27b
       - --host
@@ -1364,10 +1359,9 @@ services:
       - "32"
       - --kv-cache-dtype
       - fp8
-      - --enforce-eager
       - --enable-prefix-caching
       - --gpu-memory-utilization
-      - "0.78"
+      - "0.90"
       - --reasoning-parser
       - qwen3
       - --enable-auto-tool-choice

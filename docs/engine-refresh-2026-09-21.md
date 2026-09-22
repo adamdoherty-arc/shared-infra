@@ -386,3 +386,105 @@ change. The one non-100% number (`vllm-local` 60.8%) is a distinct, already-trac
 admission-control behavior with no vLLM-side failures in it -- reported here for completeness, not
 rolled into the embed-cutover verdict, and not something this pass touches (its "fixed on the ADA
 side" work is the 23:05 UTC addendum above, from an earlier pass).
+
+## Addendum 2026-09-22 03:09-03:44 UTC -- unsloth/Qwen3.8-27B-NVFP4 re-bench, embed-free card
+
+Re-run of the WS4.2 canary bench (Legion sprint 15018) now that Fix-1100000610 (previous
+addendum) has `vllm-embed` fully off the GPU: vLLM sees ~31.8 GiB total / ~30.2 GiB free with
+`qwen38-chat` stopped, ~2.8 GiB more than the 2026-09-21 isolated-bench pass had. Swapped the
+checkpoint from the previously-benched `Inferact/Qwen3.8-27B-NVFP4` (ModelOpt, 25.5 GB, measured
+24.18-24.99 GiB GPU weight memory, hard-failed there on KV budget) to the smaller, Apache-2.0
+`unsloth/Qwen3.8-27B-NVFP4` (Unsloth Dynamic V3.0, compressed-tensors mixed-precision,
+`lm_head` FP8) -- `model.safetensors` 22,568,192,096 bytes + `model_mtp.safetensors`
+849,400,392 bytes downloaded into the shared `shared-hf-cache` volume via
+`docker run --entrypoint hf vllm/vllm-openai:v0.29.0 download unsloth/Qwen3.8-27B-NVFP4`
+(no `MSYS_NO_PATHCONV` needed -- no bare-slash path arguments on this exact invocation), sizes
+verified byte-for-byte against the Hub with `stat -L` on the resolved blob symlinks before any
+boot attempt. `docker-compose.vllm.yml`'s `qwen38-nvfp4` service and
+`scripts/engine_cutover.sh`'s `launch_canary_variant` were both repointed at the new model,
+`--gpu-memory-utilization` raised 0.78 -> 0.90 (embed no longer contends for the card), and the
+compose default switched from the `eager` command (mandatory on the larger checkpoint) to
+`graphs` (default CUDA graph capture, no `--enforce-eager`) as the new default -- `eager` is now
+purely a capture-OOM fallback, gated on `graphs` failing to boot. A new driver,
+`scripts/ws4_unsloth_bench.sh`, encodes the variant order for this pass: `graphs` first, `mtp`
+always, `eager` only if `graphs` failed.
+
+### Variant results
+
+| Variant | Boot result | Bench | Notes |
+|---|---|---|---|
+| graphs (default CUDA graphs, 32768 ctx, util 0.90) | BOOTED in 606s | see below | 100% success at every concurrency (1/8/16/32), all 4 probes pass, no wedge signature over the run |
+| mtp (graphs + `--speculative-config {"method":"mtp","num_speculative_tokens":2}`) | FAILED to boot in 900s | not run | crashed once with `RuntimeError: Engine core initialization failed. See root cause above` (root cause itself fell outside the captured log tail), the process then restarted internally and re-entered `Loading safetensors checkpoint shards: 0% Completed \| 0/2` where it sat until the 900s cutoff -- recorded as a genuine boot failure, not investigated further per the time-boxed cutoff; no KV-cache-OOM signature was present so the 16384-ctx retry path was not triggered |
+| eager (`--enforce-eager`, capture-OOM fallback) | SKIPPED | not run | `graphs` booted, so eager (a fallback-only path) was correctly not attempted |
+
+### unsloth/graphs bench -- `reports/engine-bench-2026-09-21-unsloth-graphs.json`
+
+| Concurrency | Success % | p50 | p95 | Aggregate tok/s | Per-req tok/s (median / p95) | num_requests_running before / during |
+|---|---|---|---|---|---|---|
+| 1 | 100.0 | 2.646s | 5.117s | 51.41 | 51.36 / 53.92 | 0 / 0 |
+| 8 | 100.0 | 3.280s | 7.406s | 158.50 | 41.30 / 47.19 | 0 / 0 |
+| 16 | 100.0 | 2.862s | 11.119s | 116.08 | 46.80 / 51.59 | 0 / 0 |
+| 32 | 100.0 | 2.971s | 8.170s | 147.71 | 47.62 / 50.97 | 0 / 0 |
+
+Probes: tool-call PASS (0.688s), guided-JSON PASS (2.284s), thinking-disabled PASS (no think tag,
+35 completion tokens), prefix-cache likely-hit (0.384s -> 0.184s, 52% faster on the repeat). Log
+watch over the full bench showed generation throughput fluctuating 4.2-187.1 tok/s with Running
+0-8 and Waiting always 0 -- normal admission-driven variation, no stall-to-zero-with-Running>0
+wedge signature.
+
+### Current engine (qwen38-chat), embed-free, concurrency 32 only, n=16 -- `reports/engine-bench-2026-09-21-current-embed-free-c32.json`
+
+| Concurrency | Success % | p50 | p95 | Aggregate tok/s | Per-req tok/s (median / p95) | num_requests_running before / during |
+|---|---|---|---|---|---|---|
+| 32 | 100.0 | 3.072s | 5.922s | 396.90 | 39.83 / 47.64 | 11 / 10 |
+
+Probes: tool-call PASS (0.633s), guided-JSON PASS (0.553s), thinking-disabled PASS (no think tag,
+31 completion tokens), prefix-cache likely-hit (0.214s -> 0.174s). This is the current engine's
+own embed-free number -- `qwen38-chat`'s custom syv-ai batch-mode build, already tuned for this
+exact workload, now also benefiting from the reclaimed VRAM.
+
+### Comparison table
+
+| Metric (concurrency 32) | unsloth/graphs (canary) | qwen38-chat (current, embed-free) | Ratio (canary / current) |
+|---|---|---|---|
+| Success % | 100.0 | 100.0 | 1.0x |
+| Aggregate tok/s | 147.71 | 396.90 | 0.37x |
+| Per-request tok/s (median) | 47.62 | 39.83 | 1.20x |
+| Tool-call probe | PASS | PASS | tie |
+| Guided-JSON probe | PASS | PASS | tie |
+| Wedge over the bench | none observed | none observed | tie |
+
+### Recommendation: DO NOT CUT OVER
+
+The acceptance bar for this pass was: success >= 99% at 32, tool + guided-JSON pass, no wedge
+over the bench, aggregate tok/s at 32 concurrent >= 1.5x the embed-free current engine. The
+`unsloth/graphs` canary clears every qualitative bar (100% success, both probes pass, no wedge)
+but fails the throughput bar outright: 147.71 tok/s aggregate vs. 396.90 tok/s for the
+current engine at the same concurrency -- 0.37x, not 1.5x. Per-request median tok/s is actually
+slightly better on the canary (47.62 vs 39.83), which means the gap is in how many requests the
+two engines can usefully run in parallel at concurrency 32, not in single-stream generation
+speed: `qwen38-chat`'s custom syv-ai batch-mode build (already tuned specifically for this
+workload, with its own scheduler tuning honed over multiple passes -- see that service's own
+compose comments) processed roughly 2.5x the batch's total tokens in less wall time (5.969s vs
+9.397s) than the freshly-booted official-image canary running vLLM 0.29.0's stock CUDA-graph
+scheduling. The smaller unsloth checkpoint solved the VRAM-fit problem the 2026-09-21 pass hit,
+but a checkpoint that boots is not the same as an engine that outperforms a build already tuned
+across five-plus prior passes -- this pass measured that gap rather than assuming the smaller
+checkpoint would close it.
+
+`mtp` could not be evaluated (boot failure, see above) so it contributes nothing to this
+decision either way. `qwen38-chat` was restored, verified healthy (`/health` 200, live 5-token
+completion returned "OK.") and left running for the whole of this pass and afterward; the canary
+container was removed after each attempt and never left resident.
+
+What would need to change before cutting over: either (a) tune the official-image canary's own
+scheduler/batching to close the ~2.5x wall-time gap (this pass ran it at defaults --
+`--max-num-seqs 32` matches the current engine's setting, but vLLM 0.29.0's scheduler internals
+were not otherwise tuned), or (b) accept the throughput regression in exchange for the sm120-native
+official image and no third-party patch stack, which is a product tradeoff for the owner, not an
+engineering default. Neither was attempted here -- recording them as the next steps rather than
+doing them unauthorized mid-pass, per this program's own standing pattern.
+
+Raw reports: `reports/engine-bench-2026-09-21-unsloth-graphs.json`,
+`reports/engine-bench-2026-09-21-current-embed-free-c32.json`. Driver:
+`scripts/ws4_unsloth_bench.sh`.

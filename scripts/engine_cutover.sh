@@ -107,18 +107,30 @@ log() { echo "[engine_cutover $(date -u +%H:%M:%S)] $*" >&2; }
 # with qwen38-chat.
 launch_canary_variant() {
   local variant="$1"
+  local ctx_len="${2:-32768}"
   local -a extra_flags=("--default-chat-template-kwargs" '{"enable_thinking":false}')
+  # 2026-09-22 model swap (Fix-1100000610 unblocked this -- vllm-embed moved
+  # off the GPU, ~2.8 GiB reclaimed): unsloth/Qwen3.8-27B-NVFP4, ~2.9 GiB
+  # smaller on GPU than the Inferact/ModelOpt build benched 2026-09-21, so
+  # --gpu-memory-utilization is raised 0.78 -> 0.90 now embed no longer
+  # contends for the card. See docker-compose.vllm.yml's qwen38-nvfp4 block
+  # for the full dated narrative.
   local -a base_flags=(
-    --model Inferact/Qwen3.8-27B-NVFP4 --served-model-name qwen3.8-27b --host 0.0.0.0 --port 18020
-    --tensor-parallel-size 1 --max-num-seqs 32 --kv-cache-dtype fp8 --enable-prefix-caching
-    --gpu-memory-utilization 0.78 --reasoning-parser qwen3 --enable-auto-tool-choice
-    --tool-call-parser qwen3_xml
+    --model unsloth/Qwen3.8-27B-NVFP4 --served-model-name qwen3.8-27b --host 0.0.0.0 --port 18020
+    --tensor-parallel-size 1 --max-model-len "$ctx_len" --max-num-seqs 32 --kv-cache-dtype fp8
+    --enable-prefix-caching --gpu-memory-utilization 0.90 --reasoning-parser qwen3
+    --enable-auto-tool-choice --tool-call-parser qwen3_xml
   )
   local -a variant_flags=()
   case "$variant" in
-    eager)  variant_flags=(--max-model-len 32768 --enforce-eager) ;;
-    graphs) variant_flags=(--max-model-len 65536 --compilation-config '{"max_cudagraph_capture_size":32}') ;;
-    mtp)    variant_flags=(--max-model-len 32768 --enforce-eager --speculative-config '{"method":"mtp","num_speculative_tokens":3}') ;;
+    # graphs = default CUDA graph capture (no extra flag -- this IS the
+    # compose service's shipped command).
+    graphs) variant_flags=() ;;
+    # mtp = graphs + MTP speculative decode. A measurement, not a claim it
+    # is soak-ready (see the compose block's dated comment).
+    mtp)    variant_flags=(--speculative-config '{"method":"mtp","num_speculative_tokens":2}') ;;
+    # eager = the capture-OOM fallback, tried only when graphs fails to boot.
+    eager)  variant_flags=(--enforce-eager) ;;
   esac
   docker rm -f qwen38-nvfp4 >/dev/null 2>&1 || true
   # MSYS_NO_PATHCONV scoped to THIS command only (see the header comment) --
@@ -132,7 +144,7 @@ launch_canary_variant() {
     -v qwen38-nvfp4-cache:/cache -v shared-hf-cache:/cache/.cache/huggingface \
     vllm/vllm-openai:v0.29.0 \
     "${base_flags[@]}" "${variant_flags[@]}" "${extra_flags[@]}"
-  log "launched qwen38-nvfp4 variant=$variant"
+  log "launched qwen38-nvfp4 variant=$variant ctx_len=$ctx_len"
 }
 
 stop_canary() {

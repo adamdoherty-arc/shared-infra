@@ -1,0 +1,98 @@
+{
+  "timestamp": "2026-09-21T23:44:16-0400",
+  "base_url": "http://127.0.0.1:18801/v1",
+  "model": "qwen3.8-27b",
+  "max_tokens": 1000,
+  "prompt_mix": [
+    {
+      "call_site": "case_capsule_producer._narrate",
+      "prompt_slug": "analyst_desk.case_capsule_narrative"
+    },
+    {
+      "call_site": "claude_client.brain",
+      "prompt_slug": null
+    },
+    {
+      "call_site": "tasks.wait_for",
+      "prompt_slug": null
+    },
+    {
+      "call_site": "deepseek_stock_intelligence.generate",
+      "prompt_slug": null
+    },
+    {
+      "call_site": "conviction_orchestrator_service._run_technical_analysis",
+      "prompt_slug": "conviction.technical_analysis"
+    },
+    {
+      "call_site": "conviction_orchestrator_service._run_sentiment_analysis",
+      "prompt_slug": "conviction.sentiment_analysis"
+    },
+    {
+      "call_site": "conviction_orchestrator_service._run_options_flow_analysis",
+      "prompt_slug": "conviction.options_flow_analysis"
+    },
+    {
+      "call_site": "signal_narrator._invoke_llm",
+      "prompt_slug": "signal_feed.narrator"
+    }
+  ],
+  "concurrency_results": [
+    {
+      "concurrency": 32,
+      "n": 16,
+      "max_tokens": 1000,
+      "success_pct": 100.0,
+      "p50_s": 3.072,
+      "p95_s": 5.922,
+      "wall_s": 5.969,
+      "aggregate_tok_s": 396.9,
+      "per_request_tok_s_median": 39.83,
+      "per_request_tok_s_p95": 47.64,
+      "per_request_tok_s_samples": [
+        30.11,
+        31.32,
+        32.75,
+        33.88,
+        35.09,
+        35.77,
+        37.83,
+        38.97,
+        40.68,
+        42.67,
+        44.12,
+        45.65,
+        46.15,
+        46.8,
+        47.86,
+        47.57
+      ],
+      "vllm_num_requests_running_before": 11.0,
+      "vllm_num_requests_running_during_sample": 10.0,
+      "errors": []
+    }
+  ],
+  "tool_call_probe": {
+    "pass": true,
+    "latency_s": 0.633,
+    "error": null
+  },
+  "guided_json_probe": {
+    "pass": true,
+    "latency_s": 0.553,
+    "error": null
+  },
+  "thinking_disabled_probe": {
+    "pass": true,
+    "latency_s": 0.672,
+    "completion_tokens": 31,
+    "think_tag_found": false,
+    "error": null
+  },
+  "prefix_cache_probe": {
+    "first_call_s": 0.214,
+    "second_call_s": 0.174,
+    "prefix_cache_hit_likely": true,
+    "errors": []
+  }
+}

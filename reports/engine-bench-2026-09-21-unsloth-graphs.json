@@ -1,0 +1,165 @@
+{
+  "timestamp": "2026-09-21T23:20:18-0400",
+  "base_url": "http://127.0.0.1:18803/v1",
+  "model": "qwen3.8-27b",
+  "max_tokens": 1000,
+  "prompt_mix": [
+    {
+      "call_site": "case_capsule_producer._narrate",
+      "prompt_slug": "analyst_desk.case_capsule_narrative"
+    },
+    {
+      "call_site": "claude_client.brain",
+      "prompt_slug": null
+    },
+    {
+      "call_site": "tasks.wait_for",
+      "prompt_slug": null
+    },
+    {
+      "call_site": "deepseek_stock_intelligence.generate",
+      "prompt_slug": null
+    },
+    {
+      "call_site": "conviction_orchestrator_service._run_technical_analysis",
+      "prompt_slug": "conviction.technical_analysis"
+    },
+    {
+      "call_site": "conviction_orchestrator_service._run_sentiment_analysis",
+      "prompt_slug": "conviction.sentiment_analysis"
+    },
+    {
+      "call_site": "conviction_orchestrator_service._run_options_flow_analysis",
+      "prompt_slug": "conviction.options_flow_analysis"
+    },
+    {
+      "call_site": "signal_narrator._invoke_llm",
+      "prompt_slug": "signal_feed.narrator"
+    }
+  ],
+  "concurrency_results": [
+    {
+      "concurrency": 1,
+      "n": 8,
+      "max_tokens": 1000,
+      "success_pct": 100.0,
+      "p50_s": 2.646,
+      "p95_s": 5.117,
+      "wall_s": 22.7,
+      "aggregate_tok_s": 51.41,
+      "per_request_tok_s_median": 51.36,
+      "per_request_tok_s_p95": 53.92,
+      "per_request_tok_s_samples": [
+        47.35,
+        46.34,
+        50.97,
+        48.6,
+        52.08,
+        53.39,
+        54.2,
+        51.75
+      ],
+      "vllm_num_requests_running_before": 0.0,
+      "vllm_num_requests_running_during_sample": 0.0,
+      "errors": []
+    },
+    {
+      "concurrency": 8,
+      "n": 8,
+      "max_tokens": 1000,
+      "success_pct": 100.0,
+      "p50_s": 3.28,
+      "p95_s": 7.406,
+      "wall_s": 7.956,
+      "aggregate_tok_s": 158.5,
+      "per_request_tok_s_median": 41.3,
+      "per_request_tok_s_p95": 47.19,
+      "per_request_tok_s_samples": [
+        28.41,
+        29.5,
+        31.02,
+        41.09,
+        41.51,
+        42.82,
+        45.88,
+        47.89
+      ],
+      "vllm_num_requests_running_before": 0.0,
+      "vllm_num_requests_running_during_sample": 0.0,
+      "errors": []
+    },
+    {
+      "concurrency": 16,
+      "n": 8,
+      "max_tokens": 1000,
+      "success_pct": 100.0,
+      "p50_s": 2.862,
+      "p95_s": 11.119,
+      "wall_s": 14.05,
+      "aggregate_tok_s": 116.08,
+      "per_request_tok_s_median": 46.8,
+      "per_request_tok_s_p95": 51.59,
+      "per_request_tok_s_samples": [
+        39.76,
+        40.51,
+        41.17,
+        46.64,
+        46.97,
+        47.33,
+        48.8,
+        53.1
+      ],
+      "vllm_num_requests_running_before": 0.0,
+      "vllm_num_requests_running_during_sample": 0.0,
+      "errors": []
+    },
+    {
+      "concurrency": 32,
+      "n": 8,
+      "max_tokens": 1000,
+      "success_pct": 100.0,
+      "p50_s": 2.971,
+      "p95_s": 8.17,
+      "wall_s": 9.397,
+      "aggregate_tok_s": 147.71,
+      "per_request_tok_s_median": 47.62,
+      "per_request_tok_s_p95": 50.97,
+      "per_request_tok_s_samples": [
+        37.5,
+        38.59,
+        42.68,
+        47.55,
+        47.7,
+        48.39,
+        49.38,
+        51.83
+      ],
+      "vllm_num_requests_running_before": 0.0,
+      "vllm_num_requests_running_during_sample": 0.0,
+      "errors": []
+    }
+  ],
+  "tool_call_probe": {
+    "pass": true,
+    "latency_s": 0.688,
+    "error": null
+  },
+  "guided_json_probe": {
+    "pass": true,
+    "latency_s": 2.284,
+    "error": null
+  },
+  "thinking_disabled_probe": {
+    "pass": true,
+    "latency_s": 0.758,
+    "completion_tokens": 35,
+    "think_tag_found": false,
+    "error": null
+  },
+  "prefix_cache_probe": {
+    "first_call_s": 0.384,
+    "second_call_s": 0.184,
+    "prefix_cache_hit_likely": true,
+    "errors": []
+  }
+}
