@@ -1561,12 +1561,16 @@ services:
       - "autoheal=true"
     deploy:
       resources:
-        # Measured resident RSS ~1.2 GiB warm (f16 weights ~1.2 GiB +
-        # workspace); 4G leaves >3x headroom for a burst. cpus: 8 matches the
-        # tuned -t 8 above -- this is now genuinely CPU-bound work (it was
-        # GPU-bound before the move), so the CPU cap is the real bulkhead.
+        # Measured resident RSS ~1.2 GiB warm at --parallel 1 (f16 weights
+        # ~1.2 GiB + workspace). --parallel 4 gives each slot its own KV
+        # cache: measured 3.238 GiB under live load on 2026-09-22, i.e. 81%
+        # of the old 4G cap, so the headroom that cap was sized for is gone
+        # and an OOM kill would wedge the server exactly as it did before.
+        # 6G restores real burst room. cpus: 8 matches the tuned -t 8 above
+        # -- this is genuinely CPU-bound work (it was GPU-bound before the
+        # move), so the CPU cap is the real bulkhead.
         limits:
-          memory: 4G
+          memory: 6G
           cpus: "8.0"
     volumes:
       - hf-cache:/models:ro
