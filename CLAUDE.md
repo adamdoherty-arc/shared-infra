@@ -118,10 +118,18 @@ UPDATE governance_virtual_key_provider_configs SET allow_all_keys=1
   18801 → 8000) is intact behind the `nemotron-rollback` compose profile.
   (`llama-cpp-chat` at 18800 was retired 2026-05-17.)
 
-### Local embed backend (`vllm-embed`)
+### Local embed backend (`vllm-embed`) — CPU since 2026-09-22 (Fix-1100000610)
 
 - Host port `8001` → container port `8001`.
-- Model: Qwen3-Embedding-0.6B.
+- Model: Qwen3-Embedding-0.6B, served by `ghcr.io/ggml-org/llama.cpp:server`
+  (CPU, NOT vLLM, NOT the GPU) over the official
+  `Qwen/Qwen3-Embedding-0.6B-GGUF` f16 build. Moved off the GPU because two
+  vLLM processes time-slicing one RTX 5090 measurably starved `qwen38-chat`
+  (2.4 tok/s at 30 running while embed was busy; a co-tenant restart alone
+  recovered 354->631 tok/s). Same container name + port as the retired GPU
+  service, so Bifrost's `embed-local` provider needed no change. GPU version
+  kept for rollback behind compose profile `embed-gpu-rollback`
+  (`vllm-embed-gpu-rollback`). Full writeup: `docs/engine-refresh-2026-09-21.md`.
 
 ### Bifrost Prometheus metrics (`bifrost-metrics`)
 

@@ -7,7 +7,7 @@ One set of vLLM containers serving Zero, Ada, and Legion. Single model in VRAM p
 | Endpoint | Model | Host port | Container port |
 |---|---|---|---|
 | Chat / code (`qwen38-chat`) | **Qwen3.8-27B** (`dbirks/Qwen3.8-27B-W4A16-AutoRound`) on the syv-ai/qwen38-27b-rtx3090 patched-vLLM 0.27.1 stack — dense 27B VLM (AA Index 52), W4A16 + int4 lm_head/embeddings, batch profile, 65,536 ctx, 32 seqs, 253,952-token KV pool, tools enabled (`qwen3_coder` parser, works under `enable_thinking:false`), prefix caching live. Serves ONE name: `qwen3.8-27b`; all 8 legacy aliases (`Qwen3.5-35B-A3B` / `qwen3-chat` / `Qwen3.6-27B` / `Qwen3-32B-AWQ` / `Qwen3.6-35B-A3B` / `gpt-oss-20b` / `nemotron-3.5-lightning` / `local-chat`) are remapped in Bifrost's `vllm-local` key. Previous engine (`vllm-chat`, Nemotron-3.5-Lightning NVFP4) kept behind the `nemotron-rollback` compose profile | **18801** | 18020 |
-| Embedding (`vllm-embed`) | `Qwen/Qwen3-Embedding-0.6B` | 8001 | 8001 |
+| Embedding (`vllm-embed`) | `Qwen/Qwen3-Embedding-0.6B` — **CPU-only since 2026-09-22 (Fix-1100000610)**, `ghcr.io/ggml-org/llama.cpp:server` serving the official Qwen3-Embedding-0.6B-GGUF f16 build, `-b 4096 -ub 4096 --parallel 1`. NOT vLLM, NOT the GPU — see the VRAM budget section below for why | 8001 | 8001 |
 | LLM gateway (`shared-bifrost`) | Bifrost v1.5.0 — 11 ALL-FREE providers (see `bifrost/README.md`) | **4445** | 8080 |
 | Free-tier aggregator (`shared-freellmapi`) | ~14 free providers, priority fallback chain | **3015** | 3001 |
 
@@ -54,12 +54,26 @@ Each project calls Bifrost with a per-project virtual key and `provider/model` s
 
 ## VRAM budget (5090 / 32 GB)
 
-- vllm-chat (cyankiwi/Qwen3.6-27B-AWQ-INT4, dense AWQ-Marlin INT4): ~19 GB weights + KV @ 16K ctx
-- vllm-embed (Qwen3-Embedding-0.6B): ~1.5 GB
-- cudagraph buffers: ~1-1.5 GB
-- Total pinned: ~26 GB (0.92 util cap on chat, 0.12 on embed)
+This section described a `vllm-chat` (cyankiwi/Qwen3.6-27B-AWQ-INT4) config retired by Pass-9
+(2026-08-31, see the stack table above — current chat engine is `qwen38-chat`); numbers below are
+kept for the embedding-move history, not as the current chat budget (the compose file header is
+the live source of truth for `qwen38-chat`'s VRAM math).
 
-If KV pressure shows up, lower `--max-model-len` on `vllm-chat` (currently 16384) or reduce `--gpu-memory-utilization` (currently 0.92). Do NOT switch KV off fp8.
+- vllm-embed (Qwen3-Embedding-0.6B): **0 GiB as of 2026-09-22 (Fix-1100000610)** — moved off the
+  GPU entirely onto CPU (`ghcr.io/ggml-org/llama.cpp:server`, ~1.2 GiB host RAM, no VRAM). This
+  was done because `qwen38-chat`'s generation throughput was measured collapsing to 2.4 tok/s at
+  30 running while `vllm-embed` was busy on the GPU (two vLLM processes time-slicing one card
+  starve the chat engine regardless of embed's `--gpu-memory-utilization` fraction); restarting
+  the old GPU `vllm-embed` alone recovered 354 -> 631 tok/s in 8s, which is what motivated the
+  move rather than just re-tuning the fraction. Immediate effect measured live: ~2.8 GiB VRAM
+  reclaimed, GPU util 96% -> 71%. Full writeup: `docs/engine-refresh-2026-09-21.md` addendum. The
+  GPU version is kept for rollback behind compose profile `embed-gpu-rollback`
+  (`vllm-embed-gpu-rollback`).
+- cudagraph buffers: ~1-1.5 GB (chat-engine-dependent; see compose header for the current engine)
+
+If KV pressure shows up on the current chat engine, see `docker-compose.vllm.yml`'s `qwen38-chat`
+service header for its own tuning knobs — this file no longer tracks that engine's flags in
+prose to avoid the drift the two paragraphs above already document once.
 
 ## Claude Code usage (weekly forensics)
 

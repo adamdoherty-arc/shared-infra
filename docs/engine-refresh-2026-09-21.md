@@ -303,3 +303,86 @@ refresh becomes viable when either (a) a <=18 GB 4-bit Qwen3.8-27B build appears
 `vllm-embed` moves off the card (CPU embeddings for 0.6B are ~10 ms/call), or (c) the card
 is replaced. Option (b) is the cheapest and frees ~4 GiB, enough for `unsloth` NVFP4 with a
 32k context -- it is the next experiment, off-hours, behind the same canary/bench gate.
+
+## Addendum 2026-09-22 02:14-02:40 UTC -- Fix-1100000610: vllm-embed moved off the GPU
+
+Option (b) from the verdict above, done same-session rather than deferred. Live finding
+(`docker logs qwen38-chat` + `vllm-wedge-monitor`): with `vllm-embed` (vllm/vllm-openai:v0.22.1,
+`Qwen/Qwen3-Embedding-0.6B`, GPU util 0.12, ~32k embed calls/day from ADA/Legion/Zero) busy,
+qwen38-chat's generation throughput fell to 2.4 tok/s at 30 running; the wedge monitor restarted
+vllm-embed and generation immediately went 354 -> 631 tok/s. Two vLLM processes time-slicing one
+RTX 5090 starve the chat engine regardless of how small embed's util fraction is set to. Fix:
+move embeddings off the GPU entirely so the chat engine owns the card.
+
+**What was tried and rejected first: TEI (text-embeddings-inference) CPU image.** TEI's CPU
+build only runs an ONNX Runtime backend by default, and `Qwen/Qwen3-Embedding-0.6B` ships no
+ONNX export on the Hub (`onnx/model.onnx` 404s). TEI does carry a Candle CPU fallback for the
+Qwen3 architecture and it boots (`ghcr.io/huggingface/text-embeddings-inference:cpu-latest
+--model-id Qwen/Qwen3-Embedding-0.6B`), but at any batch-tokens setting large enough to survive
+warmup without OOM (`--max-batch-tokens 2048`, forced `max_batch_requests=4` by the backend), a
+canary measured **single-request p50 ~1.5s and a 16-item batch median ~24s** -- 10-150x over the
+budget in the task brief (<=150ms single, <=1s batch-16). Rejected.
+
+**What shipped: llama.cpp CPU server on the official GGUF.** `ghcr.io/ggml-org/llama.cpp:server`
+(CPU build, no `-cuda` suffix) serving `Qwen/Qwen3-Embedding-0.6B-GGUF`'s official `f16` build
+(not a third-party quant -- published by the `Qwen` org itself) via `--embedding --pooling last`.
+Two tuning findings, both counterintuitive and both load-bearing (documented inline in
+`docker-compose.vllm.yml`'s `vllm-embed:` block so nobody "fixes" them back):
+
+1. **Quant choice: f16, not Q8_0.** Both were canaried and dimension-matched (1024, same as the
+   retired GPU engine) against 5 ASCII+unicode test strings. Cosine similarity vs the GPU
+   embedding: Q8_0 ranged 0.99885-0.99993 (one string missed the >=0.999 parity bar); f16 ranged
+   0.99990-0.99993 (every string cleared it). f16 is 2x Q8_0 on disk (~1.2 GiB vs ~0.6 GiB) but
+   that costs zero GPU VRAM on a CPU host with 42 GiB RAM -- correctness bought essentially free.
+2. **Batching: one big ubatch, not more parallel slots.** The instinctive tuning move (more
+   concurrent slots for more throughput) measured WORSE on this workload: `--parallel 4` with the
+   default `-b 2048 -ub 2048` (llama.cpp forces batch==ubatch for embedding mode) gave
+   single-request p50 up to 4.4s and a 16-item batch up to 26s -- multi-slot CPU decode contention
+   with no GPU parallelism to actually exploit. `-b 4096 -ub 4096 --parallel 1` (one slot, one
+   ubatch large enough that a full 16-item batch is one encoder pass) measured **single-request
+   p50 48.6ms (n=15, p95 126.5ms) and a 16-item batch median 0.525-0.737s** -- both inside budget,
+   measured under REAL concurrent host load (qwen38-chat mid-generation at 400% CPU,
+   ada-scheduler, ada-frontend all running, not an idle box).
+
+**Cutover, zero Bifrost restart.** Bifrost's `embed-local` provider already points at
+`http://vllm-embed:8001` (`bifrost/config.json`); the new service keeps the same
+`container_name: vllm-embed` and the same internal port 8001, so Docker's per-container DNS
+just re-resolved on the next request -- no config.json edit, no Bifrost restart, verified live:
+
+```
+docker exec ada-backend python3 -c "... POST http://shared-bifrost:8080/v1/embeddings
+  model=embed-local/Qwen/Qwen3-Embedding-0.6B ..."
+-> status 200, dims 1024, model "Qwen/Qwen3-Embedding-0.6B"
+```
+
+The GPU service is kept, not deleted, behind `profiles: ["embed-gpu-rollback"]` under the new
+name `vllm-embed-gpu-rollback` (its own `container_name`, so it never collides with the live CPU
+`vllm-embed` if someone brings both up by mistake). `vllm-wedge-monitor`'s
+`CO_TENANT_CONTAINERS` env is now pinned to `""` in compose -- its 2026-09-21 "restart the GPU
+co-tenant first" escalation is moot once the co-tenant is not on the GPU, and leaving the code
+default (`"vllm-embed"`) unexplained would have meant the monitor issuing a pointless
+`docker restart vllm-embed` against a CPU container on every future GPU spin.
+
+**Immediate GPU effect** (`nvidia-smi`, before -> ~90s after cutover, `qwen38-chat` untouched):
+28,644 MiB used @ 71% util vs. the pre-cutover 31,429 MiB @ 96% -- **~2.8 GiB VRAM reclaimed**
+with `vllm-embed` no longer resident on the card at all (not just at a smaller
+`--gpu-memory-utilization`).
+
+**15-minute post-cutover measurement** (cutover 02:37:33 UTC, window closed 02:52:34 UTC,
+real production traffic the whole time -- not a synthetic bench):
+
+| Metric | Value |
+|---|---|
+| `qwen38-chat` generation throughput | 30 samples over 15 min, range 85.6-586.7 tok/s, no sample below 85 tok/s, `Waiting: 0` on every sample but one (`Waiting: 1` for a single 10s poll) -- no wedge, no queue backup |
+| `vllm:num_requests_running` / `waiting` (spot read at window close) | running=2, waiting=0, `waiting_by_reason{capacity}=0`, `waiting_by_reason{deferred}=0` |
+| ADA `llm_call_log` provider=vllm-local success % (last 15 min) | 79/130 = 60.8% -- all 51 failures are `LocalLaneAdmissionRefused: local_lane_token_s...` (4 are `local_lane_hard_in...`), ADA's own client-side admission gate refusing BEFORE the call reaches vLLM (the "derived deadline-aware admission" already named in this doc's 23:05 UTC addendum above); zero vLLM-side errors, zero timeouts, zero connection failures. Not caused by, or worsened by, this pass's embed cutover -- pre-existing ADA-side admission behavior under real market-hours-adjacent load, unrelated to the GPU change |
+| `embed-local` success % + p95 latency (last 15 min) | 5/5 = 100%, p95 783.9ms on real production batch calls (batches of up to 32 texts per `backend/infrastructure/ai_client.py`'s `batch_size=32`, not the single-string canary number above -- individual samples 517-806ms for a full batch, consistent with the canary's batch-16 0.5-0.7s measurement) |
+| `nvidia-smi` memory.used / utilization.gpu | 28,674 MiB / 95% (vs. pre-cutover 31,429 MiB / 96%) -- **~2.76 GiB VRAM reclaimed and held** 15 minutes after cutover, not just at the instant of the move |
+
+**Verdict: cutover holds.** `qwen38-chat` ran the full 15-minute window with zero waiting
+requests and no throughput collapse (the defect this pass exists to fix); `embed-local` served
+100% of ADA's real embedding traffic from the CPU service with no Bifrost restart and no config
+change. The one non-100% number (`vllm-local` 60.8%) is a distinct, already-tracked, client-side
+admission-control behavior with no vLLM-side failures in it -- reported here for completeness, not
+rolled into the embed-cutover verdict, and not something this pass touches (its "fixed on the ADA
+side" work is the 23:05 UTC addendum above, from an earlier pass).
