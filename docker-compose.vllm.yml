@@ -1554,9 +1554,11 @@ services:
       -t 8
       -b 4096
       -ub 4096
-      --parallel 1
+      --parallel 4
     ports:
       - "8001:8001"
+    labels:
+      - "autoheal=true"
     deploy:
       resources:
         # Measured resident RSS ~1.2 GiB warm (f16 weights ~1.2 GiB +

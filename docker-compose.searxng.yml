@@ -65,6 +65,8 @@ services:
           memory: 512M
           cpus: "1.0"
     restart: unless-stopped
+    labels:
+      - "autoheal=true"
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/healthz || exit 1"]
       interval: 30s
