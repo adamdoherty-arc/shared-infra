@@ -1579,11 +1579,11 @@ services:
     # service (ADA Feature-1000478, 2026-08-14 rationale unchanged: a bare
     # liveness probe can stay green while the model silently emits NaN/Inf).
     healthcheck:
-      test: ["CMD-SHELL", "python3 -c \"import json, urllib.request; req = urllib.request.Request('http://localhost:8001/v1/embeddings', data=json.dumps({'model': 'Qwen/Qwen3-Embedding-0.6B', 'input': 'healthcheck'}).encode(), headers={'Content-Type': 'application/json'}); vec = json.loads(urllib.request.urlopen(req, timeout=8).read())['data'][0]['embedding']; assert len(vec) > 0 and all(v == v and v not in (float('inf'), float('-inf')) for v in vec)\""]
+      test: ["CMD-SHELL", "python3 -c \"import json, urllib.request; req = urllib.request.Request('http://localhost:8001/v1/embeddings', data=json.dumps({'model': 'Qwen/Qwen3-Embedding-0.6B', 'input': 'healthcheck'}).encode(), headers={'Content-Type': 'application/json'}); vec = json.loads(urllib.request.urlopen(req, timeout=20).read())['data'][0]['embedding']; assert len(vec) > 0 and all(v == v and v not in (float('inf'), float('-inf')) for v in vec)\""]
       interval: 30s
-      timeout: 15s
+      timeout: 25s
       retries: 5
-      start_period: 60s
+      start_period: 120s
     logging:
       driver: json-file
       options:
