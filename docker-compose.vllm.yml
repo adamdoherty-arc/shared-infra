@@ -1262,7 +1262,7 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
-      start_period: 900s
+      start_period: 1800s
   # =================== end Pass-9 qwen38 block ===============================
 
   # =========================================================================
@@ -1398,7 +1398,7 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
-      start_period: 900s
+      start_period: 1800s
   # =================== end WS4 nvfp4-canary block =============================
 
   # =================== embed-gpu-rollback (parked, 2026-09-22) ==============
@@ -1555,6 +1555,7 @@ services:
       -b 4096
       -ub 4096
       --parallel 4
+      --cache-ram 2048
     ports:
       - "8001:8001"
     labels:
@@ -1566,7 +1567,22 @@ services:
         # cache: measured 3.238 GiB under live load on 2026-09-22, i.e. 81%
         # of the old 4G cap, so the headroom that cap was sized for is gone
         # and an OOM kill would wedge the server exactly as it did before.
-        # 6G restores real burst room. cpus: 8 matches the tuned -t 8 above
+        # 6G restores real burst room.
+        #
+        # CORRECTION 2026-09-22, same day, measured live: the 3.238 GiB above
+        # was NOT the ceiling and per-slot KV was NOT the main consumer. RSS
+        # kept climbing to 5.929 GiB (98.8% of the 6G cap) over ~1.6h while
+        # the server logged a continuous stream of "making room for prompt
+        # cache entry, removing oldest entry (size = ~10 MiB)". The real
+        # driver is llama.cpp's PROMPT CACHE, whose --cache-ram default is
+        # 8192 MiB -- larger than this container's whole memory limit, so it
+        # always grows until the cgroup OOM-kills the server rather than
+        # until its own eviction settles. --parallel 4 did not cause this; it
+        # only made the cache fill fast enough to reach that default. Bounded
+        # explicitly with --cache-ram 2048 above, which lands total around
+        # 1.2 GiB weights + KV + 2 GiB cache, inside 6G with real headroom.
+        # Do not "fix" a future OOM here by raising the limit again -- check
+        # --cache-ram against the limit first. cpus: 8 matches the tuned -t 8 above
         # -- this is genuinely CPU-bound work (it was GPU-bound before the
         # move), so the CPU cap is the real bulkhead.
         limits:
