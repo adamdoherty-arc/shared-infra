@@ -1,0 +1,161 @@
+{
+  "_comment": [
+    "hostcron schedule - the single source of truth for host-side recurring jobs.",
+    "Migrated off Windows Task Scheduler on 2026-09-23. Commands, working",
+    "directories and times are carried over verbatim from the task definitions;",
+    "weekly day-of-week was recovered from each task's LastRunTime (all Sunday).",
+    "",
+    "schedule fields: minute / hour / dow / dom. null = any, int = exact,",
+    "list = any-of. dow is 0=Sunday .. 6=Saturday. Times are host-local (ET),",
+    "matching the original triggers.",
+    "",
+    "Every job MUST carry timeout_s - nothing on this box runs unbounded.",
+    "Edits here apply within a minute; the service re-reads this file each tick.",
+    "",
+    "NOT here, deliberately:",
+    "  ZeroInfra-DockerGuiReclaim stays a Task Scheduler logon task. It hands the",
+    "  Docker Desktop GUI from session 0 back to the interactive desktop, which a",
+    "  session-0 service cannot do by definition. It fires once per logon, not on",
+    "  an interval, so it is not part of the flashing-window problem.",
+    "",
+    "  The five claude.exe-driven jobs (ADA Master daily/weekly/monthly, A-finance",
+    "  Daily Review, ADA Financial Repos weekly) are disabled, not migrated. See",
+    "  docs/native-review-replacement.md for the plan that replaces them."
+  ],
+
+  "jobs": [
+    {
+      "name": "wsl-memory-reclaim",
+      "owner": "shared-infra",
+      "cmd": ["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", "C:\\code\\shared-infra\\scripts\\wsl-memory-reclaim.ps1"],
+      "schedule": {"minute": [0, 20, 40]},
+      "timeout_s": 300,
+      "enabled": true
+    },
+    {
+      "name": "ada-restart-window",
+      "owner": "ada",
+      "_note": "Batches queued restart intents. Most ticks are a no-op; it only drains at the windows configured in restart_intent_store. Timeout covers the 20-min defer poll plus drain grace.",
+      "cmd": ["cmd.exe", "/c", "C:\\code\\ADA\\scripts\\setup\\run-restart-window.cmd"],
+      "cwd": "C:\\code\\ADA",
+      "schedule": {"minute": 0},
+      "timeout_s": 2700,
+      "enabled": true
+    },
+    {
+      "name": "ada-master-pulse",
+      "owner": "ada",
+      "_note": "36 LLM-free probes; writes probe_cache/heartbeat/escalation.flag. Already native and 0-token - only its scheduler changes.",
+      "cmd": ["C:\\Python314\\python.exe", "C:\\Users\\hadam\\.claude\\skills\\ada-master\\scripts\\probes.py", "--exit-zero-on-red"],
+      "cwd": "C:\\Users\\hadam\\.claude\\skills\\ada-master\\scripts",
+      "schedule": {"minute": [1, 21, 41]},
+      "timeout_s": 900,
+      "enabled": true
+    },
+    {
+      "name": "ada-master-watchdog",
+      "owner": "ada",
+      "_note": "Rewritten for hostcron: reads hostcron heartbeat + runs.jsonl instead of Get-ScheduledTask LastTaskResult.",
+      "cmd": ["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", "C:\\Users\\hadam\\.claude\\skills\\ada-master\\scripts\\watchdog.ps1"],
+      "cwd": "C:\\Users\\hadam\\.claude\\skills\\ada-master\\scripts",
+      "schedule": {"minute": 7},
+      "timeout_s": 300,
+      "enabled": true
+    },
+    {
+      "name": "ada-ratchet-sweep",
+      "owner": "ada",
+      "cmd": ["C:\\code\\ADA\\scripts\\run-ratchet-sweep.cmd"],
+      "cwd": "C:\\code\\ADA",
+      "schedule": {"minute": 15, "hour": 3},
+      "timeout_s": 3600,
+      "enabled": true
+    },
+    {
+      "name": "ada-ci-replacement-gate",
+      "owner": "ada",
+      "cmd": ["cmd.exe", "/c", "C:\\code\\ADA\\scripts\\setup\\run-ci-replacement-gate.cmd"],
+      "cwd": "C:\\code\\ADA",
+      "schedule": {"minute": 0, "hour": 4},
+      "timeout_s": 2700,
+      "enabled": true
+    },
+    {
+      "name": "ada-comment-burndown",
+      "owner": "ada",
+      "cmd": ["cmd.exe", "/c", "C:\\code\\ADA\\scripts\\run-comment-burndown.cmd"],
+      "cwd": "C:\\code\\ADA",
+      "schedule": {"minute": 30, "hour": 4},
+      "timeout_s": 1800,
+      "enabled": true
+    },
+    {
+      "name": "ada-security-sweep-daily",
+      "owner": "ada",
+      "cmd": ["cmd.exe", "/c", "C:\\code\\ADA\\scripts\\setup\\run-security-sweep-daily.cmd"],
+      "cwd": "C:\\code\\ADA",
+      "schedule": {"minute": 0, "hour": 6},
+      "timeout_s": 1800,
+      "enabled": true
+    },
+    {
+      "name": "ada-bifrost-model-sync",
+      "owner": "ada",
+      "cmd": ["C:\\code\\ADA\\scripts\\run-bifrost-model-sync.cmd"],
+      "cwd": "C:\\code\\ADA",
+      "schedule": {"minute": 30, "hour": 7},
+      "timeout_s": 900,
+      "enabled": true
+    },
+    {
+      "name": "ada-security-sweep-weekly",
+      "owner": "ada",
+      "_note": "Trivy across 6 images with --pull-upstream plus a full-history secrets scan; the long timeout is intentional.",
+      "cmd": ["cmd.exe", "/c", "C:\\code\\ADA\\scripts\\setup\\run-security-sweep-weekly.cmd"],
+      "cwd": "C:\\code\\ADA",
+      "schedule": {"minute": 30, "hour": 7, "dow": 0},
+      "timeout_s": 5400,
+      "enabled": true
+    },
+    {
+      "name": "claude-usage-forensics-weekly",
+      "owner": "shared-infra",
+      "cmd": ["cmd.exe", "/c", "C:\\code\\shared-infra\\scripts\\run-usage-forensics.cmd"],
+      "cwd": "C:\\code\\shared-infra",
+      "schedule": {"minute": 0, "hour": 8, "dow": 0},
+      "timeout_s": 900,
+      "enabled": true
+    },
+    {
+      "name": "ada-dr-restore-drill-weekly",
+      "owner": "ada",
+      "cmd": ["cmd.exe", "/c", "C:\\code\\ADA\\scripts\\setup\\run-dr-restore-drill-weekly.cmd"],
+      "cwd": "C:\\code\\ADA",
+      "schedule": {"minute": 0, "hour": 9, "dow": 0},
+      "timeout_s": 3600,
+      "enabled": true
+    },
+    {
+      "name": "ada-llm-weekly-report",
+      "owner": "ada",
+      "_note": "Bifrost-native. rc 3 (all narrative lanes down) used to fall back to claude.exe; it now pages Discord instead. ok_exit_codes stays [0] so rc 3 surfaces as a failure.",
+      "cmd": ["cmd.exe", "/c", "C:\\code\\ADA\\scripts\\llm_weekly_report.cmd"],
+      "cwd": "C:\\code\\ADA\\scripts",
+      "schedule": {"minute": 0, "hour": 11, "dow": 0},
+      "timeout_s": 1800,
+      "ok_exit_codes": [0],
+      "enabled": true
+    },
+    {
+      "name": "ada-prompt-weekly-review",
+      "owner": "ada",
+      "_note": "Bifrost-native. Same rc-3 treatment as llm-weekly-report.",
+      "cmd": ["cmd.exe", "/c", "C:\\code\\ADA\\scripts\\prompt_weekly_review.cmd"],
+      "cwd": "C:\\code\\ADA\\scripts",
+      "schedule": {"minute": 0, "hour": 12, "dow": 0},
+      "timeout_s": 1800,
+      "ok_exit_codes": [0],
+      "enabled": true
+    }
+  ]
+}
