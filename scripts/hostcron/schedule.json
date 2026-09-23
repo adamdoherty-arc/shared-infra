@@ -46,8 +46,10 @@
       "name": "ada-master-pulse",
       "owner": "ada",
       "_note": "36 LLM-free probes; writes probe_cache/heartbeat/escalation.flag. Already native and 0-token - only its scheduler changes.",
+      "_env_note": "This job ran as the interactive user under Task Scheduler and so picked up the user site-packages. The service runs as LocalSystem, which does not, and probes.py died with 'FATAL: requests not importable' on every tick. requests is only installed in the user site dir (C:\\Python314 system site-packages is not writable without admin), so PYTHONPATH points there explicitly. If the service is ever reconfigured to run as hadam, this can be dropped.",
       "cmd": ["C:\\Python314\\python.exe", "C:\\Users\\hadam\\.claude\\skills\\ada-master\\scripts\\probes.py", "--exit-zero-on-red"],
       "cwd": "C:\\Users\\hadam\\.claude\\skills\\ada-master\\scripts",
+      "env": {"PYTHONPATH": "C:\\Users\\hadam\\AppData\\Roaming\\Python\\Python314\\site-packages"},
       "schedule": {"minute": [1, 21, 41]},
       "timeout_s": 900,
       "enabled": true
