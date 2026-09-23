@@ -73,3 +73,6 @@ state/
 # live nssm output until scripts/nssm-fix-logs.ps1 relocates it (elevated)
 nssm-stdout.log
 nssm-stderr.log
+
+# CodeGraph index - rebuildable, machine-local
+.codegraph/

@@ -1,0 +1,111 @@
+# Consumer registry for the shared infrastructure (source of truth for
+# docs/CONSUMERS.md, /api/consumers and the synthetic per-VK probe).
+# VK ids are the Bifrost virtual-key UUIDs in bifrost/config.db; the key VALUES
+# never appear here. sha256_prefix = first 16 hex of sha256(value) so a process
+# can prove which key it holds without printing it.
+version: 1
+network: shared-infra_default
+gateway:
+  url_internal: http://shared-bifrost:8080
+  url_host: http://127.0.0.1:4445
+  image: maximhq/bifrost:v2.0.0
+consumers:
+  - name: ada
+    vk_name: ada-prod
+    vk_id: 390e12e3-78f6-4c78-8e62-309cf20e40c3
+    sha256_prefix: 2ea3a14abec0391e
+    repo: C:\code\ADA
+    legion_project_id: 5
+    env_var: BIFROST_API_KEY
+    containers: [ada-backend, ada-agent, ada-scheduler, ada-arq-worker]
+    health_url: http://127.0.0.1:8006/api/health
+    daily_request_budget: 130000
+    per_minute_cap: 400
+    vllm_local_share: 0.70
+    notes: largest consumer (~113k req / 33M tokens per day); LOCAL-first task classifier
+  - name: legion
+    vk_name: legion-prod
+    vk_id: 3bdde932-6906-494a-84ea-29cba417f2de
+    sha256_prefix: 13adb5de129f23ee
+    repo: C:\code\legion
+    legion_project_id: 1
+    env_var: BIFROST_API_KEY
+    containers: [legion-backend, legion-v2-worker]
+    health_url: http://127.0.0.1:8005/api/health
+    daily_request_budget: 15000
+    per_minute_cap: 120
+    vllm_local_share: 0.15
+    notes: tracker; llm_ops role moves into infractl in Wave 2; hourly lane sweep runs with no VK (fix in Wave 2)
+  - name: zero
+    vk_name: zero-prod
+    vk_id: b2adfad7-16df-4a89-a2c1-958657cd742a
+    sha256_prefix: 4af804b7d14868a7
+    repo: C:\code\zero
+    legion_project_id: 26
+    env_var: BIFROST_API_KEY
+    containers: [zero-backend]
+    health_url: null
+    daily_request_budget: 8000
+    per_minute_cap: 60
+    vllm_local_share: 0.10
+    notes: intentionally OFF as of 2026-09-15 (do not start); borrows legion-redis db 2 + legion-qdrant
+  - name: a-finance
+    vk_name: a-finance-prod
+    vk_id: 611ce8de-23c9-4dc9-a61f-dd9721a506a4
+    sha256_prefix: 1cfdeed22442a652
+    repo: C:\code\erpnext
+    legion_project_id: 27
+    env_var: bifrost_gateway_key (sites/frontend/site_config.json)
+    containers: [erpnext-backend-1]
+    health_url: null
+    daily_request_budget: 5000
+    per_minute_cap: 60
+    vllm_local_share: 0.05
+    notes: best consumer client pattern (circuit breaker + cache + trace rows)
+  - name: fortressos
+    vk_name: fortressos-prod
+    vk_id: b47fe5e5-e832-44de-9c57-e0cd8faa1a0a
+    sha256_prefix: 817388b4dff55fee
+    repo: null
+    legion_project_id: 23
+    env_var: null
+    containers: []
+    health_url: null
+    daily_request_budget: 2000
+    per_minute_cap: 30
+    vllm_local_share: 0.0
+    notes: no known health URL; VK-last-seen only
+  - name: hermes
+    vk_name: hermes-prod
+    vk_id: 70687f77-8d49-400a-9bae-652b83f816c7
+    sha256_prefix: e0f1547458f1407e
+    repo: null
+    legion_project_id: null
+    env_var: null
+    containers: []
+    health_url: null
+    daily_request_budget: 2000
+    per_minute_cap: 30
+    vllm_local_share: 0.0
+    notes: no known health URL; VK-last-seen only
+  - name: claude-code-local
+    vk_name: claude-code-local
+    vk_id: 62f2d329-7f3a-4c02-877b-668cc99c129c
+    sha256_prefix: 5ecd0faaeb43dca5
+    repo: null
+    legion_project_id: null
+    env_var: INFRA_PROBE_VK (shared-infra .env)
+    containers: [bifrost-metrics, shared-infra-control]
+    health_url: http://127.0.0.1:8095/healthz
+    daily_request_budget: 3000
+    per_minute_cap: 30
+    vllm_local_share: 0.0
+    notes: probe/smoke key used by the exporter lane prober, smoke_all_lanes.py and infractl synthetic probes
+vendored_clients:
+  - path: clients/python/shared_llm_router
+    source: C:\code\shared-llm-router
+    copies:
+      - repo: C:\code\ADA
+        pinned_commit: null
+      - repo: C:\code\legion
+        pinned_commit: null

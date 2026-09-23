@@ -1,0 +1,189 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>infractl — Status & Infra Brain</title>
+<style>
+  body { font-family: -apple-system, Segoe UI, sans-serif; margin: 0; background: #0e1117; color: #e6e6e6; }
+  header { padding: 12px 20px; background: #161b22; border-bottom: 1px solid #30363d; display: flex; align-items: center; gap: 16px; }
+  header a { color: #58a6ff; text-decoration: none; font-weight: 600; }
+  header a.active { text-decoration: underline; }
+  header .mode { margin-left: auto; padding: 2px 10px; border-radius: 10px; font-size: 12px; }
+  main { padding: 20px; max-width: 1100px; margin: 0 auto; }
+  .card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 16px; margin-bottom: 24px; }
+  .card-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+  .card-title { font-size: 16px; font-weight: 600; color: #58a6ff; margin: 0; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-bottom: 12px; }
+  .stat-box { background: #0e1117; border: 1px solid #21262d; border-radius: 6px; padding: 10px 14px; }
+  .stat-label { font-size: 11px; color: #8b949e; text-transform: uppercase; letter-spacing: 0.05em; }
+  .stat-val { font-size: 16px; font-weight: 600; margin-top: 4px; }
+  table { width: 100%; border-collapse: collapse; margin-bottom: 24px; }
+  th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid #21262d; font-size: 13px; }
+  th { color: #8b949e; font-weight: 500; }
+  .ok { color: #3fb950; } .bad { color: #f85149; } .warn { color: #f1c40f; }
+  .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 6px; }
+  .dot.ok { background: #3fb950; } .dot.bad { background: #f85149; }
+  button { background: #21262d; color: #e6e6e6; border: 1px solid #30363d; border-radius: 6px; padding: 6px 12px; cursor: pointer; }
+  button:hover { background: #30363d; }
+  button.primary { background: #238636; border-color: #2ea043; }
+  button.primary:hover { background: #2ea043; }
+  #err { color: #f85149; margin-bottom: 12px; }
+  h2 { font-size: 15px; color: #8b949e; text-transform: uppercase; letter-spacing: 0.05em; margin: 24px 0 8px; }
+  .btn-group { display: flex; gap: 8px; margin-bottom: 16px; }
+</style>
+</head>
+<body>
+<header>
+  <strong>infractl</strong>
+  <a href="/" class="active">Status</a>
+  <a href="/actions.html">Actions</a>
+  <span class="mode" id="mode-badge">-</span>
+</header>
+<main>
+  <div id="err"></div>
+
+  <div class="card" id="brain-card">
+    <div class="card-header">
+      <h3 class="card-title">Gemini Infra Brain</h3>
+      <span id="brain-status-badge" class="ok">● Connected</span>
+    </div>
+    <div class="grid">
+      <div class="stat-box">
+        <div class="stat-label">Model</div>
+        <div class="stat-val" id="brain-model">-</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-label">Daily Calls Used</div>
+        <div class="stat-val" id="brain-calls">-</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-label">Active Key Pool</div>
+        <div class="stat-val" id="brain-keys">-</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-label">Auto-Healing Mode</div>
+        <div class="stat-val" id="brain-mode">Self-Healing Active</div>
+      </div>
+    </div>
+    <div class="btn-group">
+      <button class="primary" onclick="evaluateBrain()">Diagnose & Self-Heal Now</button>
+      <button onclick="scanModels()">Audit & Discover Models</button>
+      <button onclick="runProbes()">Run Probes Now</button>
+      <button onclick="refresh()">Refresh All</button>
+    </div>
+  </div>
+
+  <h2>System Probes</h2>
+  <table id="probes-table"><thead><tr><th></th><th>Name</th><th>Detail</th><th>Latency</th><th>Timestamp</th></tr></thead><tbody></tbody></table>
+
+  <h2>Autonomous Improvement & Diagnostic Ledger</h2>
+  <table id="improvements-table"><thead><tr><th>Timestamp</th><th>Source</th><th>Title</th><th>Diagnostic & Action Detail</th></tr></thead><tbody></tbody></table>
+
+  <h2>Recent Actions</h2>
+  <table id="actions-table"><thead><tr><th>ID</th><th>Kind</th><th>Status</th><th>Dry Run</th><th>Created</th></tr></thead><tbody></tbody></table>
+</main>
+<script src="/common.js"></script>
+<script>
+async function refresh() {
+  document.getElementById("err").textContent = "";
+  try {
+    const status = await api("/api/status");
+    document.getElementById("mode-badge").textContent = status.write_mode;
+    document.getElementById("mode-badge").style.background = status.write_mode === "apply" ? "#3fb950" : "#f1c40f";
+    document.getElementById("mode-badge").style.color = "#0e1117";
+
+    const ptbody = document.querySelector("#probes-table tbody");
+    ptbody.innerHTML = "";
+    (status.probes || []).forEach((p) => {
+      ptbody.appendChild(el("tr", {}, [
+        el("td", {}, [el("span", { class: "dot " + (p.ok ? "ok" : "bad") })]),
+        el("td", { text: p.name }),
+        el("td", { text: p.detail || "" }),
+        el("td", { text: (p.latency_ms || 0) + "ms" }),
+        el("td", { text: fmtTs(p.ts) }),
+      ]));
+    });
+
+    const atbody = document.querySelector("#actions-table tbody");
+    atbody.innerHTML = "";
+    (status.recent_actions || []).forEach((a) => {
+      atbody.appendChild(el("tr", {}, [
+        el("td", { text: a.id }),
+        el("td", { text: a.kind }),
+        el("td", { text: a.status, class: a.status === "succeeded" ? "ok" : (a.status === "failed" || a.status.includes("rolled_back") ? "bad" : "") }),
+        el("td", { text: a.dry_run ? "yes" : "no" }),
+        el("td", { text: fmtTs(a.created_at) }),
+      ]));
+    });
+
+    // Refresh Brain Status
+    try {
+      const brain = await api("/api/brain/status");
+      document.getElementById("brain-model").textContent = brain.model || "gemini-3.8-flash";
+      document.getElementById("brain-calls").textContent = `${brain.calls_today} / ${brain.max_calls_per_day}`;
+      document.getElementById("brain-keys").textContent = `${brain.active_keys_count} keys active (rotation live)`;
+    } catch (be) {
+      document.getElementById("brain-status-badge").textContent = "○ Standby";
+      document.getElementById("brain-status-badge").className = "warn";
+    }
+
+    // Refresh Improvement Ledger
+    try {
+      const imp = await api("/api/improvements?limit=10");
+      const imptbody = document.querySelector("#improvements-table tbody");
+      imptbody.innerHTML = "";
+      if (!imp || imp.length === 0) {
+        imptbody.appendChild(el("tr", {}, [el("td", { colspan: 4, text: "No improvements recorded yet. Click 'Diagnose & Self-Heal Now' to run." })]));
+      } else {
+        imp.forEach((row) => {
+          imptbody.appendChild(el("tr", {}, [
+            el("td", { text: fmtTs(row.ts) }),
+            el("td", { text: row.source }),
+            el("td", { text: row.title, class: "ok" }),
+            el("td", { text: row.detail }),
+          ]));
+        });
+      }
+    } catch (ie) {}
+
+  } catch (e) {
+    document.getElementById("err").textContent = String(e.message || e);
+  }
+}
+
+async function runProbes() {
+  try {
+    await api("/api/probes/run", { method: "POST" });
+    await refresh();
+  } catch (e) {
+    document.getElementById("err").textContent = String(e.message || e);
+  }
+}
+
+async function evaluateBrain() {
+  try {
+    document.getElementById("err").textContent = "Evaluating system health with Gemini Brain...";
+    const res = await api("/api/brain/evaluate", { method: "POST" });
+    document.getElementById("err").textContent = "";
+    await refresh();
+  } catch (e) {
+    document.getElementById("err").textContent = String(e.message || e);
+  }
+}
+
+async function scanModels() {
+  try {
+    document.getElementById("err").textContent = "Auditing models and searching for channels...";
+    const res = await api("/api/brain/scan", { method: "POST" });
+    document.getElementById("err").textContent = "";
+    await refresh();
+  } catch (e) {
+    document.getElementById("err").textContent = String(e.message || e);
+  }
+}
+
+refresh();
+setInterval(refresh, 30000);
+</script>
+</body>
+</html>

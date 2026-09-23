@@ -1,0 +1,76 @@
+# shared-infra-control — the infractl control plane (Wave 1). Single writer
+# for bifrost/config.json + config.db + container restarts: every other
+# writer (auth_autoheal.py, a human sqlite3 session, an ad-hoc script) is
+# expected to go through this API once Wave 1's dry-run window closes.
+services:
+  shared-infra-control:
+    build:
+      context: .
+      dockerfile: infractl/Dockerfile
+    image: shared-infra/infractl:0.1
+    container_name: shared-infra-control
+    # No depends_on: bifrost — cross-compose-file depends_on doesn't work
+    # (docker-compose.bifrost.yml is a separate compose project; verified
+    # against this repo's own convention in docker-compose.otelcol.yml's
+    # comment on the same constraint). shared-bifrost reachability is what
+    # the bifrost probe + healthcheck exist to report instead.
+    ports:
+      - "127.0.0.1:8095:8095"
+    env_file: .env
+    environment:
+      INFRACTL_BIFROST_DIR: /data/bifrost
+      INFRACTL_STATE_DIR: /state
+      INFRACTL_REPORTS_DIR: /reports
+      INFRACTL_OBSERVABILITY_DIR: /observability
+      INFRACTL_CONSUMERS_YAML: /app/consumers.yaml
+      INFRACTL_COMPOSE_DIR: /compose
+      INFRACTL_DOCKER_SOCKET: /var/run/docker.sock
+      INFRACTL_HOST: 0.0.0.0
+      INFRACTL_PORT: "8095"
+      INFRACTL_PROBE_BASE: http://shared-bifrost:8080
+      INFRACTL_BIFROST_METRICS_URL: http://bifrost-metrics:9100/metrics
+      INFRACTL_PROMETHEUS_URL: http://shared-prometheus:9090
+      INFRACTL_ALERTMANAGER_URL: http://shared-alertmanager:9093
+      INFRACTL_LOKI_URL: http://loki:3100
+      INFRACTL_QWEN38_URL: http://qwen38-chat:18020
+      INFRACTL_VLLM_EMBED_URL: http://vllm-embed:8001
+      INFRACTL_DCGM_URL: http://dcgm-exporter:9400/metrics
+      INFRACTL_DISK_PATH: /
+      LEGION_API_BASE: http://host.docker.internal:8005
+      INFRACTL_LEGION_SPRINT_ID: "14975"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./bifrost:/data/bifrost
+      - ./state:/state
+      - ./reports:/reports
+      - ./observability:/observability:ro
+      - ./infractl/consumers/consumers.yaml:/app/consumers.yaml:ro
+      - ./docker-compose.bifrost.yml:/compose/docker-compose.bifrost.yml:ro
+      - ./docker-compose.vllm.yml:/compose/docker-compose.vllm.yml:ro
+      - ./docker-compose.observability.yml:/compose/docker-compose.observability.yml:ro
+      - ./docker-compose.freellmapi.yml:/compose/docker-compose.freellmapi.yml:ro
+      - ./docker-compose.searxng.yml:/compose/docker-compose.searxng.yml:ro
+      - ./docker-compose.otelcol.yml:/compose/docker-compose.otelcol.yml:ro
+      - ./docker-compose.control.yml:/compose/docker-compose.control.yml:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - shared
+    mem_limit: 512m
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8095/healthz', timeout=3).status==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  shared:
+    name: shared-infra_default
+    external: true

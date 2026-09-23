@@ -1,0 +1,128 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>infractl — Actions</title>
+<style>
+  body { font-family: -apple-system, Segoe UI, sans-serif; margin: 0; background: #0e1117; color: #e6e6e6; }
+  header { padding: 12px 20px; background: #161b22; border-bottom: 1px solid #30363d; display: flex; align-items: center; gap: 16px; }
+  header a { color: #58a6ff; text-decoration: none; font-weight: 600; }
+  header a.active { text-decoration: underline; }
+  main { padding: 20px; max-width: 1100px; margin: 0 auto; }
+  table { width: 100%; border-collapse: collapse; margin-bottom: 24px; }
+  th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid #21262d; font-size: 13px; vertical-align: top; }
+  th { color: #8b949e; font-weight: 500; }
+  .ok { color: #3fb950; } .bad { color: #f85149; } .pending { color: #f1c40f; }
+  .badge { padding: 1px 7px; border-radius: 8px; font-size: 11px; background: #30363d; }
+  button { background: #21262d; color: #e6e6e6; border: 1px solid #30363d; border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: 12px; }
+  button:hover { background: #30363d; }
+  #err { color: #f85149; margin-bottom: 12px; }
+  h2 { font-size: 15px; color: #8b949e; text-transform: uppercase; letter-spacing: 0.05em; margin: 24px 0 8px; }
+  form.new-action { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 14px; margin-bottom: 20px; }
+  form.new-action label { display: block; margin: 6px 0 2px; font-size: 12px; color: #8b949e; }
+  form.new-action input, form.new-action textarea { width: 100%; box-sizing: border-box; background: #0e1117; color: #e6e6e6; border: 1px solid #30363d; border-radius: 4px; padding: 6px; }
+  pre.detail { white-space: pre-wrap; word-break: break-all; max-width: 400px; font-size: 11px; color: #8b949e; }
+</style>
+</head>
+<body>
+<header>
+  <strong>infractl</strong>
+  <a href="/">Status</a>
+  <a href="/actions.html" class="active">Actions</a>
+</header>
+<main>
+  <div id="err"></div>
+
+  <h2>New action</h2>
+  <form class="new-action" onsubmit="return submitAction(event)">
+    <label>kind</label>
+    <input id="f-kind" placeholder="e.g. provider_park, vk_resync, restart_sidecar" required>
+    <label>payload (JSON)</label>
+    <textarea id="f-payload" rows="2">{}</textarea>
+    <label>reason</label>
+    <input id="f-reason" required>
+    <label><input type="checkbox" id="f-confirm" style="width:auto"> confirm (required for T3 approval re-run)</label>
+    <br><br>
+    <button type="submit">Submit</button>
+  </form>
+
+  <h2>Actions <button onclick="refresh()">Refresh</button></h2>
+  <table id="actions-table">
+    <thead><tr><th>id</th><th>kind</th><th>status</th><th>dry_run</th><th>created</th><th>verify/error</th><th></th></tr></thead>
+    <tbody></tbody>
+  </table>
+</main>
+<script src="/common.js"></script>
+<script>
+async function submitAction(ev) {
+  ev.preventDefault();
+  document.getElementById("err").textContent = "";
+  try {
+    let payload = {};
+    try { payload = JSON.parse(document.getElementById("f-payload").value || "{}"); } catch (e) { throw new Error("payload is not valid JSON: " + e.message); }
+    await api("/api/actions", {
+      method: "POST",
+      body: JSON.stringify({
+        kind: document.getElementById("f-kind").value,
+        payload: payload,
+        reason: document.getElementById("f-reason").value,
+        confirm: document.getElementById("f-confirm").checked,
+        requested_by: "ui",
+      }),
+    });
+    await refresh();
+  } catch (e) {
+    document.getElementById("err").textContent = String(e.message || e);
+  }
+  return false;
+}
+async function approve(id) {
+  try { await api("/api/actions/" + id + "/approve", { method: "POST" }); await refresh(); }
+  catch (e) { document.getElementById("err").textContent = String(e.message || e); }
+}
+async function rollback(id) {
+  if (!confirm("Roll back action " + id + " to its pre-action snapshot?")) return;
+  try { await api("/api/actions/" + id + "/rollback", { method: "POST" }); await refresh(); }
+  catch (e) { document.getElementById("err").textContent = String(e.message || e); }
+}
+function statusClass(s) {
+  if (s === "succeeded") return "ok";
+  if (s === "failed" || s.includes("rolled_back")) return "bad";
+  if (s === "pending_approval" || s === "running") return "pending";
+  return "";
+}
+async function refresh() {
+  document.getElementById("err").textContent = "";
+  try {
+    const rows = await api("/api/audit");
+    const tbody = document.querySelector("#actions-table tbody");
+    tbody.innerHTML = "";
+    rows.forEach((a) => {
+      const actionsCell = el("td", {}, []);
+      if (a.status === "pending_approval") {
+        actionsCell.appendChild(el("button", { text: "Approve" }));
+        actionsCell.lastChild.addEventListener("click", () => approve(a.id));
+      }
+      if (a.status === "succeeded") {
+        actionsCell.appendChild(el("button", { text: "Rollback" }));
+        actionsCell.lastChild.addEventListener("click", () => rollback(a.id));
+      }
+      tbody.appendChild(el("tr", {}, [
+        el("td", { text: a.id }),
+        el("td", {}, [el("span", { class: "badge", text: a.kind }), document.createTextNode(" " + a.tier)]),
+        el("td", { text: a.status, class: statusClass(a.status) }),
+        el("td", { text: a.dry_run ? "yes" : "no" }),
+        el("td", { text: fmtTs(a.created_at) }),
+        el("td", {}, [el("pre", { class: "detail", text: (a.error || a.verify_json || "").slice(0, 300) })]),
+        actionsCell,
+      ]));
+    });
+  } catch (e) {
+    document.getElementById("err").textContent = String(e.message || e);
+  }
+}
+refresh();
+setInterval(refresh, 30000);
+</script>
+</body>
+</html>
