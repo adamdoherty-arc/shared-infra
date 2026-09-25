@@ -74,12 +74,11 @@ Rules for editing it:
   either install it into the system Python's site-packages or set
   `env.PYTHONPATH` explicitly in the job block — don't assume "it worked
   when I tested it interactively" transfers to the service account.
-- `wsl-memory-reclaim` and `claude-usage-forensics-weekly` are the two
-  shared-infra-owned jobs today; every other current job belongs to `ada`
+- `wsl-memory-reclaim`, `claude-usage-forensics-weekly`, `shared-infra-gate`
+  and `freellmapi-operator-disabled` are the shared-infra-owned jobs; every other current job belongs to `ada`
   (owner field is informational, used for filtering/ownership, not
   enforced access control).
 
-Adding `shared-infra-gate` (nightly) and `shared-infra-health` (daily) job
-entries to `schedule.json` is out of THIS session's scope (another session
-owns that file) — the exact JSON blocks to add are reported at the end of
-this WS7 pass for that session to merge in.
+`shared-infra-gate` (nightly 02:30, runs `scripts/gate.py`) and
+`freellmapi-operator-disabled` (daily 07:45, after `ada-bifrost-model-sync`)
+are the shared-infra jobs added 2026-09-25.

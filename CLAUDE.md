@@ -48,36 +48,40 @@ a checklist with pending items. Finish the job 100%.
   send `Authorization: Bearer sk-bf-...` OR `x-bf-vk: sk-bf-...`
   with a valid virtual key. Never call `/v1/models` unauthenticated: Bifrost
   still fans it out and logs one error per provider (2026-09-25).
-- Image `maximhq/bifrost:v2.0.0`; request log store is native-host Postgres
+- Image `maximhq/bifrost:v2.2.3` (2026-09-25; native Prometheus `/metrics`
+  on the gateway port); request log store is native-host Postgres
   (`bifrost_logs`), not SQLite, since 2026-09-22.
+- **Every published port binds `127.0.0.1`** except Grafana (own login).
+  Bifrost's `/api/*` admin routes are unauthenticated and returned every
+  provider key and VK in plaintext while 4445 was on 0.0.0.0 (fixed
+  2026-09-25). Containers still reach loopback ports via
+  `host.docker.internal`. `scripts/gate.py` fails on any non-loopback port.
+- **Operator-disabled list: `bifrost/operator-disabled.json`** (operator
+  order 2026-09-25: Kimi + Mistral removed everywhere; a provider with no
+  working key stays off until the operator re-enables it). The VK sync
+  refuses to run and the gate fails if `config.json` contains a listed
+  provider or model pattern; ADA's model sync never adds them;
+  `scripts/apply_operator_disabled_freellmapi.py` (hostcron, daily) applies
+  it inside freellmapi. Never re-enable anything on that list yourself.
+  Check keys with `python scripts/probe_provider_keys.py` (status codes only).
 - **Active and parked providers: `docs/PROVIDERS.md`** (GENERATED from
   `bifrost/config.json`; the gate fails if it is stale). Do not list
   providers in prose anywhere else -- that is how three docs drifted.
   ALL-FREE policy: no paid provider is active.
-- After ANY provider/model change: run `bifrost/sync_vk_allowlists.py`
-  (VK allowlists are mirrored per-key in config.db and do NOT update from
-  config.json) and restart bifrost.
+- After ANY provider/model change: `bash scripts/bifrost_restart.sh` (it runs
+  `bifrost/sync_vk_allowlists.py` with Bifrost stopped: VK allowlists and key
+  model lists are mirrored in config.db and do NOT update from config.json;
+  since 2026-09-25 the sync also deletes config.db rows for providers no
+  longer in config.json).
 - See `bifrost/README.md` for the full runbook.
 
 ### Provider state lives in TWO places
 
 Bifrost holds provider/key config in BOTH `bifrost/config.json` (JSON
-seed) AND `bifrost/config.db` (SQLite mirror). Editing the JSON does
-NOT automatically deregister a provider from the SQLite mirror — you
-must clean both, or the discovery loop will spam logs every ~12s
-with `no valid keys found for provider: X`.
-
-Procedure to remove a provider:
-```bash
-docker stop shared-bifrost
-python3 -c "
-import sqlite3
-db = sqlite3.connect(r'C:/code/shared-infra/bifrost/config.db')
-db.execute(\"DELETE FROM config_keys WHERE provider IN ('NAME',...)\")
-db.execute(\"DELETE FROM config_providers WHERE name IN ('NAME',...)\")
-db.commit()"
-docker start shared-bifrost
-```
+seed) AND `bifrost/config.db` (SQLite mirror). Bifrost's own import never
+deregisters a provider. To remove one: move its block from `config.json`
+to `disabled-providers.json`, then `bash scripts/bifrost_restart.sh`; the
+sync step deletes its config.db rows (`deregister_absent_providers`).
 
 Leave `governance_model_pricing` / `governance_model_parameters` alone
 — those are Bifrost's built-in datasheet for ~400 known models, not
@@ -85,7 +89,7 @@ active registrations.
 
 ### Virtual keys
 
-Three production virtual keys exist, one per project:
+Seven virtual keys exist; the three original project keys are:
 
 | Project | VK name      | Project env var that holds it |
 |---------|--------------|-------------------------------|
@@ -144,8 +148,9 @@ agent model gate, session checkpoints). Restart Bifrost ONLY via
 ### Bifrost Prometheus metrics (`bifrost-metrics`)
 
 - Host port `9102` → container port `9100`.
-- The vendor Bifrost image doesn't ship the upstream prometheus plugin,
-  so this sidecar reads Bifrost's request log store (Postgres since
+- Bifrost v2.2.3 also exposes native `/metrics` on the gateway port
+  (`bifrost_upstream_requests_total`, `bifrost_error_requests_total{error_type}`,
+  `bifrost_provider_key_up`, ...). This sidecar predates that and still reads Bifrost's request log store (Postgres since
   2026-09-22; `bifrost/logs.db` under the `sqlite-rollback` profile) (which
   Bifrost writes natively) and re-exports as Prometheus metrics on
   `/metrics`. Source in `bifrost-metrics-exporter/`.

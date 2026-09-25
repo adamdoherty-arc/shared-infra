@@ -588,6 +588,43 @@
         "buffer_size": 100
       },
       "_comment": "auto-parked mistral 2026-09-17T08:44:19Z by bifrost-autoheal (sustained auth failure: 9 hits in 300s). TO RE-ENABLE: fix the key in shared-infra/.env, copy this block back into config.json providers, run sync_vk_allowlists.py (bifrost stopped), restart."
+    },
+    "aion": {
+      "keys": [
+        {
+          "name": "aion_api_key-primary",
+          "value": "env.AION_API_KEY",
+          "models": [
+            "aion-labs/aion-2.0",
+            "aion-labs/aion-rp-llama-3.1-8b",
+            "aion-labs/aion-3.0",
+            "aion-labs/aion-3.0-mini"
+          ],
+          "weight": 1.0
+        }
+      ],
+      "network_config": {
+        "base_url": "https://api.aionlabs.ai",
+        "default_request_timeout_in_seconds": 120,
+        "max_retries": 2
+      },
+      "custom_provider_config": {
+        "base_provider_type": "openai",
+        "request_path_overrides": {
+          "chat_completion": "/v1/chat/completions",
+          "chat_completion_stream": "/v1/chat/completions"
+        },
+        "allowed_requests": {
+          "chat_completion": true,
+          "chat_completion_stream": true,
+          "list_models": false
+        }
+      },
+      "concurrency_and_buffer_size": {
+        "concurrency": 2,
+        "buffer_size": 50
+      },
+      "_comment": "operator-disabled 2026-09-25T22:31:35Z: No working key 2026-09-25: 'Daily token limit exceeded' on every probe, 60% error over 24h. Stays off until the operator removes it from bifrost/operator-disabled.json."
     }
   }
 }

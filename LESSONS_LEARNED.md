@@ -189,3 +189,23 @@ pressure.
   finding with no hook, no ratchet, and no test is a wish" — exists
   specifically so this doesn't happen again piecemeal; any new operating
   rule added to this repo should come with one of the three from day one.
+
+## 2026-09-25 -- Gateway admin API exposed every key on the LAN
+
+- **Symptom:** found in review, no known exploitation. `GET /api/keys` on 0.0.0.0:4445 returned all
+  provider keys and VKs in plaintext without authentication.
+- **Root cause:** compose published ports as `HOST:CONTAINER` (all interfaces) by habit; Bifrost has no
+  admin account configured, so its management API is open; Docker Desktop's firewall rule admits any
+  port on the Public profile.
+- **Fix:** every published port except Grafana bound to 127.0.0.1.
+- **Guard:** gate stage `loopback_ports` (all compose files, all profiles).
+
+## 2026-09-25 -- Removed models kept coming back
+
+- **Symptom:** Kimi and Mistral kept reappearing in lanes, probes and reports after being parked.
+- **Root cause:** three independent writers (ADA model sync adding catalog proposals, freellmapi's own
+  fallback chain, and config.db rows Bifrost never deregisters) with no shared notion of "the operator
+  turned this off".
+- **Fix:** `bifrost/operator-disabled.json` read by every writer; parking now also cleans config.db.
+- **Guard:** `bifrost/tests/test_operator_disabled.py` (in the gate), VK sync refusal, daily freellmapi
+  enforcer.

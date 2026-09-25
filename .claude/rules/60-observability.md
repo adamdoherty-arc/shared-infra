@@ -35,27 +35,23 @@ Exposes `bifrost_requests_total{provider,model,status,request_type}`,
 `bifrost_request_latency_ms_bucket{...}`, `bifrost_prompt_tokens_total`,
 `bifrost_completion_tokens_total`, `bifrost_cost_usd_total`,
 `bifrost_active_providers`, `bifrost_active_virtual_keys`,
-`bifrost_logs_db_bytes`. The exporter's probe-model preference list
-(`exporter.py`) is a hardcoded set of "which model to probe per provider"
-— when a model is removed from `config.json`, remove it from this list in
-the same edit or the prober logs errors against a name that no longer
-exists (a `bifrost_config_duplicate_keys`-class drift, same shape as
-ADA's `scripts/audits/config_drift.py` catches for its own config).
+`bifrost_logs_db_bytes`. The prober's lane list is derived from `config.json` every tick; its
+probe-model preference table (`exporter.py`) only picks which listed model
+to use, falling back to the first listed model, so a stale preference
+degrades to a different model rather than a dead probe. Keep it current
+anyway when you remove a model.
 Cursor bootstraps to the log store's newest row on first start so
 historical rows don't pollute `rate()` calculations.
 
 ## Alert ownership
 
-Alertmanager routes everything except `service-down-redundant` (logged
-only) through `legion-webhook` -> `http://legion-backend:8005/api/
-webhooks/alertmanager`, which fans out to Discord/Telegram from Legion's
-side. **There is currently no dedicated shared-infra Discord receiver** —
-a `severity=critical, ecosystem_project=shared` alert rides the same
-webhook as everything else, which means it competes for attention with
-ADA/Legion app alerts rather than being distinguishable at a glance. If
-you add a new shared-infra alert rule, tag it `ecosystem_project="shared"`
-consistently (existing rules already do) so a future dedicated route can
-filter on it without a rule rewrite.
+Alertmanager routes `severity=critical, ecosystem_project="shared"` to the
+`service-down-redundant` receiver (Legion webhook + ADA's Discord bridge,
+added 2026-09-25) ahead of the general ecosystem route; everything else goes
+through `legion-webhook` -> `http://legion-backend:8005/api/webhooks/
+alertmanager`. Tag every new shared-infra rule `ecosystem_project="shared"`
+or it will not reach that route. Parked projects (Zero) are excluded from
+the heartbeat rules by label matcher.
 
 An alert firing for multiple days unattended (ServiceDown on vllm-embed
 3+ days, 2026-09-22 ground truth) is itself a finding — check `docs/

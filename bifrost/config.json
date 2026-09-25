@@ -98,7 +98,6 @@
           "models": [
             "meta/llama-3.2-11b-vision-instruct",
             "meta/llama-3.2-90b-vision-instruct",
-            "mistralai/mistral-nemotron",
             "nvidia/ising-calibration-1.5-31b",
             "nvidia/llama-3.1-nemoguard-8b-content-safety",
             "nvidia/llama-3.1-nemotron-safety-guard-8b-v3",
@@ -109,7 +108,6 @@
             "nvidia/nemotron-3.5-lightning-30b-a3b",
             "openai/gpt-oss-20b",
             "poolside/laguna-xs-2.1",
-            "moonshotai/kimi-k3",
             "nvidia/nemotron-parse-2.0",
             "nemotron-lightning",
             "nemotron-safety",
@@ -129,7 +127,6 @@
           "models": [
             "meta/llama-3.2-11b-vision-instruct",
             "meta/llama-3.2-90b-vision-instruct",
-            "mistralai/mistral-nemotron",
             "nvidia/ising-calibration-1.5-31b",
             "nvidia/llama-3.1-nemoguard-8b-content-safety",
             "nvidia/llama-3.1-nemotron-safety-guard-8b-v3",
@@ -140,7 +137,6 @@
             "nvidia/nemotron-3.5-lightning-30b-a3b",
             "openai/gpt-oss-20b",
             "poolside/laguna-xs-2.1",
-            "moonshotai/kimi-k3",
             "nvidia/nemotron-parse-2.0",
             "nemotron-ultra-550b",
             "nemotron-super-120b",
@@ -166,7 +162,6 @@
           "models": [
             "meta/llama-3.2-11b-vision-instruct",
             "meta/llama-3.2-90b-vision-instruct",
-            "mistralai/mistral-nemotron",
             "nvidia/ising-calibration-1.5-31b",
             "nvidia/llama-3.1-nemoguard-8b-content-safety",
             "nvidia/llama-3.1-nemotron-safety-guard-8b-v3",
@@ -177,7 +172,6 @@
             "nvidia/nemotron-3.5-lightning-30b-a3b",
             "openai/gpt-oss-20b",
             "poolside/laguna-xs-2.1",
-            "moonshotai/kimi-k3",
             "nvidia/nemotron-parse-2.0",
             "nemotron-lightning",
             "nemotron-safety",
@@ -227,9 +221,6 @@
             "inclusionai/ling-3.0-flash-fin:free",
             "inclusionai/ling-3.0-flash-sante:free",
             "minimax/minimax-m3",
-            "moonshotai/kimi-k2.5",
-            "moonshotai/kimi-k2.6",
-            "moonshotai/kimi-k3",
             "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
             "nvidia/nemotron-3-super-120b-a12b:free",
             "nvidia/nemotron-3-ultra-550b-a55b:free",
@@ -250,9 +241,6 @@
             "qwen3.8-27b",
             "glm-5.2-paid",
             "glm-5.2-or-free",
-            "kimi-k2.5",
-            "kimi-k2.6-or",
-            "kimi-k3",
             "minimax-m3",
             "deepseek-v4-flash-or",
             "ling-flash-sante",
@@ -273,9 +261,6 @@
             "qwen3.8-27b": "qwen/qwen3.8-27b",
             "glm-5.2-paid": "z-ai/glm-5.2",
             "glm-5.2-or-free": "z-ai/glm-5.2:free",
-            "kimi-k2.5": "moonshotai/kimi-k2.5",
-            "kimi-k2.6-or": "moonshotai/kimi-k2.6",
-            "kimi-k3": "moonshotai/kimi-k3",
             "minimax-m3": "minimax/minimax-m3",
             "deepseek-v4-flash-or": "deepseek/deepseek-v4-flash",
             "ling-flash-sante": "inclusionai/ling-3.0-flash-sante:free",
@@ -302,7 +287,6 @@
           "name": "hf-router-primary",
           "value": "env.HF_TOKEN",
           "models": [
-            "moonshotai/Kimi-K2.6",
             "MiniMaxAI/MiniMax-M2.7",
             "Qwen/Qwen3.6-35B-A3B",
             "Qwen/Qwen3-Coder-Next",
@@ -311,26 +295,21 @@
             "zai-org/GLM-5.1",
             "openai/gpt-oss-120b",
             "meta-llama/Llama-3.1-8B-Instruct",
-            "moonshotai/Kimi-K2.7-Code",
             "Qwen/Qwen3-Coder-480B-A35B-Instruct",
             "deepseek-ai/DeepSeek-V4-Flash",
-            "kimi-k2.6-hf",
             "minimax-m2.7-hf",
             "qwen3-coder-hf",
             "gemma-4-31b-hf",
             "glm-5.1-hf",
-            "kimi-code-hf",
             "qwen3-coder-480b-hf",
             "deepseek-v4-hf"
           ],
           "weight": 1.0,
           "aliases": {
-            "kimi-k2.6-hf": "moonshotai/Kimi-K2.6",
             "minimax-m2.7-hf": "MiniMaxAI/MiniMax-M2.7",
             "qwen3-coder-hf": "Qwen/Qwen3-Coder-Next",
             "gemma-4-31b-hf": "google/gemma-4-31B-it",
             "glm-5.1-hf": "zai-org/GLM-5.1",
-            "kimi-code-hf": "moonshotai/Kimi-K2.7-Code",
             "qwen3-coder-480b-hf": "Qwen/Qwen3-Coder-480B-A35B-Instruct",
             "deepseek-v4-hf": "deepseek-ai/DeepSeek-V4-Flash"
           }
@@ -447,42 +426,6 @@
       ],
       "network_config": {
         "base_url": "https://api.sea-lion.ai",
-        "default_request_timeout_in_seconds": 120,
-        "max_retries": 2
-      },
-      "custom_provider_config": {
-        "base_provider_type": "openai",
-        "request_path_overrides": {
-          "chat_completion": "/v1/chat/completions",
-          "chat_completion_stream": "/v1/chat/completions"
-        },
-        "allowed_requests": {
-          "chat_completion": true,
-          "chat_completion_stream": true,
-          "list_models": false
-        }
-      },
-      "concurrency_and_buffer_size": {
-        "concurrency": 2,
-        "buffer_size": 50
-      }
-    },
-    "aion": {
-      "keys": [
-        {
-          "name": "aion_api_key-primary",
-          "value": "env.AION_API_KEY",
-          "models": [
-            "aion-labs/aion-2.0",
-            "aion-labs/aion-rp-llama-3.1-8b",
-            "aion-labs/aion-3.0",
-            "aion-labs/aion-3.0-mini"
-          ],
-          "weight": 1.0
-        }
-      ],
-      "network_config": {
-        "base_url": "https://api.aionlabs.ai",
         "default_request_timeout_in_seconds": 120,
         "max_retries": 2
       },

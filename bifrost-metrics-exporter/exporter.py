@@ -117,7 +117,6 @@ _DEFAULT_PROBE_MODEL_PREFS: dict[str, list[str]] = {
     "openrouter": ["openrouter/free", "nvidia/nemotron-3.5-lightning:free"],
     "hf-router": ["openai/gpt-oss-20b", "meta-llama/Llama-3.1-8B-Instruct"],
     "sealion": ["aisingapore/Llama-SEA-LION-v3-70B-IT", "aisingapore/Qwen-SEA-LION-v4-32B-IT"],
-    "aion": ["aion-labs/aion-3.0-mini"],
 }
 try:
     _PROBE_MODEL_PREFS = {
@@ -130,7 +129,7 @@ except Exception as exc:  # malformed override must not kill the prober
 
 # Histogram buckets in milliseconds — chosen to cover the realistic Bifrost
 # range: ~30 ms for local embed, ~300 ms for vllm-local chat, ~1-3 s for
-# Kimi K2.6, occasional 10-20 s for Moonshot slow paths.
+# cloud lanes, occasional 10-20 s for cold NIM starts.
 LATENCY_BUCKETS_MS = (
     20, 50, 100, 200, 500,
     1_000, 2_000, 5_000, 10_000, 20_000, 30_000, 60_000,

@@ -298,3 +298,41 @@ projects (Zero) are excluded from heartbeat alerts by name.
 **Repo operating pattern (ADA-style).** `.claude/` rules/hooks/settings, `scripts/gate.py` (compose config,
 tests incl. infractl in a disposable container, ruff ratchet that fails closed, stub detector, providers
 doc), `.githooks/` pre-commit, `scripts/bifrost_restart.sh` as the only Bifrost restart path.
+
+## 2026-09-25 (evening) -- Loopback-only ports, Bifrost v2.2.3, operator-disabled list
+
+**Security: every unauthenticated port now binds 127.0.0.1.** Bifrost's `/api/*` admin routes
+(`/api/keys`, `/api/providers`, `/api/governance/virtual-keys`) need no auth and returned every provider
+key and virtual key in plaintext. Port 4445 was published on 0.0.0.0, and the Windows firewall rule
+"Docker Desktop Backend" allows any port on the Public profile. Raw vLLM, freellmapi's admin UI,
+Prometheus, Alertmanager, Loki, otelcol and SearXNG were exposed the same way. All are now
+`127.0.0.1:` except Grafana (own login). Verified: Legion reaches `host.docker.internal:4445`, ADA
+reaches `shared-bifrost:8080`, all Prometheus targets up. Guard: `scripts/gate.py` stage
+`loopback_ports` checks every compose file across all profiles.
+
+**Bifrost v2.0.0 -> v2.2.3.** Off-hours; backup in `bifrost/pre-v2-2.2.3-*/` (config.db, config.json,
+disabled-providers.json, log-store schema). Migrations ran clean, gateway healthy in 33 s, every lane
+re-probed. Gains: upstream cancellation on client disconnect, bounded streaming header waits,
+`error_type` on errors, native `/metrics`.
+
+**Operator order: Kimi and Mistral removed everywhere; providers without a working key stay off until
+the operator re-enables them.** Single source: `bifrost/operator-disabled.json` (model patterns,
+providers, freellmapi platforms/models). Enforcement, each with a test in
+`bifrost/tests/test_operator_disabled.py`:
+- `sync_vk_allowlists.py` refuses to run on a non-compliant config.json, and now deletes config.db rows
+  for providers absent from config.json (Bifrost's import never did; this replaces the manual procedure).
+- The gate runs that test, so a commit re-adding a banned model fails.
+- ADA `scripts/bifrost_model_sync.py` filters proposals against the list.
+- `scripts/apply_operator_disabled_freellmapi.py` (hostcron daily 07:45) disables matching keys and
+  fallback entries inside freellmapi, which has its own vault and would otherwise keep routing to them.
+Removed from Bifrost: 16 Kimi/Mistral model entries and aliases on nvidia-nim, openrouter and hf-router.
+Parked: `aion` (key valid but "Daily token limit exceeded" on every probe, 60% error over 24 h).
+`scripts/probe_provider_keys.py` found every other active key working. In freellmapi: github (GitHub
+Models retired 2026-07-30), llm7 and pollinations (erroring) keys disabled; Mistral, Cloudflare,
+Kimi and the 404ing SambaNova `DeepSeek-V3.1-cb` entries disabled. `freellmapi/gpt-oss-120b` went from
+502 to 200.
+
+**Consumers repointed.** NIM `nemotron-3-super-120b-a12b` sends `Deprecation: 2026-10-03`, so it is not a
+replacement. Reasoning/judge -> `nvidia-nim/nvidia/nemotron-3-ultra-550b-a55b`; code ->
+`hf-router/Qwen/Qwen3-Coder-480B-A35B-Instruct`; long-context/general HF -> `hf-router/zai-org/GLM-5.1`;
+fast -> `nemotron-3.5-lightning` / `groq/openai/gpt-oss-120b`. ADA, Legion and Zero updated.

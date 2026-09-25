@@ -22,13 +22,26 @@
     "  Daily Review, ADA Financial Repos weekly) are disabled, not migrated. See",
     "  docs/native-review-replacement.md for the plan that replaces them."
   ],
-
   "jobs": [
     {
       "name": "wsl-memory-reclaim",
       "owner": "shared-infra",
-      "cmd": ["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", "C:\\code\\shared-infra\\scripts\\wsl-memory-reclaim.ps1"],
-      "schedule": {"minute": [0, 20, 40]},
+      "cmd": [
+        "powershell.exe",
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "C:\\code\\shared-infra\\scripts\\wsl-memory-reclaim.ps1"
+      ],
+      "schedule": {
+        "minute": [
+          0,
+          20,
+          40
+        ]
+      },
       "timeout_s": 300,
       "enabled": true
     },
@@ -36,9 +49,15 @@
       "name": "ada-restart-window",
       "owner": "ada",
       "_note": "Batches queued restart intents. Most ticks are a no-op; it only drains at the windows configured in restart_intent_store. Timeout covers the 20-min defer poll plus drain grace.",
-      "cmd": ["cmd.exe", "/c", "C:\\code\\ADA\\scripts\\setup\\run-restart-window.cmd"],
+      "cmd": [
+        "cmd.exe",
+        "/c",
+        "C:\\code\\ADA\\scripts\\setup\\run-restart-window.cmd"
+      ],
       "cwd": "C:\\code\\ADA",
-      "schedule": {"minute": 0},
+      "schedule": {
+        "minute": 0
+      },
       "timeout_s": 2700,
       "enabled": true
     },
@@ -47,10 +66,22 @@
       "owner": "ada",
       "_note": "36 LLM-free probes; writes probe_cache/heartbeat/escalation.flag. Already native and 0-token - only its scheduler changes.",
       "_env_note": "This job ran as the interactive user under Task Scheduler and so picked up the user site-packages. The service runs as LocalSystem, which does not, and probes.py died with 'FATAL: requests not importable' on every tick. requests is only installed in the user site dir (C:\\Python314 system site-packages is not writable without admin), so PYTHONPATH points there explicitly. If the service is ever reconfigured to run as hadam, this can be dropped.",
-      "cmd": ["C:\\Python314\\python.exe", "C:\\Users\\hadam\\.claude\\skills\\ada-master\\scripts\\probes.py", "--exit-zero-on-red"],
+      "cmd": [
+        "C:\\Python314\\python.exe",
+        "C:\\Users\\hadam\\.claude\\skills\\ada-master\\scripts\\probes.py",
+        "--exit-zero-on-red"
+      ],
       "cwd": "C:\\Users\\hadam\\.claude\\skills\\ada-master\\scripts",
-      "env": {"PYTHONPATH": "C:\\Users\\hadam\\AppData\\Roaming\\Python\\Python314\\site-packages"},
-      "schedule": {"minute": [1, 21, 41]},
+      "env": {
+        "PYTHONPATH": "C:\\Users\\hadam\\AppData\\Roaming\\Python\\Python314\\site-packages"
+      },
+      "schedule": {
+        "minute": [
+          1,
+          21,
+          41
+        ]
+      },
       "timeout_s": 900,
       "enabled": true
     },
@@ -58,54 +89,95 @@
       "name": "ada-master-watchdog",
       "owner": "ada",
       "_note": "Rewritten for hostcron: reads hostcron heartbeat + runs.jsonl instead of Get-ScheduledTask LastTaskResult.",
-      "cmd": ["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", "C:\\Users\\hadam\\.claude\\skills\\ada-master\\scripts\\watchdog.ps1"],
+      "cmd": [
+        "powershell.exe",
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "C:\\Users\\hadam\\.claude\\skills\\ada-master\\scripts\\watchdog.ps1"
+      ],
       "cwd": "C:\\Users\\hadam\\.claude\\skills\\ada-master\\scripts",
-      "schedule": {"minute": 7},
+      "schedule": {
+        "minute": 7
+      },
       "timeout_s": 300,
       "enabled": true
     },
     {
       "name": "ada-ratchet-sweep",
       "owner": "ada",
-      "cmd": ["C:\\code\\ADA\\scripts\\run-ratchet-sweep.cmd"],
+      "cmd": [
+        "C:\\code\\ADA\\scripts\\run-ratchet-sweep.cmd"
+      ],
       "cwd": "C:\\code\\ADA",
-      "schedule": {"minute": 15, "hour": 3},
+      "schedule": {
+        "minute": 15,
+        "hour": 3
+      },
       "timeout_s": 3600,
       "enabled": true
     },
     {
       "name": "ada-ci-replacement-gate",
       "owner": "ada",
-      "cmd": ["cmd.exe", "/c", "C:\\code\\ADA\\scripts\\setup\\run-ci-replacement-gate.cmd"],
+      "cmd": [
+        "cmd.exe",
+        "/c",
+        "C:\\code\\ADA\\scripts\\setup\\run-ci-replacement-gate.cmd"
+      ],
       "cwd": "C:\\code\\ADA",
-      "schedule": {"minute": 0, "hour": 4},
+      "schedule": {
+        "minute": 0,
+        "hour": 4
+      },
       "timeout_s": 2700,
       "enabled": true
     },
     {
       "name": "ada-comment-burndown",
       "owner": "ada",
-      "cmd": ["cmd.exe", "/c", "C:\\code\\ADA\\scripts\\run-comment-burndown.cmd"],
+      "cmd": [
+        "cmd.exe",
+        "/c",
+        "C:\\code\\ADA\\scripts\\run-comment-burndown.cmd"
+      ],
       "cwd": "C:\\code\\ADA",
-      "schedule": {"minute": 30, "hour": 4},
+      "schedule": {
+        "minute": 30,
+        "hour": 4
+      },
       "timeout_s": 1800,
       "enabled": true
     },
     {
       "name": "ada-security-sweep-daily",
       "owner": "ada",
-      "cmd": ["cmd.exe", "/c", "C:\\code\\ADA\\scripts\\setup\\run-security-sweep-daily.cmd"],
+      "cmd": [
+        "cmd.exe",
+        "/c",
+        "C:\\code\\ADA\\scripts\\setup\\run-security-sweep-daily.cmd"
+      ],
       "cwd": "C:\\code\\ADA",
-      "schedule": {"minute": 0, "hour": 6},
+      "schedule": {
+        "minute": 0,
+        "hour": 6
+      },
       "timeout_s": 1800,
       "enabled": true
     },
     {
       "name": "ada-bifrost-model-sync",
       "owner": "ada",
-      "cmd": ["C:\\code\\ADA\\scripts\\run-bifrost-model-sync.cmd"],
+      "cmd": [
+        "C:\\code\\ADA\\scripts\\run-bifrost-model-sync.cmd"
+      ],
       "cwd": "C:\\code\\ADA",
-      "schedule": {"minute": 30, "hour": 7},
+      "schedule": {
+        "minute": 30,
+        "hour": 7
+      },
       "timeout_s": 900,
       "enabled": true
     },
@@ -113,27 +185,51 @@
       "name": "ada-security-sweep-weekly",
       "owner": "ada",
       "_note": "Trivy across 6 images with --pull-upstream plus a full-history secrets scan; the long timeout is intentional.",
-      "cmd": ["cmd.exe", "/c", "C:\\code\\ADA\\scripts\\setup\\run-security-sweep-weekly.cmd"],
+      "cmd": [
+        "cmd.exe",
+        "/c",
+        "C:\\code\\ADA\\scripts\\setup\\run-security-sweep-weekly.cmd"
+      ],
       "cwd": "C:\\code\\ADA",
-      "schedule": {"minute": 30, "hour": 7, "dow": 0},
+      "schedule": {
+        "minute": 30,
+        "hour": 7,
+        "dow": 0
+      },
       "timeout_s": 5400,
       "enabled": true
     },
     {
       "name": "claude-usage-forensics-weekly",
       "owner": "shared-infra",
-      "cmd": ["cmd.exe", "/c", "C:\\code\\shared-infra\\scripts\\run-usage-forensics.cmd"],
+      "cmd": [
+        "cmd.exe",
+        "/c",
+        "C:\\code\\shared-infra\\scripts\\run-usage-forensics.cmd"
+      ],
       "cwd": "C:\\code\\shared-infra",
-      "schedule": {"minute": 0, "hour": 8, "dow": 0},
+      "schedule": {
+        "minute": 0,
+        "hour": 8,
+        "dow": 0
+      },
       "timeout_s": 900,
       "enabled": true
     },
     {
       "name": "ada-dr-restore-drill-weekly",
       "owner": "ada",
-      "cmd": ["cmd.exe", "/c", "C:\\code\\ADA\\scripts\\setup\\run-dr-restore-drill-weekly.cmd"],
+      "cmd": [
+        "cmd.exe",
+        "/c",
+        "C:\\code\\ADA\\scripts\\setup\\run-dr-restore-drill-weekly.cmd"
+      ],
       "cwd": "C:\\code\\ADA",
-      "schedule": {"minute": 0, "hour": 9, "dow": 0},
+      "schedule": {
+        "minute": 0,
+        "hour": 9,
+        "dow": 0
+      },
       "timeout_s": 3600,
       "enabled": true
     },
@@ -141,23 +237,78 @@
       "name": "ada-llm-weekly-report",
       "owner": "ada",
       "_note": "Bifrost-native. rc 3 (all narrative lanes down) used to fall back to claude.exe; it now pages Discord instead. ok_exit_codes stays [0] so rc 3 surfaces as a failure.",
-      "cmd": ["cmd.exe", "/c", "C:\\code\\ADA\\scripts\\llm_weekly_report.cmd"],
+      "cmd": [
+        "cmd.exe",
+        "/c",
+        "C:\\code\\ADA\\scripts\\llm_weekly_report.cmd"
+      ],
       "cwd": "C:\\code\\ADA\\scripts",
-      "schedule": {"minute": 0, "hour": 11, "dow": 0},
+      "schedule": {
+        "minute": 0,
+        "hour": 11,
+        "dow": 0
+      },
       "timeout_s": 1800,
-      "ok_exit_codes": [0],
+      "ok_exit_codes": [
+        0
+      ],
       "enabled": true
     },
     {
       "name": "ada-prompt-weekly-review",
       "owner": "ada",
       "_note": "Bifrost-native. Same rc-3 treatment as llm-weekly-report.",
-      "cmd": ["cmd.exe", "/c", "C:\\code\\ADA\\scripts\\prompt_weekly_review.cmd"],
+      "cmd": [
+        "cmd.exe",
+        "/c",
+        "C:\\code\\ADA\\scripts\\prompt_weekly_review.cmd"
+      ],
       "cwd": "C:\\code\\ADA\\scripts",
-      "schedule": {"minute": 0, "hour": 12, "dow": 0},
+      "schedule": {
+        "minute": 0,
+        "hour": 12,
+        "dow": 0
+      },
       "timeout_s": 1800,
-      "ok_exit_codes": [0],
+      "ok_exit_codes": [
+        0
+      ],
       "enabled": true
+    },
+    {
+      "name": "freellmapi-operator-disabled",
+      "owner": "shared-infra",
+      "cmd": [
+        "C:\\Python314\\python.exe",
+        "C:\\code\\shared-infra\\scripts\\apply_operator_disabled_freellmapi.py"
+      ],
+      "cwd": "C:\\code\\shared-infra",
+      "schedule": {
+        "minute": 45,
+        "hour": 7
+      },
+      "timeout_s": 120,
+      "enabled": true,
+      "_comment": "Enforces bifrost/operator-disabled.json inside freellmapi (own key vault + fallback chain). Daily after ada-bifrost-model-sync."
+    },
+    {
+      "name": "shared-infra-gate",
+      "owner": "shared-infra",
+      "cmd": [
+        "C:\\Python314\\python.exe",
+        "C:\\code\\shared-infra\\scripts\\gate.py"
+      ],
+      "cwd": "C:\\code\\shared-infra",
+      "env": {
+        "PYTHONPATH": "C:\\Users\\hadam\\AppData\\Roaming\\Python\\Python314\\site-packages"
+      },
+      "schedule": {
+        "minute": 30,
+        "hour": 2
+      },
+      "timeout_s": 900,
+      "enabled": true,
+      "_comment": "Nightly quality gate (compose config, loopback ports, tests, ruff ratchet, stubs, PROVIDERS.md). Result: .claude/state/test-results/latest.json."
     }
   ]
 }

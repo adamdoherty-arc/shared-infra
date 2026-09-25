@@ -18,6 +18,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG = ROOT / "bifrost" / "config.json"
 DISABLED = ROOT / "bifrost" / "disabled-providers.json"
+OPERATOR = ROOT / "bifrost" / "operator-disabled.json"
 OUT = ROOT / "docs" / "PROVIDERS.md"
 
 # Tier + free-tier limits, verified 2026-09-25 against provider docs or live
@@ -45,7 +46,7 @@ META: dict[str, tuple[str, str]] = {
         "Self-hosted aggregator (shared-freellmapi:3001); upstream limits per its own key chain.",
     ),
     "sealion": ("fallback", "AI Singapore free key; ~10 req/window 429s under burst. Includes Nemotron-SEA-LION 120B."),
-    "aion": ("fallback", "Free account hits 'Daily token limit exceeded' (429) most days; deep tail only."),
+    "aion": ("fallback", "Free account hits 'Daily token limit exceeded' (429) on every probe; operator-disabled."),
     "gemini": (
         "fast",
         "Flash-class only: ~20 RPD on 3.x Flash, ~500 RPD on Flash-Lite (per project; Google no longer publishes).",
@@ -126,6 +127,28 @@ def render() -> str:
         why = " ".join(str(block.get("_comment", "")).split())
         why = (why[:220] + "...") if len(why) > 220 else why
         lines.append(f"| `{name}` | {tier} | {why or limits} |")
+    od = json.loads(OPERATOR.read_text(encoding="utf-8")) if OPERATOR.exists() else {}
+    lines += [
+        "",
+        "## Operator-disabled (stays off until the operator re-enables it)",
+        "",
+        "Source: `bifrost/operator-disabled.json`. The VK sync refuses to run, and the",
+        "gate fails, if `config.json` contains any of these. ADA's model sync never adds",
+        "them. `scripts/apply_operator_disabled_freellmapi.py` enforces the same list",
+        "inside the freellmapi aggregator. To re-enable: remove the entry, then restore",
+        "the provider block or model and restart via `scripts/bifrost_restart.sh`.",
+        "",
+        "| Kind | Name | Why |",
+        "|---|---|---|",
+    ]
+    for kind, section in (
+        ("model pattern", "model_patterns"),
+        ("provider", "providers"),
+        ("freellmapi platform", "freellmapi_platforms"),
+        ("freellmapi model", "freellmapi_models"),
+    ):
+        for name, why in od.get(section, {}).items():
+            lines.append(f"| {kind} | `{name}` | {why} |")
     lines.append("")
     return "\n".join(lines)
 

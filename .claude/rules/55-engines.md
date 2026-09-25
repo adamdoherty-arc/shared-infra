@@ -69,8 +69,7 @@ restart. Current cadence: roughly 1 wedge/day, auto-restarted — this is an
 ACCEPTED failure mode (see `docs/ACCEPTED_FAILURE_MODES.md`), not
 something to "fix" by disabling the monitor.
 
-**Counter-reset bug (fixed by the other WS1 session, still worth knowing
-about here):** after an engine restart, `generation_tokens_total` resets
+**Counter-reset bug (fixed 2026-09-25, still worth knowing about):** after an engine restart, `generation_tokens_total` resets
 to 0. A rate calculation that doesn't detect the reset will compute a
 huge negative rate (`gen_rate=-2798014/s` was observed) and can
 false-positive a stall/starved sample on the very next tick after a
@@ -79,7 +78,17 @@ calculation must include a unit test with a counter-reset replay
 (`infractl/tests/test_vllm_wedge_monitor_predicates.py`) — this is exactly
 the "no finding closed without a test" rule from `00-critical.md`.
 
-## Embed CPU tuning — `--parallel 1 -b 4096 -ub 4096`, and why not `--parallel 4`
+## Embed CPU tuning
+
+**`--cache-ram 0` is the load-bearing flag (measured 2026-09-25):** with
+llama.cpp's prompt cache on (`--cache-ram 2048`), batch-32 took 26.7 s and
+gateway p95 was 8.3 s; with it off, 0.7-0.9 s. **Live flags:** `-t 8 -b 4096
+-ub 4096 --parallel 4 --cache-ram 0 --metrics`. The 0.7-0.9 s figure was
+measured on exactly that set; the `--parallel 1` advice below predates the
+cache-ram finding (the earlier `--parallel 4` regression was the prompt
+cache). Re-measure before changing `--parallel` in either direction.
+
+### `--parallel 1 -b 4096 -ub 4096`, and why not `--parallel 4`
 
 `vllm-embed` runs on CPU (`ghcr.io/ggml-org/llama.cpp:server`, NOT vLLM,
 NOT the GPU, since 2026-09-22) serving `Qwen/Qwen3-Embedding-0.6B` f16.

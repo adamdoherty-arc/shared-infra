@@ -1,0 +1,41 @@
+{
+  "_comment": "OPERATOR-OWNED. Providers and model patterns the operator has turned off. They stay off until the operator removes them from this file. Every config writer honors it: ADA scripts/bifrost_model_sync.py never adds a matching model, bifrost/auth_autoheal.py only parks, and scripts/gate.py fails if bifrost/config.json contains a disabled provider or a model matching a pattern. Patterns are case-insensitive substrings matched against the model id and alias names. Operator order 2026-09-25: remove Kimi and Mistral everywhere; disable every provider without a working key until re-enabled.",
+  "model_patterns": {
+    "kimi": "Operator order 2026-09-25: Kimi removed everywhere (K2.6 404 on NIM since 07-13, repeated noise).",
+    "moonshot": "Kimi vendor namespace (moonshotai/*).",
+    "mistral": "Operator order 2026-09-25: Mistral removed everywhere (direct key dead since 09-17).",
+    "mixtral": "Mistral family.",
+    "codestral": "Mistral family.",
+    "ministral": "Mistral family.",
+    "devstral": "Mistral family.",
+    "magistral": "Mistral family.",
+    "pixtral": "Mistral family."
+  },
+  "providers": {
+    "mistral": "Operator order 2026-09-25; key dead (auto-parked 2026-09-17).",
+    "moonshot": "Operator order 2026-09-25 (Kimi); paid account retired 2026-06-11.",
+    "moonshot-nim-compat": "Operator order 2026-09-25 (Kimi shim).",
+    "aion": "No working key 2026-09-25: 'Daily token limit exceeded' on every probe, 60% error over 24h.",
+    "gemini": "No working key: expired, parked 2026-07-08.",
+    "zai": "No working key at our volume: 429 at 1 concurrency, parked 2026-09-15.",
+    "cerebras": "No working key: 402, free tier became a card-gated trial.",
+    "cloudflare-ai": "No key minted (needs account id + token).",
+    "sambanova": "No key minted.",
+    "cohere": "No key minted.",
+    "ovhcloud": "Key expired (403).",
+    "siliconflow": "No free models on the key.",
+    "bazaarlink": "0 successes in 24h (2026-09-15).",
+    "anthropic": "Paid; all-free policy.",
+    "minimax": "Paid; all-free policy."
+  },
+  "freellmapi_platforms": {
+    "mistral": "Operator order 2026-09-25 (Mistral); key invalid since 2026-08-03.",
+    "cloudflare": "Key invalid since 2026-08-04.",
+    "llm7": "Anonymous tier returns errors on every health check (2026-09-25).",
+    "pollinations": "Anonymous tier returns errors on every health check (2026-09-25).",
+    "github": "GitHub Models retired upstream 2026-07-30."
+  },
+  "freellmapi_models": {
+    "sambanova/DeepSeek-V3.1-cb": "404 upstream (2026-09-25); made freellmapi/gpt-oss-120b return 502."
+  }
+}

@@ -55,6 +55,59 @@ import sqlite3
 
 DB_PATH = os.environ.get("BIFROST_CONFIG_DB", r"C:/code/shared-infra/bifrost/config.db")
 CONFIG_JSON_PATH = os.environ.get("BIFROST_CONFIG_JSON", r"C:/code/shared-infra/bifrost/config.json")
+OPERATOR_DISABLED_PATH = os.environ.get(
+    "BIFROST_OPERATOR_DISABLED",
+    os.path.join(os.path.dirname(CONFIG_JSON_PATH), "operator-disabled.json"),
+)
+
+
+def operator_violations(cfg: dict, disabled_path: str = OPERATOR_DISABLED_PATH) -> list[str]:
+    """Everything in config.json the operator has turned off (2026-09-25 order:
+    Kimi + Mistral removed everywhere; providers without a working key stay
+    off until the operator re-enables them in operator-disabled.json)."""
+    if not os.path.exists(disabled_path):
+        return []
+    with open(disabled_path, encoding="utf-8") as f:
+        od = json.load(f)
+    patterns = [p.lower() for p in od.get("model_patterns", {})]
+    off = set(od.get("providers", {}))
+    out = []
+    for provider, block in cfg.get("providers", {}).items():
+        if provider in off:
+            out.append(f"provider {provider} is operator-disabled")
+            continue
+        for key in block.get("keys", []):
+            names = list(key.get("models", [])) + list((key.get("aliases") or {}).items())
+            for n in names:
+                text = " ".join(n) if isinstance(n, tuple) else n
+                if any(pat in text.lower() for pat in patterns):
+                    out.append(f"{provider}/{key.get('name')}: {text}")
+    return out
+
+
+def deregister_absent_providers(db: sqlite3.Connection, cfg: dict) -> dict:
+    """Remove config.db rows for providers no longer in config.json.
+
+    Bifrost's import never deletes a provider, so a parked provider kept its
+    keys in config_keys and the discovery loop kept calling it (the manual
+    "provider state lives in TWO places" procedure in CLAUDE.md). Child join
+    rows go before their parent rows. governance_model_pricing is Bifrost's
+    datasheet and is left alone."""
+    active = set(cfg.get("providers", {}))
+    stale = sorted({r[0] for r in db.execute("SELECT name FROM config_providers")} - active)
+    counts: dict = {}
+    for provider in stale:
+        db.execute(
+            "DELETE FROM governance_virtual_key_provider_config_keys WHERE table_virtual_key_provider_config_id IN "
+            "(SELECT id FROM governance_virtual_key_provider_configs WHERE provider=?)",
+            (provider,),
+        )
+        db.execute("DELETE FROM governance_virtual_key_provider_configs WHERE provider=?", (provider,))
+        keys = db.execute("DELETE FROM config_keys WHERE provider=?", (provider,)).rowcount
+        db.execute("DELETE FROM config_providers WHERE name=?", (provider,))
+        counts[provider] = keys
+    db.commit()
+    return counts
 
 
 def sync_provider_models(db: sqlite3.Connection, config_json_path: str = CONFIG_JSON_PATH) -> int:
@@ -122,11 +175,6 @@ REVOKED_VK_PROVIDERS = {
     ("hermes-prod", "openrouter"),
 }
 
-db = sqlite3.connect(DB_PATH)
-
-_changed = sync_provider_models(db)
-print(f"synced config_keys.models_json/aliases_json from config.json: {_changed} key(s) changed")
-
 def build_provider_allowlists(db: sqlite3.Connection) -> dict:
     """provider -> JSON array string of every model id AND every alias name
     across all config_keys rows for that provider (deduped, config order kept).
@@ -145,38 +193,63 @@ def build_provider_allowlists(db: sqlite3.Connection) -> dict:
     return {prov: json.dumps(allow) for prov, allow in out.items()}
 
 
-providers = build_provider_allowlists(db)
+def main() -> None:
+    with open(CONFIG_JSON_PATH, encoding="utf-8") as _f:
+        _cfg = json.load(_f)
+    _violations = operator_violations(_cfg)
+    if _violations:
+        print("REFUSING to sync: config.json contains operator-disabled entries "
+              "(bifrost/operator-disabled.json):")
+        for _v in _violations:
+            print("  -", _v)
+        raise SystemExit(2)
 
-vks = [(r[0], r[1]) for r in db.execute("SELECT id, name FROM governance_virtual_keys")]
+    db = sqlite3.connect(DB_PATH)
 
-gone = db.execute(
-    "DELETE FROM governance_virtual_key_provider_configs WHERE provider NOT IN ({})".format(
-        ",".join("?" * len(providers))), list(providers)).rowcount
-print(f"deleted PC rows for retired providers: {gone}")
+    _gone = deregister_absent_providers(db, _cfg)
+    print(f"deregistered providers absent from config.json: {_gone or 'none'}")
 
-updated = inserted = revoked = 0
-for vk, vk_name in vks:
-    for prov, models in providers.items():
-        if (vk_name, prov) in REVOKED_VK_PROVIDERS:
-            db.execute(
-                "DELETE FROM governance_virtual_key_provider_configs "
-                "WHERE virtual_key_id=? AND provider=?", (vk, prov))
-            revoked += 1
-            continue
-        cur = db.execute(
-            "UPDATE governance_virtual_key_provider_configs "
-            "SET allowed_models=?, allow_all_keys=1 WHERE virtual_key_id=? AND provider=?",
-            (models, vk, prov))
-        if cur.rowcount:
-            updated += cur.rowcount
-        else:
-            db.execute(
-                "INSERT INTO governance_virtual_key_provider_configs "
-                "(virtual_key_id, provider, weight, allowed_models, allow_all_keys, rate_limit_id) "
-                "VALUES (?,?,NULL,?,1,NULL)", (vk, prov, models))
-            inserted += 1
-db.commit()
-print(f"updated={updated} inserted={inserted} revoked={revoked} across {len(vks)} VKs x {len(providers)} providers")
-for row in db.execute(
-        "SELECT provider, COUNT(*) FROM governance_virtual_key_provider_configs GROUP BY provider ORDER BY provider"):
-    print("PC rows:", row)
+    _changed = sync_provider_models(db)
+    print(f"synced config_keys.models_json/aliases_json from config.json: {_changed} key(s) changed")
+
+    providers = build_provider_allowlists(db)
+
+    vks = [(r[0], r[1]) for r in db.execute("SELECT id, name FROM governance_virtual_keys")]
+
+    gone = db.execute(
+        "DELETE FROM governance_virtual_key_provider_configs WHERE provider NOT IN ({})".format(
+            ",".join("?" * len(providers))), list(providers)).rowcount
+    print(f"deleted PC rows for retired providers: {gone}")
+
+    updated = inserted = revoked = 0
+    for vk, vk_name in vks:
+        for prov, models in providers.items():
+            if (vk_name, prov) in REVOKED_VK_PROVIDERS:
+                db.execute(
+                    "DELETE FROM governance_virtual_key_provider_configs "
+                    "WHERE virtual_key_id=? AND provider=?", (vk, prov))
+                revoked += 1
+                continue
+            cur = db.execute(
+                "UPDATE governance_virtual_key_provider_configs "
+                "SET allowed_models=?, allow_all_keys=1 WHERE virtual_key_id=? AND provider=?",
+                (models, vk, prov))
+            if cur.rowcount:
+                updated += cur.rowcount
+            else:
+                db.execute(
+                    "INSERT INTO governance_virtual_key_provider_configs "
+                    "(virtual_key_id, provider, weight, allowed_models, allow_all_keys, rate_limit_id) "
+                    "VALUES (?,?,NULL,?,1,NULL)", (vk, prov, models))
+                inserted += 1
+    db.commit()
+    print(f"updated={updated} inserted={inserted} revoked={revoked} across {len(vks)} VKs x {len(providers)} providers")
+    for row in db.execute(
+        "SELECT provider, COUNT(*) FROM governance_virtual_key_provider_configs "
+        "GROUP BY provider ORDER BY provider"
+    ):
+        print("PC rows:", row)
+
+
+if __name__ == "__main__":
+    main()
