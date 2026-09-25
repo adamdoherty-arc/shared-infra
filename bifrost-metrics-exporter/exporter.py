@@ -116,7 +116,7 @@ _DEFAULT_PROBE_MODEL_PREFS: dict[str, list[str]] = {
     "freellmapi": ["gpt-oss-120b", "openai/gpt-oss-120b", "DeepSeek-V3.2"],
     "openrouter": ["openrouter/free", "nvidia/nemotron-3.5-lightning:free"],
     "hf-router": ["openai/gpt-oss-20b", "meta-llama/Llama-3.1-8B-Instruct"],
-    "sealion": ["aisingapore/Gemma-SEA-LION-v4-27B-IT"],
+    "sealion": ["aisingapore/Llama-SEA-LION-v3-70B-IT", "aisingapore/Qwen-SEA-LION-v4-32B-IT"],
     "aion": ["aion-labs/aion-3.0-mini"],
 }
 try:
@@ -626,6 +626,24 @@ def _write_probe_lanes(lanes: list[tuple], skipped: dict[str, str]) -> None:
 
 
 def _probe_lane(model: str, kind: str, vk: str, timeout: int) -> tuple[bool, float]:
+    """Probe a lane; a cloud lane gets ONE immediate retry before it counts as down.
+
+    2026-09-25: nvidia-nim/nemotron-3.5-lightning (NIM's busiest model here,
+    1,555 successes/7d) read DOWN on every 10-minute probe for hours while
+    answering real traffic. Replayed from this container: the first request
+    after idle took 50s (NIM scales the function to zero), the next ones
+    0.6-8s. A probe cadence of 10 minutes hits the cold start every time, so
+    a single timeout is not evidence the lane is dead; a second failure right
+    after a warm-up is. Local lanes are never retried -- a slow local engine
+    IS the signal (and the wedge monitor owns that)."""
+    ok, ms = _probe_lane_once(model, kind, vk, timeout)
+    if ok or model.partition("/")[0].endswith("-local"):
+        return ok, ms
+    ok2, ms2 = _probe_lane_once(model, kind, vk, timeout)
+    return ok2, ms + ms2
+
+
+def _probe_lane_once(model: str, kind: str, vk: str, timeout: int) -> tuple[bool, float]:
     """Send one tiny request for `model` through the gateway. Returns (ok, latency_ms)."""
     if kind == "embed":
         url = f"{PROBE_BASE}/v1/embeddings"
@@ -711,7 +729,7 @@ def _probe_loop() -> None:
                     except KeyError:
                         pass
                     exported_lat.discard(labels)
-                active_models = {l[0] for l in lanes}
+                active_models = {ln[0] for ln in lanes}
                 for m in list(last_probe):
                     if m not in active_models:
                         last_probe.pop(m, None)

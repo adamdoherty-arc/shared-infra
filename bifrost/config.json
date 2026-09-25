@@ -46,7 +46,7 @@
       "custom_provider_config": {
         "base_provider_type": "openai",
         "allowed_requests": {
-          "_comment_list_models": "MUST stay false. /v1/models fans out to every provider with list_models=true, so a model-list call joins the inference queue behind real work (Legion's stack_monitor.py documented it hanging past 150s on 2026-08-03, when vllm-chat ran --max-num-seqs 1). vllm-chat now runs --max-num-seqs 6, which makes the hang less likely but NOT impossible \u2014 model discovery must never depend on inference capacity, at any concurrency. Corrected 2026-08-11: this comment previously asserted seqs=1 as current fact.",
+          "_comment_list_models": "MUST stay false. /v1/models fans out to every provider with list_models=true, so a model-list call joins the inference queue behind real work (Legion's stack_monitor.py documented it hanging past 150s on 2026-08-03, when vllm-chat ran --max-num-seqs 1). vllm-chat now runs --max-num-seqs 6, which makes the hang less likely but NOT impossible — model discovery must never depend on inference capacity, at any concurrency. Corrected 2026-08-11: this comment previously asserted seqs=1 as current fact.",
           "list_models": false,
           "chat_completion": true,
           "chat_completion_stream": true
@@ -113,14 +113,13 @@
             "nvidia/nemotron-parse-2.0",
             "nemotron-lightning",
             "nemotron-safety",
-            "deepseek-v4-flash",
-            "nemoguard-safety"
+            "nemoguard-safety",
+            "nvidia/riva-translate-4b-instruct-v2"
           ],
           "weight": 1.0,
           "aliases": {
             "nemotron-lightning": "nvidia/nemotron-3.5-lightning-30b-a3b",
             "nemotron-safety": "nvidia/nemotron-3.5-content-safety",
-            "deepseek-v4-flash": "deepseek-ai/deepseek-v4-flash-0731",
             "nemoguard-safety": "nvidia/llama-3.1-nemoguard-8b-content-safety"
           }
         },
@@ -146,19 +145,16 @@
             "nemotron-ultra-550b",
             "nemotron-super-120b",
             "llama-90b-vision",
-            "deepseek-v4",
-            "deepseek-v4-flash",
             "nemotron-lightning",
             "nemotron-safety",
-            "nemoguard-safety"
+            "nemoguard-safety",
+            "nvidia/riva-translate-4b-instruct-v2"
           ],
           "weight": 1.0,
           "aliases": {
             "nemotron-ultra-550b": "nvidia/nemotron-3-ultra-550b-a55b",
             "nemotron-super-120b": "nvidia/nemotron-3-super-120b-a12b",
             "llama-90b-vision": "meta/llama-3.2-90b-vision-instruct",
-            "deepseek-v4": "deepseek-ai/deepseek-v4-flash-0731",
-            "deepseek-v4-flash": "deepseek-ai/deepseek-v4-flash-0731",
             "nemotron-lightning": "nvidia/nemotron-3.5-lightning-30b-a3b",
             "nemotron-safety": "nvidia/nemotron-3.5-content-safety",
             "nemoguard-safety": "nvidia/llama-3.1-nemoguard-8b-content-safety"
@@ -185,14 +181,13 @@
             "nvidia/nemotron-parse-2.0",
             "nemotron-lightning",
             "nemotron-safety",
-            "deepseek-v4-flash",
-            "nemoguard-safety"
+            "nemoguard-safety",
+            "nvidia/riva-translate-4b-instruct-v2"
           ],
           "weight": 1.0,
           "aliases": {
             "nemotron-lightning": "nvidia/nemotron-3.5-lightning-30b-a3b",
             "nemotron-safety": "nvidia/nemotron-3.5-content-safety",
-            "deepseek-v4-flash": "deepseek-ai/deepseek-v4-flash-0731",
             "nemoguard-safety": "nvidia/llama-3.1-nemoguard-8b-content-safety"
           }
         }
@@ -245,7 +240,6 @@
             "poolside/laguna-xs-2.1:free",
             "qwen/qwen3.8-27b",
             "z-ai/glm-5.2",
-            "inclusionai/ling-3.0-flash-vl:free",
             "z-ai/glm-5.2:free",
             "z-ai/glm-5.3-flash",
             "nemotron-ultra-free",
@@ -265,7 +259,9 @@
             "ling-flash-fin",
             "dots-note-preview",
             "glm-5.3-flash",
-            "ox-alpha"
+            "ox-alpha",
+            "nex-agi/nex-n2.5-mini:free",
+            "nex-agi/nex-n2.5-pro:free"
           ],
           "weight": 1.0,
           "aliases": {
@@ -314,7 +310,6 @@
             "google/gemma-4-31B-it",
             "zai-org/GLM-5.1",
             "openai/gpt-oss-120b",
-            "openai/gpt-oss-20b",
             "meta-llama/Llama-3.1-8B-Instruct",
             "moonshotai/Kimi-K2.7-Code",
             "Qwen/Qwen3-Coder-480B-A35B-Instruct",
@@ -366,14 +361,12 @@
           "value": "env.GROQ_API_KEY",
           "models": [
             "allam-2-7b",
-            "groq/compound",
-            "groq/compound-mini",
             "openai/gpt-oss-120b",
             "openai/gpt-oss-20b",
             "openai/gpt-oss-safeguard-20b",
-            "qwen/qwen3.8-27b",
             "qwen36-groq",
-            "qwen38-groq"
+            "qwen38-groq",
+            "qwen/qwen3.8-27b"
           ],
           "weight": 1.0,
           "aliases": {
@@ -443,10 +436,11 @@
           "name": "sealion_api_key-primary",
           "value": "env.SEALION_API_KEY",
           "models": [
-            "aisingapore/Gemma-SEA-LION-v4-27B-IT",
             "aisingapore/Llama-SEA-LION-v3-70B-IT",
             "aisingapore/Qwen-SEA-LION-v4-32B-IT",
-            "aisingapore/Qwen-SEA-LION-v4.5-27B-IT"
+            "aisingapore/Gemma-SEA-LION-v4-27B-IT",
+            "aisingapore/Qwen-SEA-LION-v4.5-27B-IT",
+            "aisingapore/Nemotron-SEA-LION-v4.8-120B-A12B"
           ],
           "weight": 1.0
         }
@@ -480,10 +474,9 @@
           "value": "env.AION_API_KEY",
           "models": [
             "aion-labs/aion-2.0",
-            "aion-labs/aion-2.5",
+            "aion-labs/aion-rp-llama-3.1-8b",
             "aion-labs/aion-3.0",
-            "aion-labs/aion-3.0-mini",
-            "aion-labs/aion-rp-llama-3.1-8b"
+            "aion-labs/aion-3.0-mini"
           ],
           "weight": 1.0
         }
