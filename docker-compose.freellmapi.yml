@@ -40,7 +40,7 @@ services:
       # (ada-grafana owns 3001, zero-langfuse-web owns 3010, legion-grafana
       # owns 3050 — see those compose files). 3015 is uncontested as of
       # 2026-05-20. Override via FREELLMAPI_HOST_PORT in shared-infra/.env.
-      - "${FREELLMAPI_HOST_PORT:-3015}:3001"
+      - "127.0.0.1:${FREELLMAPI_HOST_PORT:-3015}:3001"
     environment:
       PORT: "3001"
       HOST: "0.0.0.0"

@@ -120,7 +120,7 @@ def test_vllm_local_alias_is_reachable_through_bifrost(alias: str) -> None:
 
     if resp.status_code == 403:
         body_text = resp.text
-        assert "virtual_key_not_found" not in body_text, (
+        assert "virtual_key_not_found" not in body_text and "access_not_found" not in body_text, (
             f"Alias '{alias}' ({model}) is unreachable through Bifrost: 403 "
             f"virtual_key_not_found. It was added to vLLM's "
             f"--served-model-name list but never synced into Bifrost's "

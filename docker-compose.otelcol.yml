@@ -23,10 +23,10 @@ services:
     volumes:
       - ./otelcol/config.yaml:/etc/otelcol/config.yaml:ro
     ports:
-      - "4321:4317"   # OTLP gRPC (host 4321; internal senders use otelcol:4317)
-      - "4322:4318"   # OTLP HTTP (host 4322; internal senders use otelcol:4318)
-      - "8888:8888"   # Collector self-telemetry (Prometheus scrape)
-      - "13133:13133" # Health check extension
+      - "127.0.0.1:4321:4317"   # OTLP gRPC (host 4321; internal senders use otelcol:4317)
+      - "127.0.0.1:4322:4318"   # OTLP HTTP (host 4322; internal senders use otelcol:4318)
+      - "127.0.0.1:8888:8888"   # Collector self-telemetry (Prometheus scrape)
+      - "127.0.0.1:13133:13133" # Health check extension
     networks:
       - shared-infra
     # depends_on only lists loki (same compose file). shared-tempo lives in
@@ -51,8 +51,8 @@ services:
       - ./otelcol/loki-config.yaml:/etc/loki/config.yaml:ro
       - loki-data:/loki
     ports:
-      - "3100:3100"   # Loki HTTP API + OTLP ingest
-      - "9096:9096"   # Loki gRPC
+      - "127.0.0.1:3100:3100"   # Loki HTTP API + OTLP ingest
+      - "127.0.0.1:9096:9096"   # Loki gRPC
     networks:
       - shared-infra
     deploy:

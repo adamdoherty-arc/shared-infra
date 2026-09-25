@@ -16,6 +16,7 @@ Stages:
       `bash scripts/run_infractl_tests.sh` for infractl's suite (it imports
       fcntl, Linux-only, so it runs inside the disposable container that
       script already sets up -- see that script's header).
+  (f) every published host port binds 127.0.0.1 (all profiles), Grafana excepted.
   (e) docs/PROVIDERS.md is regenerated from bifrost/config.json and must match.
   (c) `ruff check .` against the ratchet baseline
       (`.audit-baselines/ruff_errors.json`) -- fails if any rule's count grew.
@@ -108,6 +109,42 @@ def stage_compose_config() -> dict:
     return {"stage": "compose_config", "ok": ok, "files_checked": len(files), "results": results}
 
 
+# Services allowed to publish on every interface. Grafana has its own login;
+# everything else here is unauthenticated (Bifrost's /api/* returned every
+# provider key and virtual key in plaintext on 0.0.0.0:4445 until 2026-09-25).
+PUBLIC_PORT_ALLOWLIST = {"shared-grafana"}
+
+
+def stage_loopback_ports() -> dict:
+    """Every published host port must bind 127.0.0.1 unless allowlisted."""
+    files = sorted(f for f in glob.glob(str(REPO_ROOT / "docker-compose*.yml")) if ".bak" not in Path(f).name)
+    exposed = []
+    errors = []
+    for f in files:
+        try:
+            proc = subprocess.run(
+                ["docker", "compose", "-f", f, "--profile", "*", "config", "--format", "json"],
+                cwd=str(REPO_ROOT),
+                capture_output=True,
+                text=True,
+                timeout=60,
+                encoding="utf-8",
+                errors="replace",
+            )
+            services = json.loads(proc.stdout).get("services", {})
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"{Path(f).name}: {exc}")
+            continue
+        for name, svc in services.items():
+            if name in PUBLIC_PORT_ALLOWLIST:
+                continue
+            for port in svc.get("ports") or []:
+                if port.get("host_ip") not in ("127.0.0.1", "::1"):
+                    exposed.append(f"{Path(f).name}:{name}:{port.get('published')}")
+    ok = not exposed and not errors
+    return {"stage": "loopback_ports", "ok": ok, "exposed": exposed, "errors": errors}
+
+
 def stage_tests() -> dict:
     rc1, out1 = _run(
         [
@@ -154,6 +191,23 @@ def stage_tests() -> dict:
     }
 
 
+def _ruff_cmd() -> list[str]:
+    """`python -m ruff` finds its binary only in the CURRENT user's Scripts dir.
+    Under hostcron (LocalSystem) that is the system profile, so the nightly gate
+    failed with RuffNotFound (2026-09-25). Resolve the binary next to the
+    installed package (<prefix>/site-packages/ruff -> <prefix>/Scripts/ruff.exe)."""
+    try:
+        import ruff  # noqa: PLC0415
+
+        pkg = Path(ruff.__file__).resolve().parent
+        for cand in (pkg.parents[1] / "Scripts" / "ruff.exe", pkg.parents[1] / "bin" / "ruff"):
+            if cand.exists():
+                return [str(cand)]
+    except Exception:  # noqa: BLE001
+        pass
+    return [sys.executable, "-m", "ruff"]
+
+
 def stage_ruff() -> dict:
     baseline_path = REPO_ROOT / ".audit-baselines" / "ruff_errors.json"
     # ruff exits 1 when it finds violations -- that's expected, not a gate
@@ -164,7 +218,7 @@ def stage_ruff() -> dict:
     raw = ""
     try:
         proc = subprocess.run(
-            [sys.executable, "-m", "ruff", "check", "--output-format=json", "."],
+            [*_ruff_cmd(), "check", "--output-format=json", "."],
             cwd=str(REPO_ROOT),
             capture_output=True,
             text=True,
@@ -240,6 +294,7 @@ def main() -> int:
     started = time.time()
     stages = [
         stage_compose_config(),
+        stage_loopback_ports(),
         stage_tests(),
         stage_ruff(),
         stage_stub_detector(),
@@ -292,6 +347,9 @@ def main() -> int:
             elif s["stage"] == "ruff":
                 for r in s.get("regressions", []):
                     print(f"    REGRESSION {r}")
+            elif s["stage"] == "loopback_ports":
+                for e in s.get("exposed", []) + s.get("errors", []):
+                    print(f"    NOT LOOPBACK {e}")
             elif s["stage"] == "stub_detector":
                 for m in s.get("messages", []):
                     print(f"    {m}")

@@ -26,7 +26,7 @@
 
 services:
   bifrost:
-    image: maximhq/bifrost:v2.0.0
+    image: maximhq/bifrost:v2.2.3
     container_name: shared-bifrost
     networks:
       - shared
@@ -34,7 +34,7 @@ services:
       # Host 4445 — parallel to shared-litellm (4444) so the two gateways
       # can be A/B'd without env edits on the consumer side. Container
       # listens on 8080 by default (Bifrost APP_PORT).
-      - "4445:8080"
+      - "127.0.0.1:4445:8080"
     environment:
       APP_PORT: "8080"
       APP_HOST: "0.0.0.0"
@@ -187,7 +187,7 @@ services:
       # Host 9102 — zero-minio holds 9100, zero-minio-console holds 9101.
       # Container listens on 9100; scrape config uses bifrost-metrics:9100
       # inside the shared docker network.
-      - "9102:9100"
+      - "127.0.0.1:9102:9100"
     environment:
       BIFROST_LOGS_DB: "/data/logs.db"
       BIFROST_CONFIG_DB: "/data/config.db"

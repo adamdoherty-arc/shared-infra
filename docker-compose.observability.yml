@@ -30,7 +30,7 @@ services:
       - '--storage.tsdb.retention.time=30d'
       - '--web.enable-lifecycle'
     ports:
-      - "9099:9090"   # Legion's freed Prometheus port (final)
+      - "127.0.0.1:9099:9090"   # Legion's freed Prometheus port (final)
     volumes:
       - ./observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./observability/prometheus/rules:/etc/prometheus/rules:ro
@@ -55,7 +55,7 @@ services:
     command:
       - '--config.file=/etc/alertmanager/alertmanager.yml'
     ports:
-      - "9095:9093"   # Legion's freed alertmanager port
+      - "127.0.0.1:9095:9093"   # Legion's freed alertmanager port
     volumes:
       - ./observability/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
     networks:
@@ -83,7 +83,7 @@ services:
     user: "0:0"
     command: ["-config.file=/etc/tempo/tempo.yaml"]
     ports:
-      - "3200:3200"     # Tempo HTTP API (query + /ready) — Grafana + host verify
+      - "127.0.0.1:3200:3200"     # Tempo HTTP API (query + /ready) — Grafana + host verify
     volumes:
       - ./otelcol/tempo.yaml:/etc/tempo/tempo.yaml:ro
       - shared-tempo-data:/var/tempo
@@ -137,7 +137,7 @@ services:
     container_name: dcgm-exporter
     restart: unless-stopped
     ports:
-      - "9400:9400"
+      - "127.0.0.1:9400:9400"
     networks:
       - shared-infra
     deploy:
@@ -184,7 +184,7 @@ services:
     restart: unless-stopped
     privileged: true
     ports:
-      - "9500:8080"
+      - "127.0.0.1:9500:8080"
     volumes:
       - /:/rootfs:ro
       - /var/run:/var/run:ro

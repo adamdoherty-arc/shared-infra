@@ -234,7 +234,7 @@ services:
       # Host port 18800 — same as the previous vllm-chat slot so existing
       # VLLM_CHAT_BASE_URL settings keep working without an env edit.
       # Internal container port stays 8000 (llama.cpp default).
-      - "18800:8000"
+      - "127.0.0.1:18800:8000"
     ipc: host
     shm_size: "4gb"
     deploy:
@@ -984,7 +984,7 @@ services:
     #   --enable-auto-tool-choice --tool-call-parser qwen3_coder --reasoning-parser qwen3
     # -------------------------------------------------------------------------
     ports:
-      - "18801:8000"
+      - "127.0.0.1:18801:8000"
     ipc: host
     shm_size: "4gb"
     # Ops-06 (2026-06-12): autoheal opt-in. The engine core can wedge on this
@@ -1228,7 +1228,7 @@ services:
     # the two can never run concurrently (VRAM) and compose binds host ports
     # at start time only.
     ports:
-      - "18801:18020"
+      - "127.0.0.1:18801:18020"
     labels:
       - "autoheal=true"
     deploy:
@@ -1377,7 +1377,7 @@ services:
     # 1462, 5357, 50000-50059 only -- 18803 is clear), same reasoning
     # qwen38-chat's own comment applied to 18801/18020.
     ports:
-      - "18803:18020"
+      - "127.0.0.1:18803:18020"
     labels:
       - "autoheal=true"
     deploy:
@@ -1458,7 +1458,7 @@ services:
       qwen38-chat:
         condition: service_healthy
     ports:
-      - "8001:8001"
+      - "127.0.0.1:8001:8001"
     ipc: host
     shm_size: "2gb"
     deploy:
@@ -1573,7 +1573,7 @@ services:
       --cache-ram 0
       --metrics
     ports:
-      - "8001:8001"
+      - "127.0.0.1:8001:8001"
     labels:
       - "autoheal=true"
     deploy:
@@ -1662,7 +1662,7 @@ services:
       vllm-chat:
         condition: service_healthy
     ports:
-      - "18803:8000"
+      - "127.0.0.1:18803:8000"
     ipc: host
     shm_size: "2gb"
     deploy:
@@ -1704,7 +1704,7 @@ services:
     container_name: fish-speech
     command: ["fish-speech", "serve", "--port", "8000", "--host", "0.0.0.0", "--device", "cuda"]
     ports:
-      - "18802:8000"
+      - "127.0.0.1:18802:8000"
     ipc: host
     shm_size: "2gb"
     deploy:

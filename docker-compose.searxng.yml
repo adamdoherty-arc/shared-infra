@@ -46,7 +46,7 @@ services:
       # Host 8091 -> container 8080. 8091 was unclaimed as of 2026-08-18 (see
       # the port survey across every shared-infra + ADA + Legion compose
       # file). Override via SEARXNG_HOST_PORT in shared-infra/.env.
-      - "${SEARXNG_HOST_PORT:-8091}:8080"
+      - "127.0.0.1:${SEARXNG_HOST_PORT:-8091}:8080"
     environment:
       # Required, no silent weak default — settings.yml ships with the
       # well-known placeholder "ultrasecretkey"; this env overrides it at
