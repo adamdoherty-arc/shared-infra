@@ -336,3 +336,33 @@ Kimi and the 404ing SambaNova `DeepSeek-V3.1-cb` entries disabled. `freellmapi/g
 replacement. Reasoning/judge -> `nvidia-nim/nvidia/nemotron-3-ultra-550b-a55b`; code ->
 `hf-router/Qwen/Qwen3-Coder-480B-A35B-Instruct`; long-context/general HF -> `hf-router/zai-org/GLM-5.1`;
 fast -> `nemotron-3.5-lightning` / `groq/openai/gpt-oss-120b`. ADA, Legion and Zero updated.
+
+## 2026-09-25 (late) -- Error sweep follow-through
+
+**Grafana default password.** Grafana is the only LAN-reachable port and accepted `admin/admin`. Reset
+to a generated password in `.env` (`GRAFANA_ADMIN_PASSWORD`, user `admin`); compose requires the
+variable; the gate fails on a default admin password for any LAN-exposed service.
+
+**Bifrost admin API stays without its own login (decision).** With 4445 bound to 127.0.0.1 the admin
+routes are reachable only from this host and from containers, which can already read the same keys
+from `shared-infra/.env` and the bind-mounted `bifrost/` directory. An admin account would add a
+credential that Legion (`/api/keys`, `/api/providers`), infractl and the disk-compaction script must
+all carry, without narrowing who can read the keys. Revisit if any port is ever exposed beyond
+loopback; the gate's `loopback_ports` stage is what keeps this decision valid.
+
+**infractl synthetic probe.** It probed openrouter with a VK revoked for openrouter (403 every 15 min)
+and the embed lane with a chat request; both counted as "responsive". Lanes are now filtered by the
+VK's governance rows (read-only config.db) and embed lanes must return a vector.
+
+**Abandoned local-engine work (measured).** Over 3 minutes vLLM completed 101 requests while Bifrost
+returned 37 successes and 58 client cancels (499); vLLM's abort counter stayed 0. Bifrost v2.2.3 does
+not abort the upstream request when the client disconnects, so every cancelled call still runs to
+completion (1,529 such cancels in 3 h in the log store). Source: ADA's analyst-desk case-capsule
+narrator (`case_capsule_producer._narrate`), whose 5 s "cloud" rung often resolves to vllm-local
+(engine p95 ~14 s). The decisions-digest and market-regime budgets were suspected first but make no
+LLM calls. Fixed in ADA `f7838408d`: the call runs behind `asyncio.shield`, one in-flight task per
+prompt key, 120 s hard wall, and its result lands in the semantic cache the next request reads.
+
+**Alert noise.** `CacheHitRateLow` fired on caches with 2-3 lookups per window; it now needs >= 1
+lookup/min. Legion `ImprovementEffectivenessDropping` fired on an idle loop (nothing verified since
+2026-05-23): the gauge now reads NaN with no verified rows.
