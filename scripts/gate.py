@@ -16,7 +16,8 @@ Stages:
       `bash scripts/run_infractl_tests.sh` for infractl's suite (it imports
       fcntl, Linux-only, so it runs inside the disposable container that
       script already sets up -- see that script's header).
-  (f) every published host port binds 127.0.0.1 (all profiles), Grafana excepted.
+  (f) every published host port binds 127.0.0.1 (all profiles); Grafana excepted
+      but must not use a default admin password.
   (e) docs/PROVIDERS.md is regenerated from bifrost/config.json and must match.
   (c) `ruff check .` against the ratchet baseline
       (`.audit-baselines/ruff_errors.json`) -- fails if any rule's count grew.
@@ -137,6 +138,12 @@ def stage_loopback_ports() -> dict:
             continue
         for name, svc in services.items():
             if name in PUBLIC_PORT_ALLOWLIST:
+                # LAN-reachable, so it must not run on a default credential
+                # (Grafana answered admin/admin on 3050 until 2026-09-25).
+                env = svc.get("environment") or {}
+                pw = env.get("GF_SECURITY_ADMIN_PASSWORD") if isinstance(env, dict) else None
+                if pw is not None and (not pw or pw.lower() in {"admin", "password", "changeme"}):
+                    exposed.append(f"{Path(f).name}:{name}: default admin password on a LAN port")
                 continue
             for port in svc.get("ports") or []:
                 if port.get("host_ip") not in ("127.0.0.1", "::1"):
