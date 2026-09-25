@@ -56,9 +56,42 @@ def _critical_providers() -> set[str]:
     return {p.strip() for p in raw.split(",") if p.strip()}
 
 
-def load_probe_lanes(config_json: Path) -> tuple[list[dict], dict[str, str]]:
+def vk_allowed_providers(config_db: Path, vk: str) -> set[str] | None:
+    """Providers the probe VK's governance config allows, read-only from
+    Bifrost's config.db (same query as the exporter's lane prober). None =
+    unknown (db missing / VK not found) -> caller probes everything.
+
+    Without this the synthetic probe sent a chat completion to openrouter
+    every 15 min with a VK that is revoked for openrouter, got 403
+    policy_provider_blocked, and counted it as "responsive" (2026-09-25)."""
+    import sqlite3  # noqa: PLC0415
+
+    if not vk or not config_db.exists():
+        return None
+    try:
+        conn = sqlite3.connect(f"file:{config_db}?mode=ro&immutable=1", uri=True, timeout=5.0)
+        try:
+            row = conn.execute("SELECT id FROM governance_virtual_keys WHERE value=? LIMIT 1", (vk,)).fetchone()
+            if not row:
+                return None
+            return {
+                p
+                for (p,) in conn.execute(
+                    "SELECT provider FROM governance_virtual_key_provider_configs WHERE virtual_key_id=?", (row[0],)
+                )
+            }
+        finally:
+            conn.close()
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def load_probe_lanes(
+    config_json: Path, allowed_providers: set[str] | None = None
+) -> tuple[list[dict], dict[str, str]]:
     """Returns (lanes, skipped). Never raises — an unreadable config.json
-    yields ([], {}); the caller decides whether that is fatal."""
+    yields ([], {}); the caller decides whether that is fatal. Providers not
+    in `allowed_providers` (when given) are skipped as `vk_not_allowed`."""
     try:
         cfg = bifrost_config.read_config(config_json)
     except (OSError, ValueError):
@@ -79,6 +112,9 @@ def load_probe_lanes(config_json: Path) -> tuple[list[dict], dict[str, str]]:
         if not models:
             skipped[provider] = "no_models"
             continue
+        if allowed_providers is not None and provider not in allowed_providers:
+            skipped[provider] = "vk_not_allowed"
+            continue
         model_prefs = prefs.get(provider, [])
         model = next((m for m in model_prefs if m in models), models[0])
         kind = "embed" if "embed" in provider.lower() else "chat"
@@ -93,7 +129,10 @@ def load_probe_lanes(config_json: Path) -> tuple[list[dict], dict[str, str]]:
 
 
 def regenerate_probe_lanes(settings: Settings) -> dict:
-    lanes, skipped = load_probe_lanes(settings.config_json_path)
+    lanes, skipped = load_probe_lanes(
+        settings.config_json_path,
+        vk_allowed_providers(settings.config_json_path.parent / "config.db", settings.infra_probe_vk),
+    )
     out_path = settings.infractl_state_dir / "probe_lanes.json"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     payload = {

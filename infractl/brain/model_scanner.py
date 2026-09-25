@@ -8,11 +8,12 @@ import logging
 import time
 from typing import Any
 
-from infractl.bifrost import admin_api, config as bifrost_config
+from infractl.bifrost import admin_api
+from infractl.bifrost import config as bifrost_config
 from infractl.brain.client import GeminiBrainClient
 from infractl.core import actions as actions_mod
 from infractl.core.ledger import Ledger
-from infractl.probes.lanes import load_probe_lanes
+from infractl.probes.lanes import load_probe_lanes, vk_allowed_providers
 from infractl.settings import Settings
 
 logger = logging.getLogger("infractl.brain.scanner")
@@ -70,7 +71,7 @@ class ModelScanner:
             logger.info("Skipping live gateway model audit: INFRA_PROBE_VK unset")
             return results
 
-        lanes, _skipped = load_probe_lanes(cfg_path)
+        lanes, _skipped = load_probe_lanes(cfg_path, vk_allowed_providers(cfg_path.parent / "config.db", probe_vk))
         for lane in lanes:
             target = lane["model"]
             provider = target.split("/", 1)[0]

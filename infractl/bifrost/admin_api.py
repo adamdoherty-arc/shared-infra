@@ -81,6 +81,31 @@ def synthetic_completion(probe_base: str, vk: str, model: str = "vllm-local/qwen
         return False, f"{type(e).__name__} after {time.time() - t0:.1f}s"
 
 
+def synthetic_embedding(probe_base: str, vk: str, model: str, timeout_s: float = 30.0) -> tuple[bool, str]:
+    """Embedding-lane counterpart of synthetic_completion(). The embed lane
+    used to be probed with a chat request, which the embed server rejects;
+    a 4xx counted as "responsive", so the probe proved nothing (2026-09-25).
+    Here only a 200 with a non-empty vector counts as up."""
+    body = json.dumps({"model": model, "input": "ok"}).encode()
+    req = urllib.request.Request(
+        f"{probe_base}/v1/embeddings",
+        data=body,
+        headers={"Content-Type": "application/json", "Authorization": f"Bearer {vk}"},
+    )
+    t0 = time.time()
+    try:
+        with urllib.request.urlopen(req, timeout=timeout_s) as r:
+            data = json.loads(r.read() or b"{}")
+        vec = ((data.get("data") or [{}])[0]).get("embedding") or []
+        if not vec:
+            return False, f"HTTP {r.status} but empty embedding in {time.time() - t0:.1f}s"
+        return True, f"HTTP {r.status} dim={len(vec)} in {time.time() - t0:.1f}s"
+    except urllib.error.HTTPError as e:
+        return False, f"HTTP {e.code} in {time.time() - t0:.1f}s"
+    except Exception as e:  # noqa: BLE001
+        return False, f"{type(e).__name__} after {time.time() - t0:.1f}s"
+
+
 def fetch_metrics_text(metrics_url: str, timeout_s: float = 10.0) -> str:
     resp = httpx.get(metrics_url, timeout=timeout_s)
     resp.raise_for_status()

@@ -4,6 +4,7 @@ inside the same event loop as the FastAPI app (no separate worker process —
 Wave 1 scope is a single infractl replica)."""
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 
@@ -15,10 +16,8 @@ from infractl.core import actions as actions_mod
 from infractl.core.ledger import Ledger
 from infractl.heal import rules as heal_rules
 from infractl.probes import registry as probe_registry
-from infractl.probes.lanes import load_probe_lanes
+from infractl.probes.lanes import load_probe_lanes, vk_allowed_providers
 from infractl.settings import Settings
-
-import asyncio
 
 logger = logging.getLogger("infractl.scheduler")
 
@@ -38,7 +37,8 @@ def _run_synthetic_sync(settings: Settings, ledger: Ledger) -> None:
         logger.info("synthetic_tick skipped: INFRA_PROBE_VK not set")
         return
     try:
-        lanes, _skipped = load_probe_lanes(settings.config_json_path)
+        allowed = vk_allowed_providers(settings.config_json_path.parent / "config.db", settings.infra_probe_vk)
+        lanes, _skipped = load_probe_lanes(settings.config_json_path, allowed)
     except Exception:  # noqa: BLE001
         logger.exception("synthetic_tick: could not load probe lanes")
         return
@@ -46,7 +46,8 @@ def _run_synthetic_sync(settings: Settings, ledger: Ledger) -> None:
         model = lane["model"]
         t0 = time.time()
         try:
-            ok, detail = admin_api.synthetic_completion(
+            probe = admin_api.synthetic_embedding if lane["kind"] == "embed" else admin_api.synthetic_completion
+            ok, detail = probe(
                 settings.infractl_probe_base, settings.infra_probe_vk, model=model,
                 timeout_s=float(lane["timeout_s"]),
             )
