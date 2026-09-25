@@ -1539,6 +1539,21 @@ services:
   # client-side via `normalize_embedding_dim()`
   # (backend/infrastructure/qdrant_config.py) after the call returns, so
   # llama.cpp's lack of a `dimensions` request param is a non-issue here.
+  # 2026-09-25 (shared-infra deep review): --cache-ram 2048 -> 0, --metrics added.
+  # The prompt cache is useless for embeddings (every input is a one-shot
+  # encode, nothing is ever continued) and it was the regression: each task
+  # copied ~10 MiB of state into the cache and evicted the oldest entry, and
+  # production batch latency had drifted to batch-16 7.4s / batch-32 26.7s
+  # (p95 8.3s at the gateway, healthcheck starving behind it -> 5-6 autoheal
+  # restarts/day). Side-container A/B on the same image and host load, only
+  # flags changed: cache-ram 0 at -t 8 --parallel 4 -> single 0.03-0.07s,
+  # batch-16 0.32s, batch-32 0.88s. Thread count was NOT the lever (t4/t6
+  # variants measured the same or worse). --metrics: Prometheus job
+  # `vllm-embed` had been DOWN since the 2026-09-22 CPU cutover because
+  # llama.cpp only serves /metrics with this flag (ServiceDown critical fired
+  # for 3 days). GPU co-tenancy was re-tested the same day and rejected again:
+  # llama.cpp CUDA embed did batch-32 in 0.15s but chat fell 585 -> 50 tok/s
+  # under sustained embed load.
   vllm-embed:
     image: ghcr.io/ggml-org/llama.cpp:server
     container_name: vllm-embed
@@ -1555,7 +1570,8 @@ services:
       -b 4096
       -ub 4096
       --parallel 4
-      --cache-ram 2048
+      --cache-ram 0
+      --metrics
     ports:
       - "8001:8001"
     labels:
@@ -1738,6 +1754,12 @@ services:
       - AUTOHEAL_CONTAINER_LABEL=autoheal
       - AUTOHEAL_INTERVAL=30
       - AUTOHEAL_DEFAULT_STOP_TIMEOUT=60
+      # 2026-09-25: CURL_TIMEOUT must exceed the stop timeout above. The image
+      # default (30s) aborted the Docker restart API call while Docker was still
+      # waiting up to 60s for the container to stop, logged "Restarting container
+      # failed", and fired a SECOND restart on the next tick (seen 5x in 3 days on
+      # vllm-embed). 60s stop + boot headroom -> 120s.
+      - CURL_TIMEOUT=120
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     network_mode: none

@@ -162,6 +162,21 @@ DOCKER_SOCK = os.environ.get("DOCKER_SOCK", "/var/run/docker.sock")
 DOCKER_API = os.environ.get("DOCKER_API_VERSION", "v1.41")
 
 
+def counters_reset(last_gen: float | None, last_prompt: float | None,
+                   gen: float, prompt: float) -> bool:
+    """True when vLLM's monotonic token counters went BACKWARDS, i.e. the
+    engine process restarted between two polls (counters restart at 0).
+
+    Found live 2026-09-25 03:51 UTC: the first poll after an autoheal restart
+    computed gen_rate = (2533 - 8.4e7) / 30 = -2.8e6 tok/s and counted a
+    stall, a decode-starved AND a saturated-starved sample against a freshly
+    booted engine. A negative delta is never evidence of a wedge; the caller
+    must drop the baseline and start measuring again from this sample."""
+    if last_gen is None or last_prompt is None:
+        return False
+    return gen < last_gen or prompt < last_prompt
+
+
 def log(msg: str) -> None:
     print(f"[wedge-monitor] {time.strftime('%Y-%m-%d %H:%M:%S')} {msg}", flush=True)
 
@@ -422,6 +437,11 @@ def main() -> None:
     while True:
         try:
             running, gen, prompt = parse(fetch_metrics())
+            if counters_reset(last_gen, last_prompt, gen, prompt):
+                log(f"counters reset (engine restarted): gen {last_gen:.0f}->{gen:.0f} "
+                    f"prompt {last_prompt:.0f}->{prompt:.0f} - dropping baseline, no sample counted")
+                last_gen = last_prompt = None
+                flat = decode_starved = saturated_starved = 0
             progressed = (
                 last_gen is None
                 or gen > last_gen + 0.5
