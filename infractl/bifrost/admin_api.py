@@ -23,29 +23,18 @@ def health(probe_base: str, timeout_s: float = 5.0) -> tuple[bool, str]:
 
 
 def list_models(probe_base: str, vk: str | None = None, timeout_s: float = 5.0) -> tuple[bool, int, str]:
-    """Returns (ok, model_count, detail).
+    """Returns (ok, model_count, detail). Any response under 500 means the
+    gateway is up; a 200 with a model count additionally proves the VK path.
 
-    DELIBERATELY called WITHOUT `vk` by every caller in this repo, and `vk`
-    stays an accepted-but-unused-by-default parameter rather than being
-    removed, so this finding stays attached to the function instead of
-    living only in a commit message: measured live 2026-09-15 against the
-    real production shared-bifrost under real load (qwen38-chat at 100% GPU
-    util, ~113k req/day from ADA alone) — `GET /v1/models` WITHOUT any auth
-    header returns HTTP 401 in <0.5s (Bifrost's own fast-path: "virtual key
-    is required"), but the SAME call WITH a valid, governed VK's
-    `Authorization: Bearer ...` header hung past a 30s timeout on two
-    separate attempts, using two different header styles (`Authorization:
-    Bearer` and `x-bf-vk`). `/health` on the same gateway answers in
-    <0.2s throughout. This reads as Bifrost v2.0.0 computing something
-    expensive (per-provider live probing across the VK's full allowlist?)
-    behind an authenticated models listing, not a transient load spike —
-    filed to Legion sprint 14975 as a workaround note. Consequence for this
-    repo: `list_models()` is used ONLY as a fast reachability/liveness
-    check (any response under 500, 401 included, means the gateway is up
-    and enforcing auth); `bifrost/admin_api.synthetic_completion()` — a
-    real authenticated 1-token completion, which DOES complete normally —
-    is the decisive proof any verify step needs that the gateway can
-    actually route a real request end-to-end."""
+    Callers pass INFRA_PROBE_VK whenever it is configured. History: on
+    2026-09-15 (Bifrost v1.5.0) an AUTHENTICATED `/v1/models` hung past 30s,
+    so every caller went unauthenticated. Re-measured 2026-09-25 on v2.0.0:
+    the authenticated call answers in 0.15s, and the UNAUTHENTICATED call is
+    the harmful one -- Bifrost still fans the listing out to every provider
+    and logs one "list models for provider X: virtual key is required" error
+    per provider per call (9 providers x every probe tick = ~2,600 junk
+    error rows/day in the log store). Unauthenticated is kept only as the
+    fallback when no VK is configured."""
     headers = {"Authorization": f"Bearer {vk}"} if vk else {}
     try:
         resp = httpx.get(f"{probe_base}/v1/models", headers=headers, timeout=timeout_s)

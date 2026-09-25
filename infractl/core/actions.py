@@ -105,16 +105,14 @@ def _restore_config(bifrost_dir: Path, snapshot_dir: Path) -> list[str]:
 
 
 def verify_gateway(settings: Settings) -> tuple[bool, dict]:
-    """T2 verify step: health 200 + /v1/models reachable (unauthenticated —
-    see bifrost/admin_api.list_models()'s docstring for why an authenticated
-    call is never used here, a real 2026-09-15 finding: it hangs 30s+ on
-    this production instance) + synthetic 1-token completion against the
+    """T2 verify step: health 200 + /v1/models reachable (authenticated with
+    INFRA_PROBE_VK when configured -- see bifrost/admin_api.list_models() for
+    the 2026-09-25 re-measurement) + synthetic 1-token completion against the
     always-active vllm-local lane (parking/unparking a cloud provider must
     never be judged by that provider's own health — the local lane is the
     invariant gateway-came-back-up signal, and the synthetic completion is
     the decisive check: an authenticated request that actually completes
-    end-to-end, which the deliberately-unauthenticated /v1/models call
-    above cannot prove by itself)."""
+    end-to-end, which a models listing cannot prove by itself)."""
     detail: dict[str, Any] = {}
     ok_health, health_detail = admin_api.health(settings.infractl_probe_base)
     detail["health"] = health_detail
@@ -122,7 +120,7 @@ def verify_gateway(settings: Settings) -> tuple[bool, dict]:
         return False, detail
 
     ok_reachable, _count, models_detail = admin_api.list_models(
-        settings.infractl_probe_base, vk=None, timeout_s=5.0
+        settings.infractl_probe_base, vk=settings.infra_probe_vk or None, timeout_s=5.0
     )
     detail["models"] = models_detail
     if not ok_reachable:

@@ -80,7 +80,7 @@ def restart_bifrost(bifrost_dir: Path, bifrost_container: str = "shared-bifrost"
                      probe_base: str = "http://shared-bifrost:8080",
                      settle_s: int = 8, poll_attempts: int = 6, poll_interval_s: int = 5) -> dict:
     """The binding restart sequence, in-container form:
-    stop -> start -> sleep -> vk_sync -> restart -> sleep -> poll /v1/models.
+    stop -> start -> sleep -> vk_sync -> restart -> sleep -> poll /health.
     Returns {healthy, steps: [...]} — every step logged, nothing swallowed."""
     steps: list[str] = []
 
@@ -106,8 +106,11 @@ def restart_bifrost(bifrost_dir: Path, bifrost_container: str = "shared-bifrost"
     healthy = False
     for attempt in range(poll_attempts):
         try:
-            resp = httpx.get(f"{probe_base}/v1/models", timeout=5.0)
-            if resp.status_code < 500:
+            # /health, not /v1/models: an unauthenticated models listing makes
+            # Bifrost log a "virtual key is required" error per provider
+            # (2026-09-25). verify_gateway() does the authenticated checks.
+            resp = httpx.get(f"{probe_base}/health", timeout=5.0)
+            if resp.status_code == 200:
                 healthy = True
                 steps.append(f"poll {attempt + 1}/{poll_attempts}: HTTP {resp.status_code} -> healthy")
                 break

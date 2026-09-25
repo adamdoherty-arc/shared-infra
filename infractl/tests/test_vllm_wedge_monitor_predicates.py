@@ -10,7 +10,7 @@ change.
 This gate would pass trivially if it asserted only on the TOTAL gen_rate
 (exactly the OLD decode-starved detector's blind spot, per the module's own
 2026-09-21 comment) -- every assertion below divides by `running` and checks
-`Running >= 0.9*MAX_SEQS` is itself required, not incidental.
+`Running >= SATURATED_MIN_RUNNING_FRACTION*MAX_SEQS` is itself required, not incidental.
 """
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ import importlib.util
 import sys
 from pathlib import Path
 
-MODULE_PATH = Path(__file__).resolve().parent / "vllm_wedge_monitor.py"
+MODULE_PATH = Path(__file__).resolve().parents[2] / "vllm_wedge_monitor.py"
 
 
 def _load_module():
@@ -72,7 +72,21 @@ def test_running_zero_never_trips() -> None:
     assert m.is_saturated_starved_sample(running=0, gen_rate=0.0) is False
 
 
-def test_boundary_at_exactly_ninety_percent_of_max_seqs() -> None:
-    # 0.9 * 32 = 28.8 -- 29 is the first integer Running that qualifies.
-    assert m.is_saturated_starved_sample(running=29, gen_rate=0.1) is True
-    assert m.is_saturated_starved_sample(running=28, gen_rate=0.1) is False
+def test_boundary_at_saturated_min_running_fraction_of_max_seqs() -> None:
+    # SATURATED_MIN_RUNNING_FRACTION was lowered 0.9 -> 0.5 on 2026-09-21
+    # (vllm_wedge_monitor.py). 0.5 * 32 = 16 -- 16 is the first Running that qualifies.
+    threshold = m.SATURATED_MIN_RUNNING_FRACTION * m.VLLM_MAX_SEQS
+    first = int(threshold) if threshold == int(threshold) else int(threshold) + 1
+    assert m.is_saturated_starved_sample(running=first, gen_rate=0.1) is True
+    assert m.is_saturated_starved_sample(running=first - 1, gen_rate=0.1) is False
+
+
+def test_counter_decrease_after_engine_restart_is_a_reset_not_a_stall() -> None:
+    # Live replay, 2026-09-25 03:51 UTC: previous poll before the autoheal
+    # restart vs first poll after it.
+    assert m.counters_reset(last_gen=8.39e7, last_prompt=4.8e8, gen=2533, prompt=27559) is True
+
+
+def test_monotonic_counters_are_not_a_reset() -> None:
+    assert m.counters_reset(last_gen=100.0, last_prompt=200.0, gen=100.0, prompt=250.0) is False
+    assert m.counters_reset(last_gen=None, last_prompt=None, gen=1.0, prompt=1.0) is False
