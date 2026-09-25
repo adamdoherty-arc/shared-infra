@@ -19,7 +19,8 @@
 # `vllm-embed:8001` by service name. We use `external: true` because
 # docker-compose.vllm.yml owns the network's lifecycle.
 #
-# Image pin: v1.5.0 is the first stable (non-prerelease) tag. Verified on
+# Image pin: an exact vX.Y.Z tag, never :latest. History: v1.5.0 (2026-05-10,
+# first stable) -> v2.0.0 (2026-09-22, Postgres log store). Verified on
 # Docker Hub 2026-05-10: linux/amd64 + linux/arm64 multi-arch manifest,
 # pushed 4 days ago. Do NOT float to :latest.
 
@@ -165,7 +166,7 @@ services:
         max-file: "3"
 
   bifrost-metrics:
-    # Sidecar Prometheus exporter — bifrost v1.5.0's vendor image doesn't
+    # Sidecar Prometheus exporter — the vendor bifrost image doesn't
     # ship the upstream prometheus plugin ("plugin not found, skipping
     # telemetry middleware" at startup). Rather than rebuild bifrost with
     # the plugin, this sidecar tails the SQLite logs.db that Bifrost

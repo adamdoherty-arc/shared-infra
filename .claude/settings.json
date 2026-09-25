@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "model": "claude-opus-5",
+  "effortLevel": "medium",
+  "env": {
+    "CLAUDE_CODE_SUBAGENT_MODEL": "sonnet",
+    "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "500000"
+  },
+  "permissions": {
+    "allow": [
+      "mcp__codegraph",
+      "mcp__serena",
+      "Bash(docker ps*)",
+      "Bash(docker ps)",
+      "Bash(docker logs*)",
+      "Bash(docker inspect*)",
+      "Bash(docker stats*)",
+      "Bash(docker compose * config -q)",
+      "Bash(docker compose * config)",
+      "Bash(docker compose * ps)",
+      "Bash(docker compose * logs*)",
+      "Bash(curl *localhost*)",
+      "Bash(curl *127.0.0.1*)",
+      "Bash(nvidia-smi*)",
+      "Bash(python -m pytest*)",
+      "Bash(python3 -m pytest*)",
+      "Bash(ruff check*)",
+      "Bash(python scripts/gate.py*)",
+      "Bash(python3 scripts/gate.py*)",
+      "Bash(git status*)",
+      "Bash(git diff*)",
+      "Bash(git log*)",
+      "Bash(git show*)",
+      "Bash(mcp codegraph call*)",
+      "Bash(mcp serena call*)"
+    ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "compact|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 $CLAUDE_PROJECT_DIR/.claude/hooks/session_checkpoint.py sessionstart"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python $CLAUDE_PROJECT_DIR/.claude/hooks/bifrost_restart_gate.py"
+          }
+        ]
+      },
+      {
+        "matcher": "Agent|Task",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 $CLAUDE_PROJECT_DIR/.claude/hooks/agent_model_gate.py"
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 $CLAUDE_PROJECT_DIR/.claude/hooks/session_checkpoint.py precompact"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -76,3 +76,9 @@ nssm-stderr.log
 
 # CodeGraph index - rebuildable, machine-local
 .codegraph/
+
+# 2026-09-25 review: hostcron per-job run logs, Claude Code runtime state
+# (gate results, hook logs, checkpoints), and stray compose proof copies.
+scripts/hostcron/logs/
+.claude/state/
+*.bak-proof

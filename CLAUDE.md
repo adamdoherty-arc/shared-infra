@@ -42,20 +42,18 @@ a checklist with pending items. Finish the job 100%.
 
 - Host port `4445` → container port `8080`.
 - OpenAI-compatible: `POST /v1/chat/completions`, `POST /v1/embeddings`.
-- Model field must be `provider/model`, e.g. `moonshot/kimi-k2.6`,
-  `vllm-local/qwen3-chat`, `embed-local/Qwen/Qwen3-Embedding-0.6B`.
+- Model field must be `provider/model`, e.g. `vllm-local/qwen3-chat`,
+  `nvidia-nim/moonshotai/kimi-k3`, `embed-local/Qwen/Qwen3-Embedding-0.6B`.
 - Auth ENFORCED (`enforce_auth_on_inference: true`). Callers must
   send `Authorization: Bearer sk-bf-...` OR `x-bf-vk: sk-bf-...`
-  with a valid virtual key.
-- Active providers (2026-06-11, ALL-FREE): `vllm-local` (Qwen3.5-35B-A3B
-  via stable alias `qwen3-chat`; root `cyankiwi/Qwen3.6-27B-AWQ-INT4`, dense
-  AWQ-Marlin INT4), `embed-local`, `nvidia-nim`, `openrouter`
-  (:free curated list), `hf-router`, `groq`, `cerebras`, `mistral`,
-  `gemini` (flash-only), `zai` (glm-4.7-flash), and `moonshot` — which is
-  now a COMPAT SHIM over NVIDIA NIM's free Kimi K2.6 (the paid Moonshot
-  account was retired; legacy `moonshot/kimi-*` callers keep working).
-  Parked recipes (anthropic, minimax, paid-moonshot, gemini-pro,
-  openrouter-wildcard) live in `bifrost/disabled-providers.json`.
+  with a valid virtual key. Never call `/v1/models` unauthenticated: Bifrost
+  still fans it out and logs one error per provider (2026-09-25).
+- Image `maximhq/bifrost:v2.0.0`; request log store is native-host Postgres
+  (`bifrost_logs`), not SQLite, since 2026-09-22.
+- **Active and parked providers: `docs/PROVIDERS.md`** (GENERATED from
+  `bifrost/config.json`; the gate fails if it is stale). Do not list
+  providers in prose anywhere else -- that is how three docs drifted.
+  ALL-FREE policy: no paid provider is active.
 - After ANY provider/model change: run `bifrost/sync_vk_allowlists.py`
   (VK allowlists are mirrored per-key in config.db and do NOT update from
   config.json) and restart bifrost.
@@ -130,12 +128,25 @@ UPDATE governance_virtual_key_provider_configs SET allow_all_keys=1
   service, so Bifrost's `embed-local` provider needed no change. GPU version
   kept for rollback behind compose profile `embed-gpu-rollback`
   (`vllm-embed-gpu-rollback`). Full writeup: `docs/engine-refresh-2026-09-21.md`.
+- `--cache-ram 0` is load-bearing (2026-09-25): llama.cpp's prompt cache made
+  batch-32 take 26.7s; off, 0.7-0.9s. GPU co-tenancy re-tested the same day
+  and rejected again (chat 585 -> 50 tok/s under embed load).
+
+### Project operating rules
+
+`.claude/rules/*.md` (docker, bifrost, engines, observability, infractl +
+hostcron, git, Legion), `.claude/settings.json` + hooks (Bifrost restart gate,
+agent model gate, session checkpoints). Restart Bifrost ONLY via
+`bash scripts/bifrost_restart.sh`. Quality gate: `python scripts/gate.py`
+(pre-commit hook via `.githooks/`). Accepted failure modes:
+`docs/ACCEPTED_FAILURE_MODES.md`; incident log: `LESSONS_LEARNED.md`.
 
 ### Bifrost Prometheus metrics (`bifrost-metrics`)
 
 - Host port `9102` → container port `9100`.
-- The vendor `maximhq/bifrost:v1.5.0` image doesn't ship the upstream
-  prometheus plugin, so this sidecar reads `bifrost/logs.db` (which
+- The vendor Bifrost image doesn't ship the upstream prometheus plugin,
+  so this sidecar reads Bifrost's request log store (Postgres since
+  2026-09-22; `bifrost/logs.db` under the `sqlite-rollback` profile) (which
   Bifrost writes natively) and re-exports as Prometheus metrics on
   `/metrics`. Source in `bifrost-metrics-exporter/`.
 - Both `ada-prometheus` and `legion-prometheus` scrape via
@@ -149,7 +160,8 @@ UPDATE governance_virtual_key_provider_configs SET allow_all_keys=1
   - `bifrost_cost_usd_total` (computed from Bifrost's pricing datasheet)
   - `bifrost_active_providers`, `bifrost_active_virtual_keys` (gauges)
   - `bifrost_logs_db_bytes`, `bifrost_exporter_*` (self-meta)
-- The exporter bootstraps its cursor to MAX(ROWID) on first start, so
+- The exporter persists its cursor by `timestamp` (VACUUM-safe, Fix-1000157)
+  and bootstraps it to MAX(timestamp) on first start, so
   historical rows don't pollute Prometheus rate() calculations.
 - Sidecar uses ~50 MB RAM, ~0.05 CPU. Re-builds in ~30 s.
 

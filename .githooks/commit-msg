@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# =============================================================================
+# shared-infra commit-msg hook -- WARNS (never blocks) on a missing
+# `Legion-Task:` trailer. See .claude/rules/10-legion.md for why this is a
+# warning and not a hard gate: plenty of legitimate shared-infra commits (a
+# .bak prune, a .gitignore entry, absorbing model-sync drift) have no sprint
+# of their own, and a repo whose primary job is config hygiene shouldn't
+# force sprint bookkeeping onto every single commit.
+#
+# Installed via: git config core.hooksPath .githooks
+# =============================================================================
+set -uo pipefail
+
+MSG_FILE="$1"
+[ -f "$MSG_FILE" ] || exit 0
+
+if ! grep -qE '^Legion-Task: [0-9]+' "$MSG_FILE"; then
+    echo "[commit-msg] NOTE: no 'Legion-Task: <id>' trailer found."
+    echo "  If this commit closes or advances tracked shared-infra work,"
+    echo "  add one (see .claude/rules/10-legion.md). Not blocking."
+fi
+
+exit 0

@@ -1,0 +1,14 @@
+{
+  "counts": {
+    "heuristic_v1_or_versioned_stub": 0,
+    "todo_swap_for_real": 0,
+    "placeholder_until": 0,
+    "will_wire_in_followup": 0,
+    "wire_when_stable": 0,
+    "stays_zero_until_sprint": 0,
+    "for_now_placeholder": 0,
+    "source_heuristic_only": 0,
+    "heuristic_first_llm_second_scoping": 0,
+    "next_sprint_wave_deferral": 0
+  }
+}

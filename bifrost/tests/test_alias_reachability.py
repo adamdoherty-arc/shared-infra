@@ -139,15 +139,27 @@ def test_vllm_local_alias_is_reachable_through_bifrost(alias: str) -> None:
     assert payload.get("choices"), f"Alias '{alias}' returned 200 but no choices: {payload}"
 
 
-def test_config_json_vllm_local_alias_count_matches_documented_eight() -> None:
-    """Guardrail against silent alias-list drift: `.claude/rules/50-llm.md`
-    documents exactly 8 live aliases (2 honest + 6 deprecated-compat names,
-    see the "Alias honesty" section). If this count changes, the doc (and
-    this test) need a deliberate update, not a silent divergence."""
-    if not _ALIASES:
-        pytest.skip(_SKIP_REASON_NO_ALIASES)
-    assert len(_ALIASES) == 8, (
-        f"Expected 8 vllm-local aliases per .claude/rules/50-llm.md, found "
-        f"{len(_ALIASES)}: {_ALIASES}. Update the doc's alias table if this "
-        f"is an intentional change."
-    )
+def test_config_json_vllm_local_aliases_are_listed_and_resolve_to_served_model() -> None:
+    """Guardrail against silent alias drift (docs/DECISIONS.md 2026-09-15,
+    "Bifrost aliases had never worked"): Bifrost only routes an alias if the
+    alias NAME is also in the key's `models` list, and every alias must point
+    at the one model the engine actually serves. So: models == aliases + the
+    served name, and every alias target is that served name. This replaces a
+    hardcoded "exactly 8" count that went stale when the served name itself
+    was added to `models`."""
+    import json
+
+    try:
+        key = json.loads(_CONFIG_PATH.read_text(encoding="utf-8"))["providers"]["vllm-local"]["keys"][0]
+    except (OSError, KeyError, IndexError, ValueError) as exc:
+        pytest.skip(f"Could not read vllm-local key from {_CONFIG_PATH}: {exc}")
+    aliases = key.get("aliases") or {}
+    models = key.get("models") or []
+    targets = set(aliases.values())
+    assert len(targets) == 1, f"vllm-local aliases point at more than one served model: {sorted(targets)}"
+    served = targets.pop()
+    missing = sorted(set(aliases) - set(models))
+    assert not missing, f"aliases not listed in models (Bifrost will 403 them): {missing}"
+    extra = sorted(set(models) - set(aliases) - {served})
+    assert not extra, f"models lists names that are neither an alias nor the served model {served!r}: {extra}"
+    assert served in models, f"served model {served!r} missing from vllm-local models"

@@ -8,7 +8,7 @@ One set of vLLM containers serving Zero, Ada, and Legion. Single model in VRAM p
 |---|---|---|---|
 | Chat / code (`qwen38-chat`) | **Qwen3.8-27B** (`dbirks/Qwen3.8-27B-W4A16-AutoRound`) on the syv-ai/qwen38-27b-rtx3090 patched-vLLM 0.27.1 stack — dense 27B VLM (AA Index 52), W4A16 + int4 lm_head/embeddings, batch profile, 65,536 ctx, 32 seqs, 253,952-token KV pool, tools enabled (`qwen3_coder` parser, works under `enable_thinking:false`), prefix caching live. Serves ONE name: `qwen3.8-27b`; all 8 legacy aliases (`Qwen3.5-35B-A3B` / `qwen3-chat` / `Qwen3.6-27B` / `Qwen3-32B-AWQ` / `Qwen3.6-35B-A3B` / `gpt-oss-20b` / `nemotron-3.5-lightning` / `local-chat`) are remapped in Bifrost's `vllm-local` key. Previous engine (`vllm-chat`, Nemotron-3.5-Lightning NVFP4) kept behind the `nemotron-rollback` compose profile | **18801** | 18020 |
 | Embedding (`vllm-embed`) | `Qwen/Qwen3-Embedding-0.6B` — **CPU-only since 2026-09-22 (Fix-1100000610)**, `ghcr.io/ggml-org/llama.cpp:server` serving the official Qwen3-Embedding-0.6B-GGUF f16 build, `-b 4096 -ub 4096 --parallel 1`. NOT vLLM, NOT the GPU — see the VRAM budget section below for why | 8001 | 8001 |
-| LLM gateway (`shared-bifrost`) | Bifrost v1.5.0 — 11 ALL-FREE providers (see `bifrost/README.md`) | **4445** | 8080 |
+| LLM gateway (`shared-bifrost`) | Bifrost v2.0.0 — ALL-FREE providers, list in `docs/PROVIDERS.md` (generated) | **4445** | 8080 |
 | Free-tier aggregator (`shared-freellmapi`) | ~14 free providers, priority fallback chain | **3015** | 3001 |
 
 **Why 18801 not 8000?** The Reachy Mini desktop daemon hardcodes `:8000` on the Windows host; 18800 was the retired llama-cpp-chat slot; the stack's native 18020 sits inside a Windows WinNAT excluded port range (17938-18337) and cannot be bound. Inside the Docker network Bifrost hits `qwen38-chat:18020` directly. ~15 Legion/Zero host-port consumers target `host.docker.internal:18801`, which is why the port survived the Pass-9 engine swap.
@@ -46,11 +46,11 @@ curl http://localhost:3015/              # freellmapi dashboard
 
 Each project calls Bifrost with a per-project virtual key and `provider/model` strings (see `bifrost/README.md` for the VK table and calling convention). The canonical local model name in ALL project configs is **`vllm-local/qwen3-chat`** — a gateway alias that maps to whatever vllm-chat currently serves, so local model swaps never require project redeploys.
 
-**Per-project cloud affinity (2026-06-11, model IDs updated 2026-07-13)** — keeps the three projects off each other's free rate limits:
-- **Legion** → NVIDIA NIM: `z-ai/glm-5.2` (reasoning + code — renamed upstream from `glm-5.1` 2026-07-13, alias kept in config.json), `qwen3-next-80b` (fast)
-- **ADA** → Kimi K2.6 free via NIM (`nvidia-nim/moonshotai/kimi-k2.6`; the `moonshot/` provider name was a compat shim over NIM, PARKED 2026-07-13 — paid Moonshot retired 2026-06-11). **KNOWN DOWN 2026-07-13**: NVIDIA 404s this model ("Function ... Not found for account") despite listing it in `/v1/models` — an upstream NIM bug, not fixable from our side; ADA falls back to local vLLM / groq in the meantime.
-- **Zero** → Gemini Flash (`gemini-3-flash-preview`, 1,500 RPD) + Groq `gpt-oss-120b` (200K TPD). **gemini provider PARKED 2026-07-08** (expired `GEMINI_API_KEY`) — Zero's affinity currently resolves to Groq + local vLLM until the key is rotated.
-- Everyone → local vLLM first, `freellm/auto` emergency tail.
+**Per-project cloud affinity (re-verified 2026-09-25)** — keeps the projects off each other's free rate limits. Every id below answered 200 through the gateway that day; the full live catalog is `docs/PROVIDERS.md`.
+- **Legion** → NVIDIA NIM `moonshotai/kimi-k3`, `nvidia/nemotron-3-ultra-550b-a55b`, `nvidia/nemotron-3-super-120b-a12b`; Groq `openai/gpt-oss-120b` / `gpt-oss-20b`.
+- **ADA** → routes through its own ladder (`backend/services/llm/bifrost_ladder.py`); NIM `deepseek-ai/deepseek-v4-flash*` is end-of-life (HTTP 410) and NIM `moonshotai/kimi-k2.6` 404s — use `moonshotai/kimi-k3`.
+- **Zero** → parked since 2026-09-15.
+- Everyone → local vLLM first (`vllm-local/qwen3-chat`), `freellmapi/auto` emergency tail (the provider is `freellmapi`; `freellm/…` never resolved).
 
 ## VRAM budget (5090 / 32 GB)
 

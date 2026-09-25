@@ -1,0 +1,38 @@
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+exclude = [
+    ".git",
+    ".venv",
+    "__pycache__",
+    ".claude/worktrees",
+    "infractl/__pycache__",
+    "bifrost-metrics-exporter/__pycache__",
+]
+
+[tool.ruff.lint]
+# Start narrow and ratchet up over time (see .audit-baselines/ruff_errors.json
+# for the current per-rule counts -- scripts/gate.py fails if any count grows).
+# This is deliberately not ADA's "select=[ALL]" yet: this repo had zero lint
+# coverage before WS7, and a ratchet against zero real signal would just
+# freeze noise. E/F/W/I are the load-bearing correctness + import-hygiene
+# rules; widen the select set as the ratchet baseline gets driven toward zero.
+select = ["E", "F", "W", "I", "B", "UP"]
+ignore = []
+
+[tool.pytest.ini_options]
+markers = [
+    "live: requires a running Bifrost/vLLM/infractl stack, not run in the default gate",
+]
+testpaths = [
+    "bifrost/tests",
+    "bifrost-metrics-exporter/tests",
+    ".claude/hooks/tests",
+    "infractl/tests",
+]
+# infractl/tests imports fcntl (Linux-only) so it cannot run on the Windows
+# host directly -- see scripts/run_infractl_tests.sh, which runs it inside a
+# disposable python:3.12 container. scripts/gate.py accounts for this: it runs
+# `python -m pytest bifrost/tests -q -m "not live"` on the host and
+# `bash scripts/run_infractl_tests.sh` for infractl's suite, rather than a
+# single bare `pytest` invocation over both testpaths.

@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# =============================================================================
+# shared-infra pre-commit gate (WS7, 2026-09-25)
+# =============================================================================
+#
+# Runs scripts/gate.py --fast before every commit. "Fast" here means "every
+# stage except anything marked `-m live`" -- unlike ADA's frontend+backend
+# gate, this repo doesn't yet have a slow stage to skip (compose config
+# validation, the bifrost/infractl unit suites, ruff, and the stub detector
+# all run in well under a minute). The flag is kept so this hook's invocation
+# doesn't need editing if a slow stage (e.g. a live-lane smoke test) is added
+# to the gate later.
+#
+# Installed via: git config core.hooksPath .githooks
+# (done once per checkout -- see .claude/rules/20-git-workflow.md)
+#
+# Modeled on ADA's scripts/pre_commit_bug_zero.sh shape: fast, scoped to what
+# actually changed where practical, and a hard block on failure -- no
+# "warning only" here, unlike commit-msg's Legion-Task trailer check.
+# =============================================================================
+set -uo pipefail
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+cd "$REPO_ROOT" || exit 1
+
+echo "[pre-commit] running scripts/gate.py --fast..."
+python scripts/gate.py --fast
+STATUS=$?
+
+if [ "$STATUS" -ne 0 ]; then
+    echo ""
+    echo "[pre-commit] BLOCKED: scripts/gate.py failed. See output above, or"
+    echo "  cat .claude/state/test-results/latest.json"
+    echo "for the full structured result. Fix the failing stage(s) and retry."
+    echo "Emergency bypass (use only for a genuinely unrelated pre-existing"
+    echo "failure another session owns -- never to skip your own regression):"
+    echo "  git commit --no-verify"
+    exit 1
+fi
+
+echo "[pre-commit] gate passed."
+exit 0

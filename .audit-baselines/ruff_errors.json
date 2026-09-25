@@ -1,0 +1,26 @@
+{
+  "_comment": "Ratchet baseline for `ruff check .` (root pyproject.toml select=[E,F,W,I,B,UP]). scripts/gate.py fails if any rule's count grows vs this file. Generated 2026-09-25 (WS7) from the repo's actual pre-existing lint state -- this is a floor to stop new violations, not a target to hit zero on immediately (that's future ratchet work, same pattern as ADA's ruff_errors.json).",
+  "generated": "2026-09-25",
+  "counts": {
+    "B007": 1,
+    "B008": 1,
+    "B904": 2,
+    "E401": 4,
+    "E402": 3,
+    "E501": 28,
+    "E702": 3,
+    "E741": 2,
+    "F401": 18,
+    "F541": 1,
+    "F841": 3,
+    "I001": 11,
+    "UP015": 7,
+    "UP017": 7,
+    "UP031": 39,
+    "UP032": 2,
+    "UP035": 2,
+    "UP041": 1
+  },
+  "total": null,
+  "ratcheted": "2026-09-25: tightened to current counts (138 -> 135); counts only ever go down."
+}

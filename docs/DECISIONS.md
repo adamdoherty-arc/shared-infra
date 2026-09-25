@@ -257,3 +257,44 @@ Legion's `VLLM_API_KEY` was stale (pointed at a revoked VK); fixed in Legion's `
 containers force-recreated (`docker restart` does not re-read `.env`). Stray VK files under
 `C:\tmp` were deleted. The host-side env var for the probe key is `INFRA_PROBE_VK`;
 `BIFROST_PROBE_VK` is only the exporter container's own variable name.
+
+## 2026-09-25 — Deep review: live fixes, lane truth, ADA operating pattern
+
+**Embeddings: prompt cache off, not GPU.** `vllm-embed` batch latency had drifted to batch-16 7.4 s /
+batch-32 26.7 s (gateway p95 8.3 s, 5-6 autoheal restarts/day). Side-container A/B, same image and host
+load, flags only: `--cache-ram 0` gives batch-32 0.88 s at the existing `-t 8 --parallel 4`; thread count
+was not the lever. Deployed: batch-32 0.69 s. `--metrics` added (the `vllm-embed` scrape job had been DOWN
+since the 09-22 CPU cutover; ServiceDown critical fired for 3 days). GPU co-tenancy re-tested with
+llama.cpp CUDA: batch-32 0.15 s, but chat fell 585 -> 50 tok/s under sustained embed load. Rejected again.
+
+**vllm-autoheal double restarts.** `CURL_TIMEOUT` (30 s) < `AUTOHEAL_DEFAULT_STOP_TIMEOUT` (60 s): the
+restart API call aborted mid-stop, was logged "failed", and the next tick restarted again. Now 120 s.
+
+**Wedge monitor counter reset.** After an engine restart the first poll computed gen_rate -2.8e6 tok/s and
+counted stall + starved samples. `counters_reset()` drops the baseline when counters go backwards.
+
+**Unauthenticated `/v1/models` is the noisy call now.** Re-measured on v2.0.0: authenticated listing 0.15 s
+(the 2026-09-15 30 s hang was v1.5); unauthenticated returns 401 fast but logs one "virtual key is required"
+error per provider (~2,600 rows/day). infractl probes now authenticate with INFRA_PROBE_VK; the restart
+poll uses `/health`.
+
+**Lane corrections (all probed directly and through the gateway).** NIM `deepseek-v4-flash(-0731)` is EOL
+(410); its `deepseek-v4*` aliases are removed. NIM `kimi-k2.6` still 404; `kimi-k3` is live. The daily
+model sync had removed live-but-rate-limited models (sealion Gemma-v4-27B, Qwen-v4.5-27B; aion 3.0 /
+3.0-mini; groq qwen3.8-27b) and added a nonexistent `aion-2.5`; restored / removed, and
+Nemotron-SEA-LION-v4.8-120B added. Rule for the sync (fixed in ADA): 429 / timeout never marks a model
+dead; only 404 / 410 / unknown-model does, and adoption requires a 200.
+
+**Lane prober retries cloud lanes once.** nemotron-3.5-lightning (NIM's busiest model here) read DOWN on
+every 10-minute probe while serving traffic: NIM scales idle functions to zero, first call 50 s, next 0.6 s.
+A cloud lane is DOWN only after a second failure; local lanes are never retried.
+
+**Providers are documented only by generation.** `docs/PROVIDERS.md` is rendered from config.json and
+checked by `scripts/gate.py`. Three prose lists (CLAUDE.md, README.md, bifrost/README.md) had drifted.
+
+**Alert routing.** Every critical `ecosystem_project="shared"` alert goes to Discord + Legion. Parked
+projects (Zero) are excluded from heartbeat alerts by name.
+
+**Repo operating pattern (ADA-style).** `.claude/` rules/hooks/settings, `scripts/gate.py` (compose config,
+tests incl. infractl in a disposable container, ruff ratchet that fails closed, stub detector, providers
+doc), `.githooks/` pre-commit, `scripts/bifrost_restart.sh` as the only Bifrost restart path.
