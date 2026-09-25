@@ -182,8 +182,11 @@ groups:
       # age in seconds since the last heartbeat; compare directly. The old
       # expr (``time() - age > 120``) was always-true because it treated
       # the gauge as a unix timestamp.
+      # 2026-09-25: parked projects are excluded here (Zero parked 2026-09-15,
+      # infractl/consumers/consumers.yaml). Remove a name from project_name!~
+      # the same day that project is brought back.
       - alert: ProjectHeartbeatStale
-        expr: max by (project_id, project_name) (legion_project_heartbeat_age_seconds) > 120
+        expr: max by (project_id, project_name) (legion_project_heartbeat_age_seconds{project_name!~"Zero"}) > 120
         for: 30s
         labels:
           severity: warning
@@ -196,7 +199,7 @@ groups:
             emitter is still running.
 
       - alert: ProjectHeartbeatGone
-        expr: max by (project_id, project_name) (legion_project_heartbeat_age_seconds) > 300
+        expr: max by (project_id, project_name) (legion_project_heartbeat_age_seconds{project_name!~"Zero"}) > 300
         for: 1m
         labels:
           severity: critical

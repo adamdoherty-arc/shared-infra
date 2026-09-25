@@ -36,6 +36,16 @@ route:
     # legion_alerts audit trail dense enough that "when exactly was X
     # firing?" stays answerable. Discord rate-limited by group_interval.
     # Place BEFORE the generic severity routes so it wins precedence.
+    # 2026-09-25: every CRITICAL shared-infra alert (Bifrost lanes, engines,
+    # exporters) goes to Discord as well as Legion. Before this only
+    # ServiceDown did, and BifrostCriticalLaneDown sat unacknowledged in the
+    # Legion webhook stream for hours.
+    - matchers:
+        - ecosystem_project="shared"
+        - severity="critical"
+      receiver: 'service-down-redundant'
+      repeat_interval: 1h
+      continue: false
     - match:
         tier: ecosystem
       receiver: 'legion-webhook'
