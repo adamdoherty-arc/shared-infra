@@ -1622,6 +1622,110 @@ services:
         max-size: "100m"
         max-file: "5"
 
+  # ─────────────────────────────────────────────────────────────────────────
+  # qwen3-rerank-prepare (2026-09-25): one-shot download of the reranker GGUF
+  # into the shared hf-cache volume, same pattern as qwen38-prepare. Profile-
+  # gated so a plain `docker compose up -d` never triggers a download.
+  #
+  # WHY THE OFFICIAL ggml-org GGUF AND NOT A COMMUNITY QUANT: community
+  # requantizations of Qwen3-Reranker-0.6B strip `cls.output.weight` (the
+  # classifier head llama.cpp's `--pooling rank` reads to produce a score),
+  # so they load and serve but return near-zero relevance scores (~1e-23
+  # observed) for every document regardless of query. Only
+  # `ggml-org/Qwen3-Reranker-0.6B-Q8_0-GGUF` (published by the llama.cpp org
+  # itself, purpose-built for `--reranking --pooling rank`) carries the head.
+  # Run with: `docker compose -f docker-compose.vllm.yml --profile
+  # qwen3-rerank-prepare run --rm qwen3-rerank-prepare`.
+  qwen3-rerank-prepare:
+    image: python:3.12-slim
+    container_name: qwen3-rerank-prepare
+    profiles: ["qwen3-rerank-prepare"]
+    command: >
+      bash -c "pip install -q huggingface_hub && python3 -c \"
+      from huggingface_hub import snapshot_download
+      p = snapshot_download(repo_id='ggml-org/Qwen3-Reranker-0.6B-Q8_0-GGUF', cache_dir='/models', allow_patterns=['*.gguf','*.json'])
+      print('snapshot at', p)
+      \""
+    volumes:
+      - hf-cache:/models
+
+  # qwen3-rerank (2026-09-25): CPU reranker service alongside vllm-embed,
+  # same llama.cpp:server family, official GGUF per the prepare-service note
+  # above. Weights fetched once via qwen3-rerank-prepare (already present in
+  # shared-hf-cache at the pinned path below as of first deploy). ADA and
+  # Legion consumers are intended to call `POST
+  # http://host.docker.internal:8002/v1/rerank` (see CLAUDE.md).
+  #
+  # Thread/CPU budget alongside vllm-embed (`-t 8`, cpus 8.0) and
+  # qwen38-chat (cpus 4.0) on this 32-logical-core host: `-t 4`, cpus 3.0
+  # leaves >15 cores of headroom and keeps this small 0.6B CPU model from
+  # contending with embed's tuned thread pool. See 55-engines.md.
+  qwen3-rerank:
+    # GPU, measured 2026-09-25 (docs/DECISIONS.md): CPU could not meet the
+    # consumers' 3 s budget on this host (10 docs: 3.6 s at -t 8, 8-9 s at
+    # -t 4, >120 s at -t 16 -- the CPU is shared with qwen38-chat's host
+    # threads and vllm-embed). CUDA: p50 1.07 s, +1.6 GB VRAM (31.0/32.6 GB).
+    # Chat cost is proportional to rerank duty cycle (continuous 81 calls/min
+    # cut chat 265 -> 76 tok/s), so every consumer enforces RERANK_MAX_PER_MIN
+    # (default 10) and falls back to vector order beyond it.
+    image: ghcr.io/ggml-org/llama.cpp:server-cuda-b8953
+    container_name: qwen3-rerank
+    command: >
+      -m /models/models--ggml-org--Qwen3-Reranker-0.6B-Q8_0-GGUF/snapshots/a02f48bb4f057028298c21fa033da2b30d7742d5/qwen3-reranker-0.6b-q8_0.gguf
+      --alias qwen3-reranker-0.6b
+      --reranking
+      --pooling rank
+      -c 4096
+      -ngl 99
+      -b 2048
+      -ub 2048
+      --parallel 1
+      --host 0.0.0.0
+      --port 8002
+      --cache-ram 0
+      --metrics
+    ports:
+      - "127.0.0.1:8002:8002"
+    labels:
+      - "autoheal=true"
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: "2.0"
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    volumes:
+      - hf-cache:/models:ro
+    restart: unless-stopped
+    # Real rerank call, not a bare /health: the relevant doc must outscore the
+    # irrelevant one (the failure mode of broken community GGUFs). The CUDA
+    # image has no python/curl/wget, so this is raw HTTP over bash /dev/tcp (bash, not
+    # CMD-SHELL: /bin/sh here is dash, which has no /dev/tcp).
+    healthcheck:
+      test:
+        - CMD
+        - bash
+        - -c
+        - >-
+          body='{"query":"What is the capital of France?","documents":["Paris is the capital and largest city of France.","Bananas are a good source of potassium."]}';
+          exec 3<>/dev/tcp/127.0.0.1/8002 &&
+          printf 'POST /v1/rerank HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s' "$${#body}" "$$body" >&3 &&
+          timeout 20 cat <&3 | grep -o '"index":[0-9]*,"relevance_score":[-0-9.e]*' |
+          awk -F'[:,]' '{s[$$2]=$$4} END {exit !(s[0] > s[1])}'
+      interval: 60s
+      timeout: 25s
+      retries: 5
+      start_period: 60s
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "5"
+
   vllm-vlm:
     # 2026-08-27: its cached weights (Qwen2-VL-2B-Instruct-AWQ, 2.8 GB) were
     # deleted in the hf-cache reclaim, so re-enabling this profile now costs a

@@ -111,3 +111,10 @@ attempt at this MUST go behind the same canary/bench gate above (embed
 p95 target < 300ms single / < 1s batch-16) before it replaces the CPU
 baseline, and the reranker service (if/when built) is a separate service
 entirely, not a replacement for embed.
+
+**Reranker landed 2026-09-25 (`qwen3-rerank`, port 8002, GPU)**: CPU missed the
+3 s consumer budget on this host (3.6-9 s for 10 docs); on GPU it is ~1 s and
++1.6 GB VRAM, but chat throughput drops in proportion to rerank duty cycle
+(continuous calls: 265 -> 76 tok/s). That is why consumers cap themselves at
+`RERANK_MAX_PER_MIN`. Any new high-volume rerank caller is an engine change:
+bench chat tok/s with it first. See CLAUDE.md's "Local reranker" section and `docs/DECISIONS.md` 2026-09-25.

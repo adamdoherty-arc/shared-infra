@@ -82,3 +82,21 @@ groups:
           description: >-
             No up{job="ada-backend"} series exists at all. The scrape config
             is gone or failed to load; alerting for this target is blind.
+
+      # qwen3-rerank (2026-09-25): ServiceDown above already fires on
+      # up{job="qwen3-rerank"}==0; this is the absent() guard for the case
+      # where the scrape config itself vanishes (see rationale at the top
+      # of this file).
+      - alert: Qwen3RerankTargetMissing
+        expr: absent(up{job="qwen3-rerank"})
+        for: 10m
+        labels:
+          severity: critical
+          tier: ecosystem
+          ecosystem_project: shared
+        annotations:
+          summary: "qwen3-rerank scrape target has DISAPPEARED from Prometheus"
+          description: >-
+            No up{job="qwen3-rerank"} series exists at all. The scrape
+            config is gone or Prometheus failed to load it; alerting for
+            this target is blind until it returns.
