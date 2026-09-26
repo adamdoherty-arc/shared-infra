@@ -27,6 +27,30 @@ infractl actions list            # queued/applied actions (ledger)
 Run from inside the container: `docker exec shared-infra-control infractl
 <command>` when the CLI isn't installed on the host.
 
+## Single writer of the Bifrost config (2026-09-25)
+
+infractl is the only writer of `bifrost/config.json` and
+`bifrost/disabled-providers.json`:
+
+| Caller | Action | Route |
+|---|---|---|
+| ADA `scripts/bifrost_model_sync.py --apply` | `bifrost_models_apply` | `POST /api/bifrost/models/apply` `{changes: {provider: {add, remove}}, reason, requested_by, dry_run}` |
+| `bifrost-autoheal` (auth failures) | `bifrost_provider_park` | `POST /api/config/providers/{p}/park` (`requested_by=bifrost-autoheal`) |
+| humans | same | `infractl models apply --changes JSON --reason R [--apply]`, `infractl park/unpark` |
+
+Ladder (`core/actions.py`): cooldown/cap -> lock -> drift guard -> pure
+plan + validation (provider active; resulting config checked with
+`sync_vk_allowlists.operator_violations()`; invalid = 400/422 with no
+write and no restart) -> snapshot to `/state/snapshots` -> atomic write ->
+binding restart (`bifrost/restart.py`, same steps as
+`scripts/bifrost_restart.sh`; autoheal is left running only when it is the
+requester) -> verify -> on ANY failure restore config.json +
+disabled-providers.json and run the ladder again -> ledger row ->
+redacted snapshot refresh. Dry-run returns the structured + unified diff
+and writes nothing. `vk_resync` is the same restart (T2); heal rules only
+ever dry-run a T2 kind. Git truth: `scripts/config_autocommit.py`
+(`20-git-workflow.md`).
+
 ## Ledger discipline
 
 Every action infractl takes (park a provider, apply a config change, heal
@@ -81,4 +105,7 @@ Rules for editing it:
 
 `shared-infra-gate` (nightly 02:30, runs `scripts/gate.py`) and
 `freellmapi-operator-disabled` (daily 07:45, after `ada-bifrost-model-sync`)
-are the shared-infra jobs added 2026-09-25.
+are the shared-infra jobs added 2026-09-25. `config-autocommit` (every 15
+min, `scripts/config_autocommit.py`, timeout 600 s, same `PYTHONPATH`
+override so the pre-commit gate's ruff resolves under LocalSystem) commits
+the Bifrost config files infractl writes.

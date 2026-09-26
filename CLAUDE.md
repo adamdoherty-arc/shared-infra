@@ -68,20 +68,29 @@ a checklist with pending items. Finish the job 100%.
   `bifrost/config.json`; the gate fails if it is stale). Do not list
   providers in prose anywhere else -- that is how three docs drifted.
   ALL-FREE policy: no paid provider is active.
-- After ANY provider/model change: `bash scripts/bifrost_restart.sh` (it runs
-  `bifrost/sync_vk_allowlists.py` with Bifrost stopped: VK allowlists and key
-  model lists are mirrored in config.db and do NOT update from config.json;
-  since 2026-09-25 the sync also deletes config.db rows for providers no
-  longer in config.json).
+- **infractl is the single writer of `bifrost/config.json` +
+  `bifrost/disabled-providers.json`** (2026-09-25). Model changes:
+  `docker exec shared-infra-control infractl models apply --changes
+  '{"<provider>": {"add": [...], "remove": [...]}}' --reason ...` (dry-run by
+  default, `--apply` to write); parks: `infractl park|unpark <p>`. It checks
+  operator-disabled.json, snapshots, writes, runs the binding restart
+  (sync_vk_allowlists.py with Bifrost stopped: config.db mirrors VK
+  allowlists/key models and deletes rows for absent providers) and rolls
+  back on failure. ADA's model sync and bifrost-autoheal call the same API;
+  `.claude/hooks/config_write_gate.py` blocks direct edits
+  (`INFRA_CONFIG_WRITE_OK=1` to override); `scripts/config_autocommit.py`
+  (hostcron) commits the result with the ledger rows as the message.
+  A bare restart with no config change: `bash scripts/bifrost_restart.sh`.
 - See `bifrost/README.md` for the full runbook.
 
 ### Provider state lives in TWO places
 
 Bifrost holds provider/key config in BOTH `bifrost/config.json` (JSON
 seed) AND `bifrost/config.db` (SQLite mirror). Bifrost's own import never
-deregisters a provider. To remove one: move its block from `config.json`
-to `disabled-providers.json`, then `bash scripts/bifrost_restart.sh`; the
-sync step deletes its config.db rows (`deregister_absent_providers`).
+deregisters a provider. To remove one: `infractl park <provider> --reason
+... --apply` (moves the block to `disabled-providers.json`, then the
+restart's sync step deletes its config.db rows via
+`deregister_absent_providers`).
 
 Leave `governance_model_pricing` / `governance_model_parameters` alone
 — those are Bifrost's built-in datasheet for ~400 known models, not
@@ -135,6 +144,44 @@ UPDATE governance_virtual_key_provider_configs SET allow_all_keys=1
 - `--cache-ram 0` is load-bearing (2026-09-25): llama.cpp's prompt cache made
   batch-32 take 26.7s; off, 0.7-0.9s. GPU co-tenancy re-tested the same day
   and rejected again (chat 585 -> 50 tok/s under embed load).
+
+### Local reranker (`qwen3-rerank`) — 2026-09-25
+
+- Host port `127.0.0.1:8002`, **GPU** (`llama.cpp:server-cuda-b8953`, `-ngl 99`),
+  model: the OFFICIAL `ggml-org/Qwen3-Reranker-0.6B-Q8_0-GGUF` (community GGUFs
+  strip `cls.output.weight` and score every doc ~1e-23). Fetched once by the
+  profile-gated `qwen3-rerank-prepare` into `shared-hf-cache`.
+- Measured: 10 docs p50 1.05 s on GPU, +1.6 GB VRAM (31.0/32.6 GB). CPU could not
+  meet the consumers' 3 s budget (3.6 s at `-t 8`, 8-9 s at `-t 4`, >120 s at
+  `-t 16`: cores are shared with qwen38-chat and vllm-embed).
+- **Chat cost scales with rerank call rate** (continuous calls cut chat 265 ->
+  76 tok/s). Consumers therefore enforce `RERANK_MAX_PER_MIN` (default 10 per
+  process), trim docs to `RERANK_DOC_MAX_CHARS` (1500) and fall back to vector
+  order on any failure. Consumers: ADA `stock_knowledge_enrichment_service`
+  (chat RAG hits), Legion `rag_service.retrieve_context` and
+  `/knowledge/semantic-search`. Do not add a high-volume caller without
+  re-measuring chat throughput.
+- Healthcheck is a real 2-doc rerank over bash `/dev/tcp` (the CUDA image has no
+  python/curl/wget, and `/bin/sh` is dash). `--cache-ram 0`, `--metrics`.
+
+### Weekly lane-quality eval (`scripts/lane_eval.py`) — WS7 follow-on, 2026-09-25
+
+Decides with data which free lane serves which purpose instead of
+hand-picked ADA/Legion ladders. Discovers every active, consumer-pinned
+provider/model from `bifrost/config.json` (skips `embed-local`, respects
+`bifrost/operator-disabled.json` and the probe VK's governance allowlist —
+`openrouter` is `ada-prod`-only and is correctly skipped), runs a fixed
+12-task suite (`scripts/lane_eval_suite.json`, all deterministic/
+programmatic grading, no LLM judge) sequentially per free-tier lane, and
+publishes `state/lane_eval/latest.json` + `state/lane_eval/runs.jsonl` +
+generated `docs/LANE_QUALITY.md`. `bifrost-metrics` reads `latest.json`
+(read-only bind mount) and republishes `bifrost_lane_eval_pass_ratio{...}`
+/ `bifrost_lane_eval_age_seconds`; `observability/prometheus/rules/
+lane_eval_alerts.yml` fires when a pinned lane scores below 0.5 or the run
+is older than 9 days. Run manually: `python scripts/lane_eval.py`
+(`--dry-run` for discovery only, no gateway calls). Scheduled weekly via
+hostcron (Sunday 05:00) — see `scripts/hostcron/schedule.json`'s
+`lane-eval-weekly` entry.
 
 ### Project operating rules
 

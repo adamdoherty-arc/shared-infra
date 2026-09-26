@@ -26,10 +26,8 @@ import copy
 import hashlib
 import json
 import os
-import sqlite3
 import sys
 from pathlib import Path
-from typing import Any
 
 _VENDORED_SCRIPTS_DIR = os.environ.get("INFRACTL_VENDORED_SCRIPTS_DIR", "/app/vendor/scripts")
 
@@ -184,6 +182,83 @@ def set_alias(cfg: dict, provider: str, key_name: str, alias: str, target: str) 
     return cfg
 
 
+def apply_model_changes(cfg: dict, changes: dict) -> tuple[dict, dict]:
+    """Provider-level model add/remove across EVERY key of the provider (the
+    shape ADA's bifrost_model_sync.py always used: nvidia-nim's three keys
+    share one model list). `changes` is `{provider: {"add": [...],
+    "remove": [...]}}`. Returns (new_cfg, diff) where diff is
+    `{provider: {"added", "removed", "already_present", "not_present"}}` --
+    no-op entries are reported, not raised, so an automated caller racing a
+    human edit gets a truthful diff instead of an error. Raises ConfigError
+    for a malformed request, a provider that is not active, a model named in
+    both add and remove, or a removal that would orphan an alias."""
+    if not isinstance(changes, dict) or not changes:
+        raise ConfigError("changes must be a non-empty {provider: {add: [...], remove: [...]}} object")
+    cfg = copy.deepcopy(cfg)
+    providers = cfg.get("providers", {})
+    diff: dict[str, dict[str, list[str]]] = {}
+    for provider, change in changes.items():
+        if provider not in providers:
+            raise ConfigError(f"provider '{provider}' is not active in config.json")
+        if not isinstance(change, dict) or set(change) - {"add", "remove"}:
+            raise ConfigError(f"{provider}: change must be an object with only 'add'/'remove' lists")
+        add = change.get("add") or []
+        remove = change.get("remove") or []
+        for name, lst in (("add", add), ("remove", remove)):
+            if not isinstance(lst, list) or not all(isinstance(m, str) and m.strip() for m in lst):
+                raise ConfigError(f"{provider}.{name} must be a list of non-empty model id strings")
+        both = sorted(set(add) & set(remove))
+        if both:
+            raise ConfigError(f"{provider}: {both} named in both add and remove")
+        keys = providers[provider].get("keys", [])
+        if not keys:
+            raise ConfigError(f"provider '{provider}' has no keys to carry models")
+
+        present = {m for key in keys for m in key.get("models", [])}
+        alias_targets = {t: a for key in keys for a, t in (key.get("aliases") or {}).items()}
+        entry = {
+            "added": [m for m in dict.fromkeys(add) if m not in present],
+            "already_present": [m for m in dict.fromkeys(add) if m in present],
+            "removed": [m for m in dict.fromkeys(remove) if m in present],
+            "not_present": [m for m in dict.fromkeys(remove) if m not in present],
+        }
+        orphaned = [m for m in entry["removed"] if m in alias_targets]
+        if orphaned:
+            raise ConfigError(
+                f"{provider}: cannot remove {orphaned}: aliased by "
+                f"{[alias_targets[m] for m in orphaned]} -- remove those aliases first"
+            )
+        for key in keys:
+            models = [m for m in key.get("models", []) if m not in entry["removed"]]
+            for m in entry["added"]:
+                if m not in models:
+                    models.append(m)
+            key["models"] = models
+        diff[provider] = entry
+    return cfg, diff
+
+
+def model_changes_are_noop(diff: dict) -> bool:
+    return not any(entry["added"] or entry["removed"] for entry in diff.values())
+
+
+def operator_violations(cfg: dict, bifrost_dir: Path) -> list[str]:
+    """Delegates to `operator_violations()` in bifrost/sync_vk_allowlists.py
+    -- the SAME function the sync uses to refuse a non-compliant config.json
+    -- loaded from the bind-mounted bifrost dir, so infractl can never
+    disagree with the sync about what the operator has turned off."""
+    import importlib.util
+
+    script = bifrost_dir / "sync_vk_allowlists.py"
+    if not script.exists():
+        raise ConfigError(f"{script} not found; cannot check bifrost/operator-disabled.json")
+    spec = importlib.util.spec_from_file_location("_infractl_sync_vk_allowlists", script)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module.operator_violations(cfg, str(bifrost_dir / "operator-disabled.json"))
+
+
 def _find_key(cfg: dict, provider: str, key_name: str) -> dict:
     block = cfg.get("providers", {}).get(provider)
     if block is None:
@@ -216,7 +291,6 @@ def render_redacted_snapshot(bifrost_dir: Path) -> dict:
 
 
 def write_redacted_snapshot(bifrost_dir: Path) -> Path:
-    snap_mod = _load_vendored_snapshot_module()
     snap = render_redacted_snapshot(bifrost_dir)
     out = bifrost_dir / "config.snapshot.redacted.json"
     text = json.dumps(snap, indent=2, ensure_ascii=False, sort_keys=False) + "\n"

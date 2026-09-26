@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 
 import httpx
 import typer
@@ -17,10 +16,12 @@ config_app = typer.Typer(help="config lint/snapshot")
 actions_app = typer.Typer(help="action list/approve/rollback")
 probes_app = typer.Typer(help="probe operations")
 vk_app = typer.Typer(help="virtual-key operations")
+models_app = typer.Typer(help="provider model allowlist changes (single writer of bifrost/config.json)")
 app.add_typer(config_app, name="config")
 app.add_typer(actions_app, name="actions")
 app.add_typer(probes_app, name="probes")
 app.add_typer(vk_app, name="vk")
+app.add_typer(models_app, name="models")
 
 
 def _base_url() -> str:
@@ -36,7 +37,9 @@ def _token() -> str:
 
 
 def _client() -> httpx.Client:
-    return httpx.Client(base_url=_base_url(), headers={"X-Infractl-Token": _token()}, timeout=30.0)
+    # 900 s: park/unpark/resync run the binding gateway restart (health poll up
+    # to 120 s, a possible second sync cycle, and a rollback restart on failure).
+    return httpx.Client(base_url=_base_url(), headers={"X-Infractl-Token": _token()}, timeout=900.0)
 
 
 def _print(resp: httpx.Response) -> None:
@@ -117,6 +120,35 @@ def unpark(provider: str, dry_run: bool = typer.Option(None, "--dry-run/--apply"
         body["dry_run"] = dry_run
     with _client() as c:
         _print(c.post(f"/api/config/providers/{provider}/unpark", json=body))
+
+
+@models_app.command("apply")
+def models_apply(changes: str = typer.Option(..., "--changes",
+                                             help='JSON: {"provider": {"add": [...], "remove": [...]}}'),
+                 reason: str = typer.Option(..., "--reason"),
+                 dry_run: bool = typer.Option(True, "--dry-run/--apply")) -> None:
+    """POST /api/bifrost/models/apply. Dry-run by default: prints the diff and
+    writes nothing; --apply writes config.json and runs the binding restart."""
+    try:
+        parsed = json.loads(changes)
+    except ValueError as exc:
+        typer.secho(f"--changes is not valid JSON: {exc}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(2) from exc
+    body = {"changes": parsed, "reason": reason, "dry_run": dry_run,
+            "requested_by": f"cli:{os.environ.get('USERNAME', 'unknown')}"}
+    with httpx.Client(base_url=_base_url(), headers={"X-Infractl-Token": _token()}, timeout=900.0) as c:
+        resp = c.post("/api/bifrost/models/apply", json=body)
+    try:
+        data = resp.json()
+    except ValueError:
+        typer.echo(resp.text)
+        raise typer.Exit(1) from None
+    unified = (data.get("data") or {}).pop("unified_diff", None) if data.get("ok") else None
+    typer.echo(json.dumps(data, indent=2))
+    if unified:
+        typer.echo(unified)
+    if not data.get("ok", False):
+        raise typer.Exit(1)
 
 
 @vk_app.command("resync")

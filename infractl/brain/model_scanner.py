@@ -9,7 +9,6 @@ import time
 from typing import Any
 
 from infractl.bifrost import admin_api
-from infractl.bifrost import config as bifrost_config
 from infractl.brain.client import GeminiBrainClient
 from infractl.core import actions as actions_mod
 from infractl.core.ledger import Ledger
@@ -137,28 +136,28 @@ class ModelScanner:
                 ),
             )
 
-            # Auto-apply dead model pruning via actions.execute (with snapshot/verify/rollback)
-            cfg = bifrost_config.read_config(self.settings.config_json_path)
+            # Dead-model pruning goes through the single writer as ONE
+            # bifrost_models_apply action (one binding restart for the whole
+            # batch, not one per model), removing each dead id from every key
+            # of its provider.
+            removals: dict[str, dict[str, list[str]]] = {}
             for dead in audit_findings["dead"]:
-                p_block = cfg.get("providers", {}).get(dead["provider"], {})
-                key_name = (p_block.get("keys", [{}])[0]).get("name", "primary")
-                try:
-                    action_res = await actions_mod.execute(
-                        self.ledger,
-                        self.settings,
-                        "models_remove",
-                        {
-                            "provider": dead["provider"],
-                            "key_name": key_name,
-                            "models": [dead["model"]],
-                        },
-                        requested_by="model_scanner",
-                        reason=f"Prune dead model {dead['model']} ({dead['reason'][:80]})",
-                        dry_run=dry_run,
-                    )
-                    summary["actions_taken"].append(action_res)
-                except actions_mod.ActionError as exc:
-                    logger.warning("Could not auto-prune %s: %s", dead["model"], exc)
+                removals.setdefault(dead["provider"], {"remove": []})["remove"].append(dead["model"])
+            try:
+                action_res = await actions_mod.execute(
+                    self.ledger,
+                    self.settings,
+                    "bifrost_models_apply",
+                    {"changes": removals},
+                    requested_by="model_scanner",
+                    reason="Prune dead models: " + "; ".join(
+                        f"{d['provider']}/{d['model']} ({d['reason'][:60]})" for d in audit_findings["dead"]
+                    )[:1500],
+                    dry_run=dry_run,
+                )
+                summary["actions_taken"].append(action_res)
+            except actions_mod.ActionError as exc:
+                logger.warning("Could not auto-prune %s: %s", removals, exc)
 
         if gemini_findings.get("recommended_additions"):
             self.ledger.con.execute(

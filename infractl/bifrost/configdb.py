@@ -8,11 +8,9 @@ sidecar the way a native filesystem does. This is the exact pattern
 bifrost/auth_autoheal.py's `key_provider_map()` already carries; lifted
 verbatim rather than rediscovered.
 
-Writes (deregister on park, re-register on unpark) use a plain read-write
-connect() — config.db tolerates being opened read-write from a second
-process while Bifrost itself is stopped (see auth_autoheal.py's `park()`,
-which does exactly this under the lock's `docker stop`/`docker start`
-bracket), so infractl's action ladder stops shared-bifrost first."""
+infractl performs no direct writes here: provider deregistration happens in
+bifrost/sync_vk_allowlists.py (`deregister_absent_providers()`), which the
+binding restart ladder runs with shared-bifrost stopped."""
 from __future__ import annotations
 
 import sqlite3
@@ -65,37 +63,17 @@ def provider_allowlist_counts(db_path: Path) -> dict[str, int]:
         con.close()
 
 
-def deregister_provider(db_path: Path, provider: str, purge_pricing: bool = False) -> dict:
-    """Mirrors bifrost/auth_autoheal.py's `_deregister()` exactly — same
-    table order (child join rows before parent PC rows), same
-    governance_model_pricing policy default (left alone unless
-    purge_pricing=True). Caller MUST have already stopped shared-bifrost."""
-    db = sqlite3.connect(str(db_path), timeout=30)
+def providers_with_keys(db_path: Path) -> set[str]:
+    """Providers that have at least one `config_keys` row. A provider in
+    config.json with no row here is one Bifrost has not imported yet (an
+    unpark, or a rollback of a park): the VK sync can only grant allowlists
+    for providers it finds in config_keys, so the restart ladder runs a
+    second stop -> sync -> start cycle after Bifrost's own import creates
+    the rows (infractl/bifrost/restart.py)."""
+    if not db_path.exists():
+        return set()
+    con = _ro_connect(db_path)
     try:
-        db.execute("PRAGMA foreign_keys=ON")
-        counts: dict = {}
-        counts["vk_pc_keys"] = db.execute(
-            "DELETE FROM governance_virtual_key_provider_config_keys "
-            "WHERE table_virtual_key_provider_config_id IN "
-            "(SELECT id FROM governance_virtual_key_provider_configs WHERE provider=?)",
-            (provider,),
-        ).rowcount
-        counts["vk_pc"] = db.execute(
-            "DELETE FROM governance_virtual_key_provider_configs WHERE provider=?", (provider,)
-        ).rowcount
-        if purge_pricing:
-            counts["model_pricing"] = db.execute(
-                "DELETE FROM governance_model_pricing WHERE provider=?", (provider,)
-            ).rowcount
-        else:
-            counts["model_pricing"] = "left-alone (repo policy)"
-        counts["config_keys"] = db.execute(
-            "DELETE FROM config_keys WHERE provider=?", (provider,)
-        ).rowcount
-        counts["config_providers"] = db.execute(
-            "DELETE FROM config_providers WHERE name=?", (provider,)
-        ).rowcount
-        db.commit()
-        return counts
+        return {r[0] for r in con.execute("SELECT DISTINCT provider FROM config_keys")}
     finally:
-        db.close()
+        con.close()

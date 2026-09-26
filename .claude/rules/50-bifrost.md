@@ -15,30 +15,23 @@ Bifrost holds provider/key config in BOTH `bifrost/config.json`
 mirror, gitignored). Editing the JSON does **not** automatically
 deregister/reregister anything in the SQLite mirror.
 
-**After ANY `config.json` provider/key/alias edit:**
-```bash
-python bifrost/sync_vk_allowlists.py
-```
-then restart via `bash scripts/bifrost_restart.sh` (see `30-docker.md` for
-why a bare restart is gate-blocked). Skipping the sync leaves VKs 403'ing
+**config.json / disabled-providers.json are written only by infractl**
+(`infractl models apply`, `infractl park|unpark`; see
+`70-infractl-hostcron.md`), which runs `bifrost/sync_vk_allowlists.py` with
+Bifrost stopped inside the binding restart. A direct edit is hook-blocked;
+after a deliberate `INFRA_CONFIG_WRITE_OK=1` edit, restart via
+`bash scripts/bifrost_restart.sh` (see `30-docker.md` for why a bare
+restart is gate-blocked). Skipping the sync leaves VKs 403'ing
 against providers whose per-VK allowlist row in `config.db` never picked
 up the JSON change, or leaves the discovery loop spamming `no valid keys
 found for provider: X` every ~12s for a provider that still has a
 `config_providers`/`config_keys` row.
 
-To fully remove a provider, both tables need cleaning (`config_providers`
-AND `config_keys` — a `zai` park on 2026-09-15 found deleting only the
-provider row leaves per-VK provider-config rows dangling):
-```bash
-docker stop shared-bifrost
-python3 -c "
-import sqlite3
-db = sqlite3.connect(r'bifrost/config.db')
-db.execute(\"DELETE FROM config_keys WHERE provider IN ('NAME',...)\")
-db.execute(\"DELETE FROM config_providers WHERE name IN ('NAME',...)\")
-db.commit()"
-docker start shared-bifrost
-```
+To fully remove a provider: `infractl park <p> --reason ... --apply`. The
+sync inside its restart (`deregister_absent_providers`) deletes the
+provider's `config_keys`, `config_providers` and per-VK provider-config rows
+in child-first order (a `zai` park on 2026-09-15 found deleting only the
+provider row leaves per-VK rows dangling); no hand-written SQL is needed.
 Never open `config.db` read-write from the host while the container is
 running (see `30-docker.md` "never open SQLite from the host" — WAL
 corruption has happened twice).
@@ -87,15 +80,17 @@ checking `docs/DECISIONS.md` for their latest status first.
 Every parked provider's block is preserved verbatim in
 `bifrost/disabled-providers.json` with a comment on why it was parked and
 what re-enabling requires (usually: a fresh/rotated key, a rate-cap on
-the VK that starved it, or an upstream fix). Restoring: copy the block
-back into `config.json`, run the sync with Bifrost **stopped** (not
-running — `sync_vk_allowlists.py`'s SQLite writes conflict with a live
-container in some cases), then restart and smoke-test before declaring it
-live.
+the VK that starved it, or an upstream fix). Restoring: `infractl unpark
+<p> --apply` (refused while the provider is in operator-disabled.json). It
+moves the block back, syncs with Bifrost **stopped**, and runs a second
+stop/sync/start cycle once Bifrost has imported the new key rows, so VKs
+can reach it; then smoke-test before declaring it live.
 
 ## Auth self-heal
 
-`bifrost-autoheal` parks any provider that returns repeated auth failures
-(config.json -> disabled-providers.json + config.db deregister + sync +
-restart). This is why `config.json`/`disabled-providers.json` are
-expected-dirty files — see `20-git-workflow.md`.
+`bifrost-autoheal` detects providers with repeated auth failures and asks
+infractl to park them (`bifrost_provider_park`: block moved to
+disabled-providers.json, sync deregisters it from config.db, restart,
+rollback on failure). If infractl is unreachable nothing is written; the
+sidecar alerts and retries next pass. `scripts/config_autocommit.py`
+commits the result — see `20-git-workflow.md`.

@@ -16,6 +16,7 @@ MSYS_NO_PATHCONV=1 docker run --rm -v "${ROOT}:/src:ro" python:3.12-slim sh -c '
   cp /src/infractl/pyproject.toml /app/
   cp /src/vllm_wedge_monitor.py /app/
   cp /src/scripts/export_config_snapshot.py /app/vendor/scripts/
+  mkdir -p /app/bifrost && cp /src/bifrost/sync_vk_allowlists.py /src/bifrost/operator-disabled.json /app/bifrost/
   cd /app && pip install -q -e ".[test]" >/dev/null 2>&1
   INFRACTL_VENDORED_SCRIPTS_DIR=/app/vendor/scripts python -m pytest -q -p no:cacheprovider "$@" infractl/tests
 ' _ "${ARGS[@]}"

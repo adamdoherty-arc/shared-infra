@@ -366,3 +366,172 @@ prompt key, 120 s hard wall, and its result lands in the semantic cache the next
 **Alert noise.** `CacheHitRateLow` fired on caches with 2-3 lookups per window; it now needs >= 1
 lookup/min. Legion `ImprovementEffectivenessDropping` fired on an idle loop (nothing verified since
 2026-05-23): the gauge now reads NaN with no verified rows.
+
+## 2026-09-25 (late) -- Weekly lane-quality eval harness (WS7 follow-on)
+
+**Decision.** Stop hand-picking which free lane serves which purpose in ADA/Legion's ladders and
+decide with data instead. Added `scripts/lane_eval.py`: discovers every active, consumer-pinned
+provider/model from `bifrost/config.json` (harvested by grepping ADA's `bifrost_ladder.py` /
+`llm_router.py` and Legion's `llm_router_policy.py` for `"provider/model"` literals that actually
+exist in that provider's model list), skips anything `bifrost/operator-disabled.json` bans and
+anything the probe VK's `config.db` governance rows don't allow (same read-only query as
+`infractl/probes/lanes.py`'s `vk_allowed_providers`), then runs a fixed 12-task suite
+(`scripts/lane_eval_suite.json`) through the real gateway sequentially per lane. Every grader is
+programmatic (JSON-Schema validation, exact-answer regex, tool-call arg comparison, subprocess-executed
+code-fix asserts, keyword/refusal checks for summarization) -- no LLM judge anywhere.
+
+**First real run (2026-09-25T21:05 -> 2026-09-26T01:21 ET, 990s, 11 lanes discovered, `openrouter`
+correctly skipped `vk_not_allowed`, `embed-local` correctly skipped as non-chat):**
+
+| Purpose | Best lane (this run) | Pass ratio |
+|---|---|---|
+| json | `groq/qwen/qwen3.8-27b` | 1.00 |
+| tools | `groq/qwen/qwen3.8-27b` | 1.00 |
+| reasoning | `freellmapi/deepseek-ai/deepseek-v4-pro` | 1.00 |
+| long_context | `groq/qwen/qwen3.8-27b` | 1.00 |
+| code | `groq/qwen/qwen3.8-27b` | 1.00 |
+
+The production default `vllm-local/qwen3-chat` scored 0.92 overall (missed only the arithmetic task
+-- it answered 3672 instead of 3772 -- and one 429 on the needle task), close to the two `freellmapi`
+lanes that scored a clean 1.00/12. `hf-router` scored 0.33 (`GLM-5.1`) and errored 402 on every task
+past the second (`Qwen3-Coder-480B` 402'd on all 12) -- the account's ~100k/month free credits appear
+depleted, matching `docs/PROVIDERS.md`'s tier note; this is a real, actionable finding the eval
+surfaced on its first run, not a harness bug. `nvidia-nim/nemotron-3.5-lightning-30b-a3b` timed out
+3/12 tasks (90s cloud budget) and produced un-fenced chain-of-thought that the code/json graders
+correctly failed. This is exactly the kind of signal ladders picked by hand never surface.
+
+**Wiring (not a dead report).** `bifrost-metrics`'s `exporter.py` now has `_scrape_lane_eval()`,
+reading a read-only bind mount of `state/lane_eval` (`docker-compose.bifrost.yml`) and exposing
+`bifrost_lane_eval_pass_ratio{provider,model,category}` / `bifrost_lane_eval_age_seconds`.
+`observability/prometheus/rules/lane_eval_alerts.yml` (validated via `promtool check rules`,
+hot-reloaded into `shared-prometheus`) fires `LaneEvalPinnedLaneScoringLow` (<0.5) and
+`LaneEvalStale` (>9 days old or never run). The exporter image was NOT rebuilt this session (the
+code change needs `docker compose -f docker-compose.bifrost.yml build bifrost-metrics` +
+`bash scripts/bifrost_restart.sh` to take effect) -- the gauges will read zero/absent until that
+rebuild happens.
+
+**Scheduling.** Not added to `scripts/hostcron/schedule.json` directly (another session owns that
+file this pass); the exact `lane-eval-weekly` job block (Sunday 05:00, `timeout_s: 3600`,
+`PYTHONPATH` set the same way as `shared-infra-gate`) is written to
+`state/lane_eval/hostcron_job.json` for that session to merge in.
+
+## 2026-09-25 (later) -- New service: qwen3-rerank CPU reranker
+
+**Decision.** Added `qwen3-rerank` (`docker-compose.vllm.yml`, port 8002) alongside `vllm-embed`,
+same `ghcr.io/ggml-org/llama.cpp:server` CPU family, serving the OFFICIAL
+`ggml-org/Qwen3-Reranker-0.6B-Q8_0-GGUF` via `--reranking --pooling rank`. Community requantizations
+of this model were checked and rejected: they strip `cls.output.weight` (the classifier head
+`--pooling rank` reads) and return near-zero relevance scores for every document regardless of
+query -- only the ggml-org build, purpose-built for llama.cpp reranking, carries that head. Weights
+fetched once into the shared `shared-hf-cache` volume via a profile-gated `qwen3-rerank-prepare`
+one-shot (mirrors `qwen38-prepare`'s pattern). `-t 4` / `cpus: "3.0"` chosen to leave headroom
+alongside `vllm-embed` (`-t 8`, cpus 8.0) and `qwen38-chat` (cpus 4.0) on the 32-core host --
+`--parallel 1` with more threads was tried and measured WORSE under load (single-slot serialization);
+the default multi-slot behavior at `-t 4` was kept. `--cache-ram 0` carried over from `vllm-embed`
+for the same prompt-cache reason.
+
+**Measured.** 3-query / 10-document relevance fixture (capital of France / photosynthesis / cold
+symptoms, each with 1 clearly-relevant + 2-3 clearly-irrelevant documents): PASS on all 3 queries --
+relevant-document scores 0.993-0.998, irrelevant-document scores 1e-5-3e-4, a >3-order-of-magnitude
+separation. Healthcheck asserts the same ranking invariant on a live 2-document call (not a bare
+`/health` liveness probe), same rationale as `vllm-embed`'s real-embedding healthcheck.
+
+p50 latency for a 10-document `/v1/rerank` call, measured with `qwen38-chat` actively serving traffic
+at ~220% CPU: **9.4s** (10-run sample: 8.7-12.6s). This is high for a 0.6B cross-encoder and is a
+genuine CPU-contention finding, not a config bug -- confirmed by testing `--parallel 1` with `-t 6`
+and `cpus: 8.0` (both raised, to isolate the variable) which measured WORSE (15-37s) under the same
+host load, because forcing single-slot serialization removed the only parallelism the default
+4-slot behavior was providing. The host's chat engine is the dominant consumer of CPU headroom right
+now; revisit this service's thread/cpu budget if `qwen38-chat`'s own CPU footprint changes, and
+re-measure before changing `-t`/`cpus`/`--parallel` in either direction (same discipline as
+`vllm-embed`'s tuning history in `.claude/rules/55-engines.md`).
+
+**Observability.** Prometheus scrape job `qwen3-rerank` added (`observability/prometheus/prometheus.yml`,
+`--metrics` exposes the same llama.cpp `/metrics` surface as `vllm-embed`); `ServiceDown` (generic,
+already fires on any `up==0`) covers it, plus a `Qwen3RerankTargetMissing` `absent()` guard added to
+`observability/prometheus/rules/service_down.yml` matching the `AdaBackendTargetMissing` pattern,
+tagged `ecosystem_project: shared`. Confirmed `up{job="qwen3-rerank"}` reporting healthy in
+Prometheus's `/api/v1/targets` after a `-/reload`.
+
+**Tests.** `bifrost/tests/test_qwen3_rerank.py`: one pure unit test of the `/v1/rerank` payload
+builder (no network), one `@pytest.mark.live` test replaying the same 10-document fixture against
+the running container and asserting relevant docs outrank irrelevant ones. Both pass.
+
+**Consumer contract (not this session's scope to wire).** ADA and Legion should call `POST
+http://host.docker.internal:8002/v1/rerank` with `{"model", "query", "documents"}`, reading back
+`{"results": [{"index", "relevance_score"}, ...]}`.
+
+## 2026-09-25 (night) -- infractl is the single writer of the Bifrost config
+
+**Problem.** `bifrost/config.json` and `bifrost/disabled-providers.json` had three uncoordinated
+writers: ADA `scripts/bifrost_model_sync.py --apply` (wrote config.json and ran its own restart:
+stop -> start -> sync against the RUNNING gateway -> restart, never touching bifrost-autoheal),
+`bifrost/auth_autoheal.py` (moved blocks and deleted config.db rows itself), and humans. Git never
+reflected live routing, and none of them ran the binding restart sequence.
+
+**Decision.** Every write goes through infractl's action ladder: ADA posts `bifrost_models_apply`
+(`POST /api/bifrost/models/apply`, `{changes: {provider: {add, remove}}}`), bifrost-autoheal posts
+`bifrost_provider_park` (renamed from `provider_park`), humans use `infractl models apply` /
+`park` / `unpark`. The ladder plans in memory first (provider active, and the resulting config
+checked with `sync_vk_allowlists.operator_violations()`, the sync's own function), so a bad request
+is a 400/422 with no write and no restart; then snapshot, atomic write, the binding restart (same
+steps as `scripts/bifrost_restart.sh`, in-container, both containers always restarted in
+`finally`), verify, and on any failure (sync refusal, unhealthy, 1-token probe not 200) restore
+config.json + disabled-providers.json and restart again. The dead local write / backup / restart /
+WAL-preflight code in ADA's script and the park/deregister/sync code in autoheal were deleted.
+
+**Fixes found on the way.** (1) infractl's own restart ladder was the non-binding one above, and
+its rollback copied the snapshot's config.db back over the live file under a running gateway;
+rollback now restores only the two JSON files and the sync rebuilds config.db with Bifrost
+stopped. (2) The heal rule for config-parity drift ran `vk_resync` (a config.db write) against the
+running gateway; `vk_resync` is now the binding restart (T2) and heal rules force dry-run on T2
+kinds, as the heal module's docstring always claimed. (3) An unparked provider has no
+`config_keys` rows until Bifrost imports it, so the sync could not grant VK allowlists for it;
+the ladder runs a second stop/sync/start cycle in that case. (4) Blocking restarts ran on the
+event loop; they now run in a worker thread. (5) `model_scanner` pruned dead models one action
+(one restart) per model; it now sends one batched `bifrost_models_apply`.
+
+**Git truth.** The container has no .git, so `scripts/config_autocommit.py` (hostcron, 15 min)
+commits the two files plus `config.snapshot.redacted.json` (infractl refreshes it after each
+verified change) with `git commit -- <paths>`, a `config:` message from the ledger rows since the
+last config commit, the pre-commit gate running normally, and skips while a human has them staged.
+**Guard.** `.claude/hooks/config_write_gate.py` blocks agent Edit/Write/Serena writes and shell
+redirects/`tee`/`sed -i`/`cp`/inline-Python writes into either file unless
+`INFRA_CONFIG_WRITE_OK=1`. Tests: `infractl/tests/test_bifrost_models_apply.py`,
+`bifrost/tests/test_auth_autoheal_park.py`, `bifrost/tests/test_config_autocommit.py`,
+`.claude/hooks/tests/test_config_write_gate.py`, ADA
+`backend/tests/test_bifrost_model_sync_infractl_apply.py`.
+
+**Rollout state.** infractl rebuilt and live (dry-run exercised against the live config;
+operator-disabled refusal verified). bifrost-autoheal must be force-recreated
+(`docker compose -f docker-compose.bifrost.yml up -d --force-recreate bifrost-autoheal`) to load
+the new script AND the new `INFRACTL_TOKEN` passthrough; a plain stop/start (which every infractl
+restart ladder does) loads the new script without the token, and parks then fail closed (logged,
+alerted, nothing written) until the recreate. ADA's hostcron job needs no change.
+
+## 2026-09-25 (night) -- qwen3-rerank moves to the GPU (supersedes the CPU entry above)
+
+The CPU build measured 9.4 s p50 for 10 docs, so every consumer call (3 s timeout) would have timed out and
+fallen back: a service nobody benefits from. Re-measured: CPU `-t 8 -b/-ub 4096 --parallel 1` 3.6 s;
+`-t 16` >120 s (oversubscribed; cores shared with qwen38-chat host threads and vllm-embed). Embeddings stay
+fast on CPU (10 docs 0.7 s) because the reranker template triples tokens per doc and Q8 runs slower than
+f16 on this AVX2-only CPU. GPU (`server-cuda-b8953`, `-ngl 99`, `-c 4096`): p50 1.05 s, +1.6 GB VRAM.
+Chat impact measured directly: 60 s baseline 265 tok/s; 60 s with continuous reranking (81 calls/min)
+76 tok/s. Impact scales with duty cycle, and today's consumer paths are human-triggered (chat RAG
+preamble, Legion RAG search; single-digit calls per hour observed), so the GPU is acceptable only with a
+hard per-process cap: `RERANK_MAX_PER_MIN=10` in ADA and Legion (worst case ~17% duty, typical ~0).
+Consumers trim docs to 1500 chars, over-fetch 3x, and fall back to vector order on failure or a spent
+budget. Legion's calls were also moved from blocking `httpx.post` to `httpx.AsyncClient`.
+
+## 2026-09-25 (night) -- Gateway policy signals, and the quarantine re-probe that never could pass
+
+Bifrost's native `/metrics` (scrape job `bifrost-native`) splits errors by `error_type`. The first
+look showed 459 `policy_model_blocked` series from `ada-prod`: ADA's `probe_quarantined_rungs` pinged
+every rung ever quarantined in `provider_health` every 6 h, ~475 OpenRouter ids that are no longer in
+the gateway's allowlist, so Bifrost rejected every one at the VK policy. ADA now skips rungs
+`rung_unprovisioned_reason` flags and re-probes them once the gateway lists them again (ADA
+27c52fb9a). A VK rate cap surfaces as `error_type="policy_rate_limited"` (measured by tripping a
+2/min cap on the probe VK, then restoring it). Both are alerted in `rules/bifrost_policy.yml`.
+The `config_write_gate` hook blocked a hostcron `schedule.json` edit because the inline Python
+mentioned `bifrost/config.json` in prose next to an unrelated `json.dump`; inline Python now needs
+the protected path as a string literal of its own (regression tests added).

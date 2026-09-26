@@ -28,24 +28,24 @@ DETECTION (load-immune, false-positive-resistant):
   count. Gateway-level 403s on /v1/chat/completions are NOT counted either --
   those are governance/VK rejections, not provider auth failures.
 
-PARK ACTION (the exact manual 5-step procedure, atomic-ish):
-  1. pre-flight: provider is active + not protected  (else skip, no-op)
-  2. snapshot config.json + disabled-providers.json + config.db  (timestamped)
-  3. docker stop shared-bifrost           (release the config.db handle)
-  4. move providers[<p>] : config.json -> disabled-providers.json, stamping a
-     _comment "auto-parked <p> <ISO> by bifrost-autoheal (sustained auth ...)"
-  5. deregister <p> from config.db: config_keys, config_providers.name,
-     governance_virtual_key_provider_config_keys,
-     governance_virtual_key_provider_configs. (governance_model_pricing is
-     LEFT ALONE by default -- CLAUDE.md + bifrost/README.md document it as
-     Bifrost's built-in pricing datasheet / reference data, not an active
-     registration, and the manual Gemini park left its 65 rows in place. Set
-     AUTOHEAL_PURGE_PRICING=true to also purge those pricing rows.)
-  6. run sync_vk_allowlists.py against the same config.db (BIFROST_CONFIG_DB)
-  7. docker start shared-bifrost
-  8. alert: append to autoheal.log + optional Discord webhook
-  A finally-block guarantees shared-bifrost is started again even if a middle
-  step throws, so a failed park never leaves the gateway down.
+PARK ACTION (2026-09-25: through infractl, the single config writer):
+  POST http://shared-infra-control:8095/api/config/providers/<p>/park with
+  requested_by=bifrost-autoheal. infractl validates (active, not protected),
+  snapshots config.json + disabled-providers.json + config.db, moves the
+  block to disabled-providers.json with a re-enable note, then runs the
+  binding restart ladder (stop shared-bifrost -> sync_vk_allowlists.py, which
+  deletes config.db rows for providers absent from config.json -> start ->
+  /health -> 1-token vllm-local probe), rolling config.json back and
+  restarting again if any step fails. It leaves THIS container running for
+  that request (we are blocked on the HTTP call, so we cannot race the
+  restart). Every park is a ledger row, and scripts/config_autocommit.py
+  commits the file change with that row as the message. Until 2026-09-25 this
+  sidecar wrote config.json/disabled-providers.json and config.db itself --
+  a second writer racing ADA's model sync and humans.
+
+  If infractl is unreachable or refuses, nothing is written: the failure is
+  logged + alerted and the next pass (60 s) tries again while the auth
+  failures persist. A cooldown/lock refusal (HTTP 429/423) is the same.
 
 Stdlib only (urllib + http.client over the Docker unix socket + sqlite3) so the
 stock python:3.12-slim image needs no pip install, matching vllm_wedge_monitor.py.
@@ -56,14 +56,12 @@ import argparse
 import json
 import os
 import re
-import shutil
 import socket
 import sqlite3
-import subprocess
-import sys
 import time
+import urllib.error
 import urllib.request
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from http.client import HTTPConnection
 
 # ── config ─────────────────────────────────────────────────────────────────
@@ -71,10 +69,6 @@ INTERVAL_S = int(os.environ.get("AUTOHEAL_INTERVAL_S", "60"))
 WINDOW_S = int(os.environ.get("AUTOHEAL_WINDOW_S", "300"))     # lookback window
 MIN_HITS = int(os.environ.get("AUTOHEAL_MIN_HITS", "6"))       # sustained floor
 DRY_RUN = os.environ.get("AUTOHEAL_DRY_RUN", "false").lower() in ("1", "true", "yes")
-# Repo policy (CLAUDE.md + bifrost/README.md) says LEAVE governance_model_pricing
-# alone -- it is Bifrost's built-in pricing datasheet / reference data, and the
-# manual Gemini park left its rows in place. Off by default; opt in to purge.
-PURGE_PRICING = os.environ.get("AUTOHEAL_PURGE_PRICING", "false").lower() in ("1", "true", "yes")
 PROTECTED = {
     p.strip()
     for p in os.environ.get("AUTOHEAL_PROTECTED", "vllm-local,embed-local").split(",")
@@ -148,10 +142,16 @@ _probe_last_restart = 0.0
 
 BIFROST_DIR = os.environ.get("AUTOHEAL_BIFROST_DIR", "/work/bifrost")
 CONFIG_JSON = os.environ.get("AUTOHEAL_CONFIG_JSON", os.path.join(BIFROST_DIR, "config.json"))
-DISABLED_JSON = os.environ.get("AUTOHEAL_DISABLED_JSON", os.path.join(BIFROST_DIR, "disabled-providers.json"))
 CONFIG_DB = os.environ.get("AUTOHEAL_CONFIG_DB", os.path.join(BIFROST_DIR, "config.db"))
 ALERT_LOG = os.environ.get("AUTOHEAL_ALERT_LOG", os.path.join(BIFROST_DIR, "autoheal.log"))
-SYNC_SCRIPT = os.environ.get("AUTOHEAL_SYNC_SCRIPT", os.path.join(BIFROST_DIR, "sync_vk_allowlists.py"))
+
+# infractl: the single writer of config.json / disabled-providers.json.
+INFRACTL_URL = os.environ.get("AUTOHEAL_INFRACTL_URL", "http://shared-infra-control:8095").rstrip("/")
+INFRACTL_TOKEN = os.environ.get("INFRACTL_TOKEN", "").strip()
+# The park runs the full binding restart (health poll up to 120 s, a possible
+# rollback restart on failure): the request must outlive both.
+INFRACTL_TIMEOUT_S = int(os.environ.get("AUTOHEAL_INFRACTL_TIMEOUT_S", "900"))
+REQUESTER = "bifrost-autoheal"
 
 DOCKER_SOCK = os.environ.get("DOCKER_SOCK", "/var/run/docker.sock")
 
@@ -184,7 +184,7 @@ def log(msg: str) -> None:
 
 
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 # ── docker unix-socket client (stdlib, unversioned API) ─────────────────────
@@ -253,7 +253,7 @@ def docker_start(container: str) -> int:
 
 # ── config helpers ──────────────────────────────────────────────────────────
 def load_active_providers() -> dict:
-    with open(CONFIG_JSON, "r", encoding="utf-8") as f:
+    with open(CONFIG_JSON, encoding="utf-8") as f:
         cfg = json.load(f)
     return cfg.get("providers", {})
 
@@ -520,90 +520,36 @@ def parkworthy(counts: dict, active: dict) -> dict:
     return out
 
 
-# ── park action ──────────────────────────────────────────────────────────────
-def _snapshot(path: str, tag: str) -> None:
-    if os.path.exists(path):
-        dst = f"{path}.bak.autoheal-{tag}"
-        shutil.copy2(path, dst)
-        log(f"snapshot {os.path.basename(path)} -> {os.path.basename(dst)}")
+# ── park action (via infractl) ───────────────────────────────────────────────
+class ParkRequestError(RuntimeError):
+    pass
 
 
-def _deregister(provider: str) -> dict:
-    """Delete all config.db rows for `provider`. Returns per-table rowcounts.
-    Child join rows are deleted before their parent PC rows."""
-    db = sqlite3.connect(CONFIG_DB, timeout=30)
+def request_park(provider: str, hits: int) -> dict:
+    """Ask infractl to park `provider`. Returns infractl's `data` on success;
+    raises ParkRequestError (with infractl's error code/message) otherwise."""
+    if not INFRACTL_TOKEN:
+        raise ParkRequestError("INFRACTL_TOKEN not set in this container; cannot reach the config writer")
+    reason = f"sustained auth failure: {hits} hits in {WINDOW_S}s"
+    body = json.dumps({"reason": reason, "requested_by": REQUESTER, "dry_run": False}).encode()
+    req = urllib.request.Request(
+        f"{INFRACTL_URL}/api/config/providers/{provider}/park", data=body, method="POST",
+        headers={"Content-Type": "application/json", "X-Infractl-Token": INFRACTL_TOKEN},
+    )
     try:
-        db.execute("PRAGMA foreign_keys=ON")
-        counts: dict[str, int] = {}
-        counts["vk_pc_keys"] = db.execute(
-            "DELETE FROM governance_virtual_key_provider_config_keys "
-            "WHERE table_virtual_key_provider_config_id IN "
-            "(SELECT id FROM governance_virtual_key_provider_configs WHERE provider=?)",
-            (provider,),
-        ).rowcount
-        counts["vk_pc"] = db.execute(
-            "DELETE FROM governance_virtual_key_provider_configs WHERE provider=?",
-            (provider,),
-        ).rowcount
-        if PURGE_PRICING:
-            counts["model_pricing"] = db.execute(
-                "DELETE FROM governance_model_pricing WHERE provider=?", (provider,)
-            ).rowcount
-        else:
-            counts["model_pricing"] = "left-alone (repo policy; set AUTOHEAL_PURGE_PRICING=true to purge)"
-        counts["config_keys"] = db.execute(
-            "DELETE FROM config_keys WHERE provider=?", (provider,)
-        ).rowcount
-        counts["config_providers"] = db.execute(
-            "DELETE FROM config_providers WHERE name=?", (provider,)
-        ).rowcount
-        db.commit()
-        return counts
-    finally:
-        db.close()
-
-
-def _move_block_to_disabled(provider: str, hits: int) -> None:
-    with open(CONFIG_JSON, "r", encoding="utf-8") as f:
-        cfg = json.load(f)
-    block = cfg.get("providers", {}).pop(provider, None)
-    if block is None:
-        raise RuntimeError(f"provider {provider} vanished from config.json before move")
-
-    note = (
-        f"auto-parked {provider} {_now_iso()} by bifrost-autoheal "
-        f"(sustained auth failure: {hits} hits in {WINDOW_S}s). "
-        f"TO RE-ENABLE: fix the key in shared-infra/.env, copy this block back into "
-        f"config.json providers, run sync_vk_allowlists.py (bifrost stopped), restart."
-    )
-    if isinstance(block.get("_comment"), str):
-        block["_prev_comment"] = block["_comment"]
-    block["_comment"] = note
-
-    with open(DISABLED_JSON, "r", encoding="utf-8") as f:
-        disabled = json.load(f)
-    disabled.setdefault("providers", {})[provider] = block
-
-    # write disabled first (so the recipe is never lost), then config
-    with open(DISABLED_JSON, "w", encoding="utf-8") as f:
-        json.dump(disabled, f, indent=2, ensure_ascii=False)
-        f.write("\n")
-    with open(CONFIG_JSON, "w", encoding="utf-8") as f:
-        json.dump(cfg, f, indent=2, ensure_ascii=False)
-        f.write("\n")
-    log(f"moved providers[{provider}] config.json -> disabled-providers.json")
-
-
-def _run_sync() -> None:
-    env = {**os.environ, "BIFROST_CONFIG_DB": CONFIG_DB}
-    r = subprocess.run(
-        [sys.executable, SYNC_SCRIPT],
-        env=env, capture_output=True, text=True, timeout=120,
-    )
-    for ln in (r.stdout or "").splitlines():
-        log(f"sync: {ln}")
-    if r.returncode != 0:
-        raise RuntimeError(f"sync_vk_allowlists.py exit {r.returncode}: {r.stderr.strip()[:300]}")
+        with urllib.request.urlopen(req, timeout=INFRACTL_TIMEOUT_S) as r:
+            payload = json.loads(r.read() or b"{}")
+    except urllib.error.HTTPError as e:
+        try:
+            err = (json.loads(e.read() or b"{}").get("error") or {})
+        except ValueError:
+            err = {}
+        raise ParkRequestError(f"infractl HTTP {e.code} {err.get('code', '')}: {err.get('message', '')}"[:600]) from e
+    except Exception as e:  # noqa: BLE001 -- unreachable, timeout, reset
+        raise ParkRequestError(f"infractl unreachable at {INFRACTL_URL}: {e!r}") from e
+    if not payload.get("ok"):
+        raise ParkRequestError(f"infractl refused: {payload.get('error')}")
+    return payload.get("data") or {}
 
 
 def _alert(text: str) -> None:
@@ -625,38 +571,21 @@ def _alert(text: str) -> None:
             log(f"warn: discord webhook failed ({e!r})")
 
 
-def park(provider: str, hits: int) -> None:
-    tag = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S") + f"-{provider}"
-    log(f"PARK {provider}: {hits} auth hits >= {MIN_HITS} in {WINDOW_S}s -> parking")
-    stopped = False
+def park(provider: str, hits: int) -> bool:
+    log(f"PARK {provider}: {hits} auth hits >= {MIN_HITS} in {WINDOW_S}s -> asking infractl to park")
     try:
-        # 2. snapshots
-        _snapshot(CONFIG_JSON, tag)
-        _snapshot(DISABLED_JSON, tag)
-        _snapshot(CONFIG_DB, tag)
-        # 3. stop bifrost (release config.db)
-        log(f"docker stop {BIFROST_CONTAINER} -> HTTP {docker_stop(BIFROST_CONTAINER)}")
-        stopped = True
-        # 4. move provider block json->json
-        _move_block_to_disabled(provider, hits)
-        # 5. deregister from config.db
-        counts = _deregister(provider)
-        log(f"deregistered {provider} from config.db: {counts}")
-        # 6. resync VK allowlists
-        _run_sync()
-    finally:
-        # 7. always bring bifrost back up
-        if stopped:
-            try:
-                log(f"docker start {BIFROST_CONTAINER} -> HTTP {docker_start(BIFROST_CONTAINER)}")
-            except Exception as e:  # noqa: BLE001
-                log(f"CRITICAL: failed to restart {BIFROST_CONTAINER} after park: {e!r}")
-    # 8. alert
+        data = request_park(provider, hits)
+    except ParkRequestError as e:
+        log(f"PARK {provider}: NOT parked - {e}")
+        _alert(f"could not park provider '{provider}' ({hits} auth failures in {WINDOW_S}s): {e}. "
+               f"Retrying next pass while the failures persist.")
+        return False
     _alert(
-        f"auto-parked provider '{provider}' after {hits} sustained auth failures "
-        f"in {WINDOW_S}s; {BIFROST_CONTAINER} restarted."
+        f"parked provider '{provider}' via infractl after {hits} sustained auth failures in {WINDOW_S}s "
+        f"(action {data.get('action_id', '?')}: {data.get('summary', '')})."
     )
-    log(f"PARK {provider}: complete")
+    log(f"PARK {provider}: complete (infractl action {data.get('action_id', '?')})")
+    return True
 
 
 # ── passes ────────────────────────────────────────────────────────────────────
@@ -683,12 +612,14 @@ def run_once(dry: bool) -> int:
         if not targets:
             log("0 providers to park")
             return 0
+        parked = 0
         for prov, hits in sorted(targets.items()):
             if dry:
                 log(f"DRY-RUN: WOULD park {prov} ({hits} auth hits in {WINDOW_S}s) - no action taken")
-            else:
-                park(prov, hits)
-        return len(targets)
+                parked += 1
+            elif park(prov, hits):
+                parked += 1
+        return parked
     except Exception as e:  # noqa: BLE001
         log(f"pass error ({e!r}); skipping this cycle")
         return 0

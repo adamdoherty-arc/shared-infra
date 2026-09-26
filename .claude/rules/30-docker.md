@@ -34,7 +34,9 @@ exists to prevent. Two ways through the gate:
    `http://127.0.0.1:4445/health` up to 120s -> authenticated 1-token
    completion probe against `vllm-local` -> start `bifrost-autoheal`.
    Exits nonzero on any step failure; a trap always restores both
-   containers even on failure.
+   containers even on failure. infractl runs the same sequence in-container
+   (`infractl/bifrost/restart.py`) for every config change it makes and for
+   `bifrost_restart` / `vk_resync` (see `70-infractl-hostcron.md`).
 2. **Explicit operator override**, for a deliberate manual sequence
    outside the script: prefix the command with `INFRA_RESTART_OK=1`. Use
    this only when you understand why the script's sequence doesn't apply

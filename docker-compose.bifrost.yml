@@ -223,11 +223,16 @@ services:
       BIFROST_PROBE_TIMEOUT_S: "60"
       BIFROST_PROBE_TIMEOUT_LOCAL_S: "120"
       BIFROST_PROBE_CRITICAL_PROVIDERS: "vllm-local,embed-local,nvidia-nim,groq"
+      # Weekly lane-quality eval (scripts/lane_eval.py, WS7 2026-09-25) writes
+      # state/lane_eval/latest.json on the host; this container reads it
+      # read-only to publish bifrost_lane_eval_pass_ratio / _age_seconds.
+      LANE_EVAL_STATE_DIR: "/lane_eval"
     volumes:
       # Read-only mount of the bifrost data directory so the exporter can
       # query logs.db + config.db without holding write locks on bifrost.
       - ./bifrost:/data:ro
       - bifrost-metrics-state:/state
+      - ./state/lane_eval:/lane_eval:ro
     deploy:
       resources:
         limits:
@@ -317,10 +322,12 @@ services:
     # A single dead key (expired / revoked / wrong project) otherwise floods the
     # gateway forever via the per-minute model-discovery loop (this is exactly
     # what the Gemini lane did on 2026-07-08 before it was parked by hand).
-    # This sidecar detects that from `docker logs shared-bifrost` and runs the
-    # same 5-step park procedure a human would (snapshot -> move block
-    # config.json->disabled-providers.json -> deregister config.db -> stop +
-    # sync_vk_allowlists + start -> alert). Mirrors the vllm-autoheal /
+    # This sidecar detects that from `docker logs shared-bifrost` and asks
+    # infractl (shared-infra-control, the single config writer since
+    # 2026-09-25) to park the provider: POST /api/config/providers/<p>/park,
+    # which snapshots, moves the block to disabled-providers.json, runs the
+    # binding restart ladder and rolls back on failure. It no longer writes
+    # config.json / disabled-providers.json / config.db. Mirrors the vllm-autoheal /
     # vllm-wedge-monitor pattern: stock python:3.12-slim, stdlib-only script
     # over the Docker socket, no image build. See bifrost/auth_autoheal.py for
     # the full rationale + false-positive guards (active-only, MIN_HITS floor,
@@ -337,9 +344,10 @@ services:
       AUTOHEAL_MIN_HITS: "6"             # sustained floor before parking
       AUTOHEAL_DRY_RUN: "false"          # true = detect + log only
       AUTOHEAL_PROTECTED: "vllm-local,embed-local"   # local lanes never parked
-      # Leave Bifrost's built-in pricing datasheet alone (repo policy in
-      # CLAUDE.md + bifrost/README.md); set true to also purge pricing rows.
-      AUTOHEAL_PURGE_PRICING: "false"
+      # Parks go through infractl (single config writer). Same compose network
+      # (shared-infra_default); token from shared-infra/.env.
+      AUTOHEAL_INFRACTL_URL: "http://shared-infra-control:8095"
+      INFRACTL_TOKEN: "${INFRACTL_TOKEN:?INFRACTL_TOKEN must be set in shared-infra/.env}"
       AUTOHEAL_BIFROST_CONTAINER: "shared-bifrost"
       AUTOHEAL_BIFROST_DIR: "/work/bifrost"
       # Optional Discord alerting; set AUTOHEAL_DISCORD_WEBHOOK in shared-infra/.env
@@ -394,8 +402,9 @@ services:
     volumes:
       # Docker socket so it can read shared-bifrost's logs + stop/start it.
       - /var/run/docker.sock:/var/run/docker.sock
-      # Read-WRITE mount of the bifrost dir: it edits config.json /
-      # disabled-providers.json / config.db and writes autoheal.log here.
+      # Read-write only for autoheal.log; config.json / config.db are READ
+      # here (provider list, key->provider map, probe VK). All config writes
+      # go through infractl.
       - ./bifrost:/work/bifrost
     deploy:
       resources:

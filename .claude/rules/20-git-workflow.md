@@ -8,21 +8,25 @@ same convention as ADA (`c:/code/ADA/.claude/rules/20-git-workflow.md`).
 The exception is a short-lived agent worktree (`isolation: "worktree"`)
 that self-cleans.
 
-## config.json / disabled-providers.json are auto-commit surfaces
+## config.json / disabled-providers.json: one writer, auto-committed
 
-`bifrost/config.json` and `bifrost/disabled-providers.json` are rewritten
-by THREE writers: ADA's `bifrost_model_sync.py` (hostcron, daily),
-`bifrost-autoheal` (parks providers with repeated auth failures), and
-humans doing manual edits. **This means the working tree on this repo is
-expected to show these two files as modified between sessions** — that is
-not drift to "clean up", it is live routing state. Read the diff before
-committing (a park/unpark you didn't expect is worth a line in
-`docs/DECISIONS.md`), then commit it with a `config:` prefix message
-describing what changed and why (e.g. "config: absorb zai auto-park +
-model-sync additions 2026-09-2x"). Once WS6 (infractl Wave 2) lands,
-`infractl` auto-commits these on every write it makes; until then, commit
-them by hand at the start of a session so `git status` reflects the
-current live routing before you start editing anything else.
+`bifrost/config.json` and `bifrost/disabled-providers.json` have ONE
+writer, infractl (2026-09-25). ADA's `bifrost_model_sync.py --apply` posts
+`bifrost_models_apply`, `bifrost-autoheal` posts `bifrost_provider_park`,
+humans use `infractl models apply` / `park` / `unpark`. Agent edits are
+blocked by `.claude/hooks/config_write_gate.py` (`INFRA_CONFIG_WRITE_OK=1`
+is the deliberate-override escape hatch).
+
+`scripts/config_autocommit.py` (hostcron, every 15 min) commits those two
+files plus `bifrost/config.snapshot.redacted.json` (infractl refreshes it
+after each verified change) when they differ from HEAD, with
+`git commit -- <paths>` (nothing else is swept in) and a `config:` message
+built from the infractl ledger rows since the last config commit. It skips
+while a human has any of them staged, while a write is < 120 s old, or on
+invalid JSON, and it runs the pre-commit gate normally (a gate failure
+leaves the files for the next run). A commit titled "config: live routing
+change written outside infractl" means a write bypassed the ladder: read
+the diff and record why in `docs/DECISIONS.md`.
 
 **Never commit `bifrost/config.db`** (SQLite mirror, binary, machine
 state — see `30-docker.md` "provider state lives in TWO places") or `.env`

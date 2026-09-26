@@ -10,6 +10,7 @@ ledger writes) runs for real, unmocked."""
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 
 import pytest
@@ -26,6 +27,8 @@ def bifrost_dir(tmp_path: Path) -> Path:
     cfg = {"providers": {"aion": {"keys": [{"name": "k1", "models": ["m1"]}]}}}
     (d / "config.json").write_text(json.dumps(cfg, indent=2), encoding="utf-8")
     (d / "disabled-providers.json").write_text(json.dumps({"providers": {}}), encoding="utf-8")
+    # the plan step runs sync_vk_allowlists.py's own operator_violations()
+    shutil.copy2(Path(__file__).resolve().parents[2] / "bifrost" / "sync_vk_allowlists.py", d)
     return d
 
 
@@ -46,10 +49,10 @@ def ledger(tmp_path: Path) -> Ledger:
 async def test_rollback_status_survives_outer_exception_handler(ledger, settings, monkeypatch):
     monkeypatch.setattr(actions_mod.docker_client, "stop", lambda *a, **k: None)
     monkeypatch.setattr(actions_mod.docker_client, "start", lambda *a, **k: None)
-    monkeypatch.setattr(actions_mod.vk_sync, "run_vk_sync", lambda *a, **k: "ok")
     monkeypatch.setattr(
         actions_mod.restart, "restart_bifrost",
-        lambda *a, **k: {"healthy": True, "steps": [], "preflight": {}},
+        lambda *a, **k: {"ok": True, "healthy": True, "sync_ok": True, "sync_refused": False,
+                         "sync_error": None, "probe_ok": True, "steps": [], "preflight": {}},
     )
     # verify_gateway is called twice in the failure path: once to decide
     # the action failed, once again after rollback to confirm recovery —

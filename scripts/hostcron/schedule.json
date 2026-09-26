@@ -309,6 +309,49 @@
       "timeout_s": 900,
       "enabled": true,
       "_comment": "Nightly quality gate (compose config, loopback ports, tests, ruff ratchet, stubs, PROVIDERS.md). Result: .claude/state/test-results/latest.json."
+    },
+    {
+      "name": "lane-eval-weekly",
+      "owner": "shared-infra",
+      "cmd": [
+        "C:\\Python314\\python.exe",
+        "C:\\code\\shared-infra\\scripts\\lane_eval.py"
+      ],
+      "cwd": "C:\\code\\shared-infra",
+      "env": {
+        "PYTHONPATH": "C:\\Users\\hadam\\AppData\\Roaming\\Python\\Python314\\site-packages"
+      },
+      "schedule": {
+        "minute": 0,
+        "hour": 5,
+        "dow": 0
+      },
+      "timeout_s": 3600,
+      "enabled": true,
+      "_comment": "Weekly lane quality eval (scripts/lane_eval_suite.json) over every active Bifrost lane. Writes state/lane_eval/, renders docs/LANE_QUALITY.md; exporter publishes bifrost_lane_eval_pass_ratio."
+    },
+    {
+      "name": "config-autocommit",
+      "owner": "shared-infra",
+      "cmd": [
+        "C:\\Python314\\python.exe",
+        "C:\\code\\shared-infra\\scripts\\config_autocommit.py"
+      ],
+      "cwd": "C:\\code\\shared-infra",
+      "env": {
+        "PYTHONPATH": "C:\\Users\\hadam\\AppData\\Roaming\\Python\\Python314\\site-packages"
+      },
+      "schedule": {
+        "minute": [
+          0,
+          15,
+          30,
+          45
+        ]
+      },
+      "timeout_s": 600,
+      "enabled": true,
+      "_comment": "Commits live gateway routing state (config.json, disabled-providers.json) so git reflects what infractl and autoheal wrote."
     }
   ]
 }

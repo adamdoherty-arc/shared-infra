@@ -9,7 +9,7 @@ import time
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -79,6 +79,7 @@ async def _action_error_handler(request: Request, exc: ActionError):
         "unknown_kind": 404, "not_found": 404, "cooldown": 429, "max_per_day": 429,
         "requires_approval": 409, "invalid_state": 409, "not_allowlisted": 400,
         "not_implemented": 501, "verify_failed": 502, "rolled_back": 502, "no_snapshot": 409,
+        "invalid_request": 400, "operator_disabled": 422, "sync_refused": 502,
     }.get(exc.code, 400)
     return JSONResponse(status_code=status, content=envelope_err(str(exc), exc.code))
 
@@ -225,7 +226,7 @@ async def api_park_provider(name: str, body: ParkBody, request: Request):
     settings: Settings = request.app.state.settings
     ledger: Ledger = request.app.state.ledger
     result = await actions_mod.execute(
-        ledger, settings, "provider_park", {"provider": name, "reason": body.reason},
+        ledger, settings, "bifrost_provider_park", {"provider": name, "reason": body.reason},
         requested_by=body.requested_by, reason=body.reason or f"park {name} via API",
         legion_ref=body.legion_ref, dry_run=body.dry_run,
     )
@@ -272,6 +273,28 @@ async def api_config_models(body: ModelsBody, request: Request):
         {"provider": body.provider, "key_name": body.key_name, "models": body.models},
         requested_by=body.requested_by, reason=f"{body.op} models via API",
         legion_ref=body.legion_ref, dry_run=body.dry_run,
+    )
+    return envelope_ok(result)
+
+
+class ModelsApplyBody(BaseModel):
+    """`changes` is {provider: {"add": [...], "remove": [...]}}; each list
+    applies to every key of that provider. `dry_run=true` returns the diff
+    (structured + unified) and writes nothing."""
+    changes: dict[str, dict[str, list[str]]]
+    reason: str
+    requested_by: str = "api"
+    legion_ref: str | None = None
+    dry_run: bool | None = None
+
+
+@app.post("/api/bifrost/models/apply", dependencies=[Depends(require_token)])
+async def api_bifrost_models_apply(body: ModelsApplyBody, request: Request):
+    settings: Settings = request.app.state.settings
+    ledger: Ledger = request.app.state.ledger
+    result = await actions_mod.execute(
+        ledger, settings, "bifrost_models_apply", {"changes": body.changes},
+        requested_by=body.requested_by, reason=body.reason, legion_ref=body.legion_ref, dry_run=body.dry_run,
     )
     return envelope_ok(result)
 

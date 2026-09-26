@@ -15,9 +15,12 @@ phrases over a sliding window, a different signal source than infractl's
 probe results — that mechanism stays in auth_autoheal.py, now dry-run-only
 per the Wave 1 cutover, until a Wave 2 decision moves it here for real).
 
-Wave 1 rules (all T1, all real, all wired to actions.execute):
+Rules (all wired to actions.execute):
   1. unhealthy/stopped sidecar (containers probe)      -> restart_sidecar
-  2. config parity drift (config_parity probe red)      -> vk_resync
+  2. config parity drift (config_parity probe red)      -> vk_resync, DRY-RUN
+     only (vk_resync is T2 since 2026-09-25: a sync only lands through the
+     binding gateway restart, so it records the proposal in the ledger and
+     rule 4 alerts; an operator runs `infractl vk resync --apply`)
   3. logs.db WAL over threshold (logsdb probe red)       -> wal_checkpoint
   4. any probe red for 3+ consecutive ticks              -> Discord alert
      (not an action — a notification, deduped 1/hour per probe via the
@@ -41,9 +44,13 @@ RED_STREAK_THRESHOLD = 3
 
 async def _fire(ledger: Ledger, settings: Settings, kind: str, payload: dict, reason: str,
                  probe_name: str) -> None:
+    spec = actions_mod.REGISTRY.get(kind)
+    # T2 kinds restart the gateway or rewrite config.json: never unattended.
+    force_dry_run = True if spec is not None and spec.tier == "T2" else None
     try:
         result = await actions_mod.execute(
             ledger, settings, kind, payload, requested_by="heal_rules", reason=reason,
+            dry_run=force_dry_run,
         )
         logger.info("heal rule fired %s (probe=%s): %s", kind, probe_name, result)
     except actions_mod.ActionError as exc:

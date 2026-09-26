@@ -1,38 +1,54 @@
 """Action allowlist with tiers T0-T3, cooldown + max/day per kind, and the
 single `execute()` entrypoint every mutating call goes through: lock ->
-drift guard -> snapshot -> apply -> vk_sync -> restart ladder -> verify ->
-rollback on failure -> ledger finalize -> Discord -> Legion note.
+drift guard -> plan (pure, validated) -> snapshot -> write -> binding
+restart (stop autoheal -> stop gateway -> vk_sync -> start -> /health ->
+1-token probe -> start autoheal) -> verify -> rollback on failure -> ledger
+finalize -> redacted snapshot -> Discord -> Legion note.
+
+infractl is the SINGLE WRITER of bifrost/config.json and
+bifrost/disabled-providers.json (2026-09-25): ADA's bifrost_model_sync.py
+posts `bifrost_models_apply`, bifrost-autoheal posts `bifrost_provider_park`,
+and humans use the CLI. `.claude/hooks/config_write_gate.py` blocks agent
+edits of those files, and scripts/config_autocommit.py (hostcron) commits
+what infractl wrote with the ledger rows as the message.
 
 TIERS
   T0  read-only. No lock, not registered here (plain GET handlers).
   T1  auto, no approval, no config.json mutation: restart_sidecar,
-      vk_resync, wal_checkpoint, logsdb_quick_check, probe_lanes_regenerate.
-  T2  auto, WITH the full snapshot/verify/rollback ladder because they
-      mutate config.json/config.db: provider_park, provider_unpark,
-      models_add, models_remove, alias_set, bifrost_restart.
+      wal_checkpoint, logsdb_quick_check, probe_lanes_regenerate.
+  T2  the full snapshot/verify/rollback ladder, because they mutate
+      config.json/config.db or restart the gateway: bifrost_models_apply,
+      bifrost_provider_park, provider_unpark, models_add, models_remove,
+      alias_set, bifrost_restart, vk_resync. heal rules only ever DRY-RUN a
+      T2 kind (heal/rules.py `_fire`).
   T3  requires POST /api/actions/{id}/approve, NEVER auto-scheduled by heal
       rules: restart_qwen38_chat, restart_vllm_embed, disk_prune. Only
-      kinds whose mechanics are implemented today are registered — per the
+      kinds whose mechanics are implemented today are registered -- per the
       NEVER SHIP STUBS rule, vk_budget_set/vk_rotate/compose_apply/model_swap
-      are NOT registered until their real mechanics exist (registering an
-      unimplemented kind so a client could pick it out of GET /api/actions
-      would be exactly the disguised-stub pattern that rule bans).
+      are NOT registered until their real mechanics exist.
 """
 from __future__ import annotations
 
+import asyncio
 import dataclasses
+import difflib
 import json
 import shutil
 import time
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
-from infractl.bifrost import admin_api, config as bifrost_config, configdb, park, restart, vk_sync
-from infractl.core import discord, ledger as ledger_mod, legion
-from infractl.core.docker import DockerError
+from infractl.bifrost import admin_api, park, restart
+from infractl.bifrost import config as bifrost_config
+from infractl.core import discord, legion
 from infractl.core import docker as docker_client
-from infractl.core.lock import WriterConflictError, acquire_write_lock, check_drift, current_config_mtime
+from infractl.core import ledger as ledger_mod
+from infractl.core.lock import acquire_write_lock, check_drift
 from infractl.settings import Settings
+
+# The one requester that must not have bifrost-autoheal stopped under it:
+# the sidecar is blocked on the park request for the whole ladder.
+AUTOHEAL_REQUESTER = "bifrost-autoheal"
 
 
 class ActionError(RuntimeError):
@@ -56,20 +72,31 @@ class ActionSpec:
 # API can always request more, but still pays the cooldown.
 REGISTRY: dict[str, ActionSpec] = {
     "restart_sidecar": ActionSpec("restart_sidecar", "T1", 120, 20, False, "restart a non-gateway sidecar container"),
-    "vk_resync": ActionSpec("vk_resync", "T1", 60, 48, False, "re-run sync_vk_allowlists.py"),
     "wal_checkpoint": ActionSpec("wal_checkpoint", "T1", 300, 12, False, "checkpoint logs.db-wal in-container"),
     "logsdb_quick_check": ActionSpec("logsdb_quick_check", "T1", 1800, 6, False, "PRAGMA quick_check in-container"),
-    "probe_lanes_regenerate": ActionSpec("probe_lanes_regenerate", "T1", 900, 24, False, "regenerate /state/probe_lanes.json"),
-    "provider_park": ActionSpec("provider_park", "T2", 60, 10, True, "move a provider block to disabled-providers.json"),
-    "provider_unpark": ActionSpec("provider_unpark", "T2", 60, 10, True, "restore a provider block from disabled-providers.json"),
-    "models_add": ActionSpec("models_add", "T2", 30, 20, True, "add models to a provider key"),
-    "models_remove": ActionSpec("models_remove", "T2", 30, 20, True, "remove models from a provider key"),
+    "probe_lanes_regenerate": ActionSpec("probe_lanes_regenerate", "T1", 900, 24, False,
+                                         "regenerate /state/probe_lanes.json"),
+    "bifrost_models_apply": ActionSpec("bifrost_models_apply", "T2", 60, 12, True,
+                                       "add/remove models across a provider's keys ({provider: {add, remove}})"),
+    "bifrost_provider_park": ActionSpec("bifrost_provider_park", "T2", 60, 10, True,
+                                        "move a provider block to disabled-providers.json"),
+    "provider_unpark": ActionSpec("provider_unpark", "T2", 60, 10, True,
+                                  "restore a provider block from disabled-providers.json"),
+    "models_add": ActionSpec("models_add", "T2", 30, 20, True, "add models to one provider key"),
+    "models_remove": ActionSpec("models_remove", "T2", 30, 20, True, "remove models from one provider key"),
     "alias_set": ActionSpec("alias_set", "T2", 30, 20, True, "set an alias on a provider key"),
-    "bifrost_restart": ActionSpec("bifrost_restart", "T2", 120, 12, False, "run the full restart ladder"),
+    "bifrost_restart": ActionSpec("bifrost_restart", "T2", 120, 12, False, "run the binding restart sequence"),
+    # A sync only takes effect with Bifrost stopped and restarted, so vk_resync
+    # IS the binding restart sequence (it used to write config.db under a
+    # running gateway, the WAL hazard 30-docker.md forbids).
+    "vk_resync": ActionSpec("vk_resync", "T2", 600, 6, False, "sync config.json -> config.db via the binding restart"),
     "restart_qwen38_chat": ActionSpec("restart_qwen38_chat", "T3", 300, 6, False, "restart the local chat vLLM engine"),
     "restart_vllm_embed": ActionSpec("restart_vllm_embed", "T3", 300, 6, False, "restart the local embed vLLM engine"),
-    "disk_prune": ActionSpec("disk_prune", "T3", 3600, 4, False, "prune dangling docker volumes/images + old .bak files"),
+    "disk_prune": ActionSpec("disk_prune", "T3", 3600, 4, False,
+                             "prune dangling docker volumes/images + old .bak files"),
 }
+
+CONFIG_FILES = ("config.json", "disabled-providers.json")
 
 NON_GATEWAY_SIDECARS = {
     "bifrost-metrics", "bifrost-logs-pruner", "shared-alertmanager", "otelcol", "loki",
@@ -95,8 +122,14 @@ def _snapshot_config(bifrost_dir: Path, dest: Path) -> list[str]:
 
 
 def _restore_config(bifrost_dir: Path, snapshot_dir: Path) -> list[str]:
+    """Restores config.json + disabled-providers.json ONLY. config.db is
+    never copied back over the live file (the gateway may be running, and a
+    copied SQLite file under a live WAL is the corruption class 30-docker.md
+    records twice); the binding restart that follows every restore rebuilds
+    config.db from the restored config.json via the VK sync, with Bifrost
+    stopped. The snapshot's config.db copy is kept for forensics."""
     files = []
-    for name in ("config.json", "disabled-providers.json", "config.db"):
+    for name in CONFIG_FILES:
         src = snapshot_dir / name
         if src.exists():
             shutil.copy2(src, bifrost_dir / name)
@@ -139,40 +172,116 @@ def verify_gateway(settings: Settings) -> tuple[bool, dict]:
     return True, detail
 
 
-def _apply_config_mutation(kind: str, bifrost_dir: Path, payload: dict) -> str:
-    """Runs the pure-function edit + atomic write for T2 config-mutating
-    kinds. Returns a short human-readable summary."""
-    config_json = bifrost_dir / "config.json"
-    disabled_json = bifrost_dir / "disabled-providers.json"
+@dataclasses.dataclass
+class ConfigPlan:
+    """The pure, validated result of a config-mutating kind: the new file
+    contents (written in this order -- disabled-providers.json before
+    config.json, so a parked recipe is never lost), plus a structured diff."""
+    files: dict[str, dict]
+    summary: str
+    diff: dict
+    noop: bool = False
 
-    if kind == "provider_park":
-        provider = payload["provider"]
-        reason = payload.get("reason", "")
-        park.park_provider_files(bifrost_dir, provider, reason)
-        return f"parked {provider}"
 
-    if kind == "provider_unpark":
-        provider = payload["provider"]
-        park.unpark_provider_files(bifrost_dir, provider)
-        return f"unparked {provider}"
+def _read_pair(bifrost_dir: Path) -> tuple[dict, dict]:
+    cfg = bifrost_config.read_config(bifrost_dir / "config.json")
+    disabled_path = bifrost_dir / "disabled-providers.json"
+    disabled = bifrost_config.read_config(disabled_path) if disabled_path.exists() else {"providers": {}}
+    return cfg, disabled
 
-    if kind in ("models_add", "models_remove", "alias_set"):
-        cfg = bifrost_config.read_config(config_json)
-        provider = payload["provider"]
-        key_name = payload["key_name"]
-        if kind == "models_add":
-            new_cfg = bifrost_config.add_models(cfg, provider, key_name, payload["models"])
-            summary = f"added {payload['models']} to {provider}/{key_name}"
-        elif kind == "models_remove":
-            new_cfg = bifrost_config.remove_models(cfg, provider, key_name, payload["models"])
-            summary = f"removed {payload['models']} from {provider}/{key_name}"
+
+def _plan_config_mutation(kind: str, bifrost_dir: Path, payload: dict, requested_by: str) -> ConfigPlan:
+    """Compute (never write) the new config files for a T2 config kind.
+    Every failure is an ActionError('invalid_request') raised BEFORE the
+    snapshot/write/restart ladder starts, so a bad request never restarts
+    the gateway. The operator-disabled check uses sync_vk_allowlists.py's own
+    `operator_violations()` (the sync refuses the same config anyway; this
+    turns a restart + rollback into a clean 400)."""
+    cfg, disabled = _read_pair(bifrost_dir)
+    try:
+        if kind == "bifrost_models_apply":
+            changes = payload.get("changes")
+            new_cfg, diff = bifrost_config.apply_model_changes(cfg, changes)
+            parts = []
+            for provider, entry in diff.items():
+                if entry["added"]:
+                    parts.append(f"{provider} +{entry['added']}")
+                if entry["removed"]:
+                    parts.append(f"{provider} -{entry['removed']}")
+            plan = ConfigPlan({"config.json": new_cfg}, "models: " + ("; ".join(parts) or "no change"),
+                              diff, noop=bifrost_config.model_changes_are_noop(diff))
+        elif kind == "bifrost_provider_park":
+            provider = payload["provider"]
+            new_cfg, new_disabled = park.plan_park(cfg, disabled, provider, payload.get("reason", ""), requested_by)
+            plan = ConfigPlan({"disabled-providers.json": new_disabled, "config.json": new_cfg},
+                              f"parked {provider}", {"parked": provider})
+        elif kind == "provider_unpark":
+            provider = payload["provider"]
+            new_cfg, new_disabled = park.plan_unpark(cfg, disabled, provider)
+            plan = ConfigPlan({"disabled-providers.json": new_disabled, "config.json": new_cfg},
+                              f"unparked {provider}", {"unparked": provider})
+        elif kind in ("models_add", "models_remove", "alias_set"):
+            provider, key_name = payload["provider"], payload["key_name"]
+            if kind == "models_add":
+                new_cfg = bifrost_config.add_models(cfg, provider, key_name, payload["models"])
+                summary = f"added {payload['models']} to {provider}/{key_name}"
+            elif kind == "models_remove":
+                new_cfg = bifrost_config.remove_models(cfg, provider, key_name, payload["models"])
+                summary = f"removed {payload['models']} from {provider}/{key_name}"
+            else:
+                new_cfg = bifrost_config.set_alias(cfg, provider, key_name, payload["alias"], payload["target"])
+                summary = f"set alias {payload['alias']}->{payload['target']} on {provider}/{key_name}"
+            plan = ConfigPlan({"config.json": new_cfg}, summary, {"provider": provider, "key_name": key_name})
         else:
-            new_cfg = bifrost_config.set_alias(cfg, provider, key_name, payload["alias"], payload["target"])
-            summary = f"set alias {payload['alias']}->{payload['target']} on {provider}/{key_name}"
-        bifrost_config.atomic_write_json(config_json, new_cfg)
-        return summary
+            raise ActionError(f"kind '{kind}' has no config mutation handler", "not_implemented")
+    except (bifrost_config.ConfigError, park.ParkError, KeyError, TypeError) as exc:
+        raise ActionError(f"{kind}: invalid request: {exc}", "invalid_request") from exc
 
-    raise ActionError(f"kind '{kind}' has no config mutation handler", "not_implemented")
+    try:
+        violations = bifrost_config.operator_violations(plan.files["config.json"], bifrost_dir)
+    except bifrost_config.ConfigError as exc:
+        raise ActionError(f"{kind}: cannot check operator-disabled list: {exc}", "invalid_request") from exc
+    if violations:
+        raise ActionError(
+            f"{kind}: resulting config.json violates bifrost/operator-disabled.json: {violations[:10]}",
+            "operator_disabled",
+        )
+    return plan
+
+
+def _unified_diff(bifrost_dir: Path, plan: ConfigPlan, max_lines: int = 400) -> str:
+    out: list[str] = []
+    for name, new in plan.files.items():
+        path = bifrost_dir / name
+        old_text = json.dumps(bifrost_config.read_config(path), indent=2) if path.exists() else ""
+        new_text = json.dumps(new, indent=2)
+        out += difflib.unified_diff(old_text.splitlines(), new_text.splitlines(),
+                                    f"a/bifrost/{name}", f"b/bifrost/{name}", n=2, lineterm="")
+    if len(out) > max_lines:
+        out = out[:max_lines] + [f"... ({len(out) - max_lines} more lines)"]
+    return "\n".join(out)
+
+
+def _write_plan(bifrost_dir: Path, plan: ConfigPlan) -> None:
+    for name, data in plan.files.items():
+        bifrost_config.atomic_write_json(bifrost_dir / name, data)
+
+
+def _restart(settings: Settings, requested_by: str) -> dict:
+    return restart.restart_bifrost(
+        settings.infractl_bifrost_dir, probe_base=settings.infractl_probe_base,
+        probe_vk=settings.infra_probe_vk, stop_autoheal=requested_by != AUTOHEAL_REQUESTER,
+    )
+
+
+def _refresh_redacted_snapshot(bifrost_dir: Path) -> str:
+    """Keep bifrost/config.snapshot.redacted.json (git-tracked, no key
+    material) in step with what infractl just wrote, so the host-side
+    config_autocommit commits the matching config.db view with it."""
+    try:
+        return str(bifrost_config.write_redacted_snapshot(bifrost_dir))
+    except Exception as exc:  # noqa: BLE001 -- reported in the ledger, never fails a verified action
+        return f"redacted snapshot not refreshed: {exc}"
 
 
 def _run_t1(kind: str, settings: Settings, payload: dict) -> dict:
@@ -183,17 +292,14 @@ def _run_t1(kind: str, settings: Settings, payload: dict) -> dict:
         docker_client.restart(container)
         return {"restarted": container}
 
-    if kind == "vk_resync":
-        out = vk_sync.run_vk_sync(settings.infractl_bifrost_dir)
-        return {"output_tail": out.strip().splitlines()[-5:] if out.strip() else []}
-
     if kind == "wal_checkpoint":
         return restart.preflight_check_wal(settings.infractl_bifrost_dir, warn_mb=0.0)
 
     if kind == "logsdb_quick_check":
         exit_code, out = docker_client.exec_run(
             "bifrost-logs-pruner",
-            ["python", "-c", "import pruner; ok = pruner._integrity_check(); print('QUICK_CHECK_OK' if ok else 'QUICK_CHECK_FAILED')"],
+            ["python", "-c",
+             "import pruner; ok = pruner._integrity_check(); print('QUICK_CHECK_OK' if ok else 'QUICK_CHECK_FAILED')"],
             timeout_s=180,
         )
         return {"exit_code": exit_code, "output": out.strip()[-500:]}
@@ -263,8 +369,13 @@ async def execute(ledger: ledger_mod.Ledger, settings: Settings, kind: str, payl
 
     try:
         async with acquire_write_lock(settings.infractl_lock_timeout_s):
-            result = await _execute_locked(ledger, settings, action_id, spec, kind, payload,
-                                            effective_dry_run, legion_ref)
+            # The ladder is blocking (docker socket, subprocess sync, health
+            # polling for up to minutes): run it off the event loop so /healthz
+            # and read-only routes keep answering during a gateway restart.
+            result = await asyncio.to_thread(
+                _execute_locked, ledger, settings, action_id, spec, kind, payload,
+                effective_dry_run, requested_by, legion_ref,
+            )
         ledger.record_heal_event(kind, probe_name="api", outcome="dry_run" if effective_dry_run else "executed",
                                   detail=str(result)[:500], action_kind=kind, action_id=action_id)
         return result
@@ -309,69 +420,77 @@ async def approve(ledger: ledger_mod.Ledger, settings: Settings, action_id: str)
 
 
 async def manual_rollback(ledger: ledger_mod.Ledger, settings: Settings, action_id: str) -> dict:
-    """POST /api/actions/{id}/rollback — operator-triggered rollback of a
-    previously SUCCEEDED T2 action back to its own pre-action snapshot.
-    Goes through the same lock + vk_sync + restart + verify sequence the
-    automatic on-failure rollback inside `_execute_locked` uses; the only
-    difference is the trigger (operator request vs. a failed verify)."""
+    """POST /api/actions/{id}/rollback -- operator-triggered rollback of a
+    previously SUCCEEDED T2 action back to its own pre-action snapshot, via
+    the same restore + binding restart + verify the automatic rollback uses."""
     row = ledger.get_action(action_id)
     if row is None:
         raise ActionError(f"action '{action_id}' not found", "not_found")
     if row["status"] != "succeeded":
         raise ActionError(
-            f"action '{action_id}' has status '{row['status']}' — only a succeeded "
+            f"action '{action_id}' has status '{row['status']}' -- only a succeeded "
             f"action has a snapshot worth rolling back to", "invalid_state",
         )
     snapshot_dir = row.get("snapshot_dir")
     if not snapshot_dir:
         raise ActionError(f"action '{action_id}' has no snapshot_dir recorded", "no_snapshot")
 
-    bifrost_dir = settings.infractl_bifrost_dir
     async with acquire_write_lock(settings.infractl_lock_timeout_s):
-        restored = _restore_config(bifrost_dir, Path(snapshot_dir))
-        try:
-            vk_sync.run_vk_sync(bifrost_dir)
-        except vk_sync.VkSyncError:
-            pass
-        restart_result = restart.restart_bifrost(bifrost_dir, probe_base=settings.infractl_probe_base)
-        ok_after, verify_after = verify_gateway(settings)
-        post_sha = bifrost_config.sha256_of(bifrost_dir / "config.json")
+        outcome = await asyncio.to_thread(_rollback_to, settings, Path(snapshot_dir), "operator")
         ledger.update_action(
-            action_id, status="rolled_back_manual", post_config_sha256=post_sha,
-            verify_json=str({"restored_files": restored, "rollback_healthy": restart_result["healthy"],
-                              "verify_after_rollback": verify_after, "verified_ok": ok_after})[:4000],
-            finished_at=time.time(),
+            action_id, status="rolled_back_manual", post_config_sha256=outcome.pop("post_sha"),
+            verify_json=json.dumps(outcome, default=str)[:4000], finished_at=time.time(),
         )
     discord.post(embed=discord.build_embed(
         f"infractl: {row['kind']} manually rolled back", f"action_id={action_id}", level="warn",
-        fields={"action_id": action_id, "restored": str(restored)},
+        fields={"action_id": action_id, "restored": str(outcome["restored_files"])},
     ))
-    return {"restored_files": restored, "verify_ok": ok_after, "verify": verify_after}
+    return outcome
 
 
-async def _execute_locked(ledger: ledger_mod.Ledger, settings: Settings, action_id: str,
-                           spec: ActionSpec, kind: str, payload: dict, dry_run: bool,
-                           legion_ref: str | None = None) -> dict:
+def _rollback_to(settings: Settings, snap_dir: Path, requested_by: str) -> dict:
+    bifrost_dir = settings.infractl_bifrost_dir
+    restored = _restore_config(bifrost_dir, snap_dir)
+    rr = _restart(settings, requested_by)
+    ok_after, verify_after = verify_gateway(settings) if rr["ok"] else (False, {"skipped": "restart failed"})
+    return {
+        "restored_files": restored, "rollback_restart_ok": rr["ok"], "rollback_steps": rr["steps"],
+        "verify_after_rollback": verify_after, "verified_ok": ok_after,
+        "redacted_snapshot": _refresh_redacted_snapshot(bifrost_dir),
+        "post_sha": bifrost_config.sha256_of(bifrost_dir / "config.json"),
+    }
+
+
+def _execute_locked(ledger: ledger_mod.Ledger, settings: Settings, action_id: str,
+                    spec: ActionSpec, kind: str, payload: dict, dry_run: bool,
+                    requested_by: str, legion_ref: str | None = None) -> dict:
     bifrost_dir = settings.infractl_bifrost_dir
 
     if not spec.mutates_config:
-        # T1 or non-config-mutating T2 (bifrost_restart) / T3 — no drift
-        # guard or snapshot needed beyond what the handler itself does.
         if dry_run and spec.tier != "T1":
             ledger.update_action(action_id, status="succeeded_dry_run", finished_at=time.time())
             return {"dry_run": True, "note": "would run", "kind": kind}
-        if kind == "bifrost_restart":
-            result = restart.restart_bifrost(bifrost_dir, probe_base=settings.infractl_probe_base)
+        if kind in ("bifrost_restart", "vk_resync"):
+            result = _restart(settings, requested_by)
+            if not result["ok"]:
+                ledger.update_action(action_id, status="failed", error="binding restart failed",
+                                     verify_json=json.dumps(result, default=str)[:4000], finished_at=time.time())
+                raise ActionError(f"{kind}: binding restart failed: {result['steps'][-3:]}", "verify_failed")
         elif spec.tier == "T3":
             result = _run_t3(kind, settings, payload)
         else:
             result = _run_t1(kind, settings, payload)
         ledger.update_action(action_id, status="succeeded", verify_json=str(result)[:4000],
-                              finished_at=time.time())
+                             finished_at=time.time())
         return result
 
     # ---- T2 config-mutating ladder ----
     check_drift(window_s=settings.infractl_drift_window_s)
+    plan = _plan_config_mutation(kind, bifrost_dir, payload, requested_by)
+    if plan.noop:
+        ledger.update_action(action_id, status="succeeded_noop", finished_at=time.time(),
+                             verify_json=json.dumps({"summary": plan.summary, "diff": plan.diff})[:4000])
+        return {"noop": True, "summary": plan.summary, "diff": plan.diff, "action_id": action_id}
 
     pre_sha = bifrost_config.sha256_of(bifrost_dir / "config.json")
     snap_dir = _snapshot_dir(settings.infractl_state_dir, action_id)
@@ -380,75 +499,49 @@ async def _execute_locked(ledger: ledger_mod.Ledger, settings: Settings, action_
     ledger.update_action(action_id, snapshot_dir=str(snap_dir), pre_config_sha256=pre_sha)
 
     if dry_run:
-        # Apply to a scratch copy only — same pure functions, same code
-        # path, just no os.replace onto the live files (NOTHING IS MOCKED:
-        # this is the real apply function, only the final write target
-        # differs).
-        scratch = snap_dir / "dry_run_scratch"
-        scratch.mkdir(exist_ok=True)
-        for name in ("config.json", "disabled-providers.json"):
-            src = bifrost_dir / name
-            if src.exists():
-                shutil.copy2(src, scratch / name)
-        try:
-            summary = _apply_config_mutation(kind, scratch, payload)
-        finally:
-            pass
-        ledger.update_action(action_id, status="succeeded_dry_run",
-                              verify_json=f"dry_run apply ok: {summary}", finished_at=time.time())
-        return {"dry_run": True, "summary": summary}
+        text_diff = _unified_diff(bifrost_dir, plan)
+        ledger.update_action(action_id, status="succeeded_dry_run", finished_at=time.time(),
+                             verify_json=json.dumps({"summary": plan.summary, "diff": plan.diff})[:4000])
+        return {"dry_run": True, "action_id": action_id, "summary": plan.summary, "diff": plan.diff,
+                "unified_diff": text_diff}
 
     try:
-        summary = _apply_config_mutation(kind, bifrost_dir, payload)
-        deregister_result = None
-        if kind == "provider_park":
-            docker_client.stop("shared-bifrost")
-            try:
-                deregister_result = park.deregister_from_db(bifrost_dir / "config.db", payload["provider"])
-            finally:
-                docker_client.start("shared-bifrost")
-        restart_result = restart.restart_bifrost(bifrost_dir, probe_base=settings.infractl_probe_base)
+        _write_plan(bifrost_dir, plan)
+        rr = _restart(settings, requested_by)
+        if not rr["ok"]:
+            code = "sync_refused" if rr["sync_refused"] else "verify_failed"
+            raise ActionError(f"binding restart failed after {kind}: {rr['sync_error'] or rr['steps'][-3:]}", code)
         ok, verify_detail = verify_gateway(settings)
         if not ok:
             raise ActionError(f"verify failed after {kind}: {verify_detail}", "verify_failed")
-
-        post_sha = bifrost_config.sha256_of(bifrost_dir / "config.json")
+    except Exception as exc:  # noqa: BLE001 -- roll back on ANY failure in the write/restart/verify chain
+        outcome = _rollback_to(settings, snap_dir, requested_by)
         ledger.update_action(
-            action_id, status="succeeded", post_config_sha256=post_sha,
-            verify_json=str({"summary": summary, "restart": restart_result["healthy"],
-                              "verify": verify_detail, "deregister": deregister_result})[:4000],
-            finished_at=time.time(),
-        )
-        if legion_ref:
-            legion.post_feature_note(
-                "product_feature:shared-infra", "design_decision",
-                f"infractl action {kind} succeeded ({action_id})",
-                f"payload={payload} verify={verify_detail}", source_ref=f"infractl:action:{action_id}",
-            )
-        discord.post(embed=discord.build_embed(
-            f"infractl: {kind} succeeded", summary, level="ok",
-            fields={"action_id": action_id},
-        ))
-        return {"summary": summary, "verify": verify_detail}
-
-    except Exception as exc:  # noqa: BLE001 — roll back on ANY failure in the apply/verify chain
-        restored = _restore_config(bifrost_dir, snap_dir)
-        try:
-            vk_sync.run_vk_sync(bifrost_dir)
-        except vk_sync.VkSyncError:
-            pass
-        rollback_restart = restart.restart_bifrost(bifrost_dir, probe_base=settings.infractl_probe_base)
-        ok_after, verify_after = verify_gateway(settings)
-        post_sha = bifrost_config.sha256_of(bifrost_dir / "config.json")
-        ledger.update_action(
-            action_id, status="rolled_back", post_config_sha256=post_sha,
-            error=str(exc)[:2000],
-            verify_json=str({"restored_files": restored, "rollback_healthy": rollback_restart["healthy"],
-                              "verify_after_rollback": verify_after, "verified_ok": ok_after})[:4000],
-            finished_at=time.time(),
+            action_id, status="rolled_back", post_config_sha256=outcome.pop("post_sha"),
+            error=str(exc)[:2000], verify_json=json.dumps(outcome, default=str)[:4000], finished_at=time.time(),
         )
         discord.post(embed=discord.build_embed(
-            f"infractl: {kind} ROLLED BACK", f"{exc}", level="error",
-            fields={"action_id": action_id, "restored": str(restored)},
+            f"infractl: {kind} ROLLED BACK", f"{exc}"[:1500], level="error",
+            fields={"action_id": action_id, "restored": str(outcome["restored_files"]),
+                    "gateway_verified_after_rollback": str(outcome["verified_ok"])},
         ))
         raise ActionError(f"{kind} failed and was rolled back: {exc}", "rolled_back") from exc
+
+    post_sha = bifrost_config.sha256_of(bifrost_dir / "config.json")
+    redacted = _refresh_redacted_snapshot(bifrost_dir)
+    ledger.update_action(
+        action_id, status="succeeded", post_config_sha256=post_sha, finished_at=time.time(),
+        verify_json=json.dumps({"summary": plan.summary, "diff": plan.diff, "restart_steps": rr["steps"],
+                                "verify": verify_detail, "redacted_snapshot": redacted}, default=str)[:4000],
+    )
+    if legion_ref:
+        legion.post_feature_note(
+            "product_feature:shared-infra", "design_decision",
+            f"infractl action {kind} succeeded ({action_id})",
+            f"payload={payload} verify={verify_detail}", source_ref=f"infractl:action:{action_id}",
+        )
+    discord.post(embed=discord.build_embed(
+        f"infractl: {kind} succeeded", plan.summary[:1500], level="ok",
+        fields={"action_id": action_id, "requested_by": requested_by},
+    ))
+    return {"action_id": action_id, "summary": plan.summary, "diff": plan.diff, "verify": verify_detail}

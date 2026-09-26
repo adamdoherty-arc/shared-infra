@@ -71,10 +71,11 @@ and 11 allowlisted `openrouter` `:free` names had gone stale upstream (every cal
   lineage, and had zero ADA callers wired to it. Legion note filed on
   `product_feature:llm-fabric-control-center`; Legion sprints 14149/14150
   (its original owner-gated eval) closed with the same rationale.
-- Standing mechanism: `scripts/bifrost_model_sync.py` (ADA repo) now runs this
-  same catalog-diff + probe + apply cycle automatically (dry-run daily,
-  `--apply` weekly Sun 07:30 ET) so this list does not go stale again without
-  a human re-running it by hand.
+- Standing mechanism: `scripts/bifrost_model_sync.py` (ADA repo) runs this
+  same catalog-diff + probe cycle daily (hostcron 07:30 ET, `--apply`) and
+  hands the diff to infractl's `bifrost_models_apply` (since 2026-09-25
+  infractl is the only writer of config.json) so this list does not go stale
+  again without a human re-running it by hand.
 
 **Per-project affinity (2026-06-11)** — so the three projects don't drain each other's free rate limits: Legion→NVIDIA NIM (GLM-5.1 reasoning+code), ADA→Kimi K2.6 via NIM, Zero→Gemini Flash + Groq. Local vLLM is the shared first rung everywhere; freellm/auto is the shared emergency tail.
 
@@ -85,8 +86,10 @@ chains across these with Feature-540 contention promotion (local → free cloud)
 **Parked** in `disabled-providers.json` as ready-to-restore recipes: anthropic,
 minimax, gemini, and (added 2026-05-31, perpetual-free) **groq, cerebras, mistral**.
 To add a free lane, drop a key into `shared-infra/.env`, add the env passthrough
-to `docker-compose.bifrost.yml`, copy the block into `config.json`, restart, and
-widen the per-project virtual-key scopes. Free-tier facts + signup URLs are inline
+to `docker-compose.bifrost.yml` (force-recreate shared-bifrost so it sees
+the key), then `infractl unpark <provider> --apply` (moves the block back, syncs,
+restarts, verifies, rolls back on failure), and widen the per-project
+virtual-key scopes. Free-tier facts + signup URLs are inline
 in each parked block's `_comment` / the `_README`.
 
 **Auth: ENFORCED** (`client.enforce_auth_on_inference: true` since
@@ -98,8 +101,9 @@ valid virtual key, OR the equivalent `x-bf-vk: sk-bf-...` header.
 Six virtual keys exist (as of 2026-07-09), created via the governance API.
 Each has all providers allowed with `allow_all_keys=true` so it can route to
 vllm-local, embed-local, moonshot, nvidia-nim, and the other free lanes. After
-any VK add or provider/model change, run `sync_vk_allowlists.py` (stop -> sync
--> start) so the per-VK allowlists mirror `config_keys` verbatim.
+any VK add, run `bash scripts/bifrost_restart.sh` (stop -> sync -> start) so the
+per-VK allowlists mirror `config_keys` verbatim; provider/model changes go
+through infractl, whose restart ladder runs the same sync.
 
 | Project     | Virtual key name    | Where the key lives |
 |---|---|---|
@@ -429,9 +433,10 @@ Structural fixes, not one-off repairs:
 - `pruner.py` now alerts to Discord (`AUTOHEAL_DISCORD_WEBHOOK`, shared with
   `auth_autoheal.py` — degrades to log-only if unset) whenever
   `logs.db-wal` exceeds 512 MB after a nightly OR midday checkpoint pass.
-- `scripts/bifrost_model_sync.py --apply` (ADA repo) checks + checkpoints
-  `logs.db-wal` before its own restart sequence, so a scheduled apply can
-  never start into a WAL large enough to hang the boot.
+- infractl's restart ladder (`infractl/bifrost/restart.py`
+  `preflight_check_wal`, used by every config change including ADA's daily
+  model sync) checks + checkpoints `logs.db-wal` before restarting, so a
+  scheduled apply can never start into a WAL large enough to hang the boot.
 - Considered and REJECTED: disabling Bifrost's request logging entirely.
   `logs.db` is the only source for the LLM Center's traffic panels and the
   audit trail this whole platform's cost-governance program depends on
