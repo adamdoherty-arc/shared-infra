@@ -1,0 +1,13 @@
+{
+  "_comment": "Per-consumer request caps (requests per minute, whole virtual key). Set 2026-09-25 from 24h of the log store: ada-prod avg 37.8, p99 126, max 548/min; legion-prod avg 8.1, p99 22, max 30; claude-code-local (the probe VK) max 14. Caps sit above every observed maximum so normal traffic never trips them; they only stop a runaway loop from starving the other consumers of the shared local engine. Over-cap requests get 429 request_limited and the caller's ladder falls through. Applied by scripts/apply_vk_rate_limits.py (also run by scripts/bifrost_restart.sh). Rate limits exist only at the VK level in Bifrost v2.2.",
+  "request_reset_duration": "1m",
+  "limits": {
+    "ada-prod": 900,
+    "legion-prod": 120,
+    "claude-code-local": 120,
+    "a-finance-prod": 60,
+    "zero-prod": 60,
+    "fortressos-prod": 60,
+    "hermes-prod": 60
+  }
+}

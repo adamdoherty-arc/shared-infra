@@ -66,6 +66,31 @@ scrape_configs:
       - targets: ['vllm-embed:8001']
         labels: { ecosystem_project: shared }
 
+  # qwen3-rerank (2026-09-25): CPU reranker service, --metrics exposes the
+  # same llama.cpp /metrics surface as vllm-embed.
+  - job_name: qwen3-rerank
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['qwen3-rerank:8002']
+        labels: { ecosystem_project: shared }
+
+  # Bifrost's own /metrics (v2.2+): per-VK error_type (policy_rate_limited =
+  # a consumer hit its bifrost/vk-rate-limits.json cap; policy_model_blocked =
+  # a consumer asked for a model its VK does not allow). Complements the
+  # log-store exporter above. Empty enterprise labels and the per-key bucket
+  # families (~16k series) are dropped; bifrost-metrics owns latency histograms.
+  - job_name: bifrost-native
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['shared-bifrost:8080']
+        labels: { ecosystem_project: shared }
+    metric_relabel_configs:
+      - source_labels: [__name__]
+        regex: 'bifrost_(upstream_latency_seconds|request_retries|stream_first_token_latency_seconds|stream_inter_token_latency_seconds)_bucket'
+        action: drop
+      - regex: '(business_unit|customer|team|project|routing|complexity)_.*|alias|selected_key_id|routing_engine_used'
+        action: labeldrop
+
   # Phase 3 item 2 (2026-08-04): RTX 5090 GPU telemetry — was completely
   # unscraped before this. See docker-compose.observability.yml for the
   # dcgm-exporter service block + why DCGM (not nvidia_gpu_exporter or a

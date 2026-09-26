@@ -1,0 +1,42 @@
+# Bifrost gateway policy alerts -- shared-infra (2026-09-25).
+#
+# Source: the bifrost-native scrape job (Bifrost's own /metrics), label
+# error_type. Both error types are rejected by Bifrost before any upstream
+# call, so they cost nothing upstream -- the signal is that a consumer is
+# misconfigured or over its budget, which only the consumer's owner sees
+# otherwise.
+groups:
+  - name: bifrost_policy
+    interval: 1m
+    rules:
+      - alert: BifrostConsumerRateLimited
+        expr: sum by (virtual_key_name) (increase(bifrost_error_requests_total{error_type="policy_rate_limited"}[10m])) > 5
+        for: 10m
+        labels:
+          severity: warning
+          component: bifrost
+          ecosystem_project: shared
+        annotations:
+          summary: "{{ $labels.virtual_key_name }} is hitting its Bifrost rate cap"
+          description: |
+            {{ $labels.virtual_key_name }} got {{ $value | humanize }} 429 policy_rate_limited
+            responses in 10m. The cap is in bifrost/vk-rate-limits.json (applied by
+            scripts/apply_vk_rate_limits.py on every bifrost_restart.sh). Either the
+            consumer is in a retry storm (check its logs first) or its real load grew:
+            raise the cap only after checking qwen38-chat headroom (55-engines.md).
+
+      - alert: BifrostConsumerRequestsBlockedModels
+        expr: sum by (virtual_key_name, provider) (increase(bifrost_error_requests_total{error_type="policy_model_blocked"}[1h])) > 20
+        for: 0m
+        labels:
+          severity: warning
+          component: bifrost
+          ecosystem_project: shared
+        annotations:
+          summary: "{{ $labels.virtual_key_name }} keeps requesting {{ $labels.provider }} models its VK does not allow"
+          description: |
+            {{ $value | humanize }} policy_model_blocked rejections in 1h for
+            {{ $labels.virtual_key_name }} on {{ $labels.provider }}. The consumer is
+            dialing models that are not in bifrost/config.json (a stale ladder, a catalog
+            probe, a quarantine re-probe). Precedent 2026-09-25: ADA's
+            probe_quarantined_rungs pinged ~475 unregistered OpenRouter ids every 6h.

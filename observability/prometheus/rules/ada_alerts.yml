@@ -519,6 +519,11 @@ groups:
             /
             (sum(rate(ada_cache_hits_total[5m])) by (cache_name) + sum(rate(ada_cache_misses_total[5m])) by (cache_name))
           ) < 0.50
+          # Volume floor (2026-09-25): caches seeing a handful of lookups per
+          # 5 min (llm_explanations, positions, intelligence) read 0% from 2-3
+          # cold misses and kept this firing. Require >= 1 lookup/min.
+          and
+          (sum(rate(ada_cache_hits_total[5m])) by (cache_name) + sum(rate(ada_cache_misses_total[5m])) by (cache_name)) > 0.0167
         for: 15m
         labels:
           severity: warning

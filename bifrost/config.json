@@ -469,5 +469,18 @@
       "conn_max_idle_time": "5m"
     },
     "retention_days": 2
-  }
+  },
+  "plugins": [
+    {
+      "enabled": true,
+      "name": "otel",
+      "config": {
+        "service_name": "bifrost",
+        "collector_url": "otelcol:4317",
+        "trace_type": "genai_extension",
+        "protocol": "grpc"
+      },
+      "_comment": "2026-09-25: traces to the shared otelcol -> Tempo (tail-sampled: errors, >1s, 10%). Tempo had no producer since 2026-09-15."
+    }
+  ]
 }

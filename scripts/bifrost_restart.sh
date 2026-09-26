@@ -52,7 +52,8 @@ _load_probe_vk() {
         line="$(grep -E '^INFRA_PROBE_VK=' "$REPO_ROOT/.env" | tail -n1)"
         if [ -n "$line" ]; then
             INFRA_PROBE_VK="${line#INFRA_PROBE_VK=}"
-            INFRA_PROBE_VK="$(printf '%s' "$INFRA_PROBE_VK" | tr -d '"' | tr -d "'")"
+            INFRA_PROBE_VK="$(printf '%s' "$INFRA_PROBE_VK" | tr -d '
+"' | tr -d "'")"
             export INFRA_PROBE_VK
         fi
     fi
@@ -127,6 +128,12 @@ main() {
         die "vllm-local smoke probe returned HTTP ${probe_status} (expected 200)"
     fi
     log "  vllm-local smoke probe OK (HTTP 200)"
+
+    # Per-consumer VK caps live in config.db; re-assert them after every
+    # restart so a restored or rebuilt config.db cannot silently drop them.
+    if [ -f "$REPO_ROOT/scripts/apply_vk_rate_limits.py" ]; then
+        python "$REPO_ROOT/scripts/apply_vk_rate_limits.py" | sed 's/^/[bifrost_restart]   /'             || log "  WARNING: VK rate limits need attention (see output above)"
+    fi
 
     log "restarting bifrost-autoheal"
     docker start bifrost-autoheal >/dev/null 2>&1 || die "docker start bifrost-autoheal failed"
