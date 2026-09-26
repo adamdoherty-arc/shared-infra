@@ -19,7 +19,9 @@ SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "config_autocommit.py
 
 
 def _git(repo: Path, *args: str) -> str:
-    return subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True, check=True).stdout
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}  # never a hook's GIT_INDEX_FILE
+    return subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True, check=True,
+                          env=env).stdout
 
 
 @pytest.fixture
@@ -116,3 +118,28 @@ def test_rolled_back_rows_are_labelled(mod):
     rolled = dict(ROW, status="rolled_back", id="c3")
     msg = mod.build_message([rolled], None, 0)
     assert "[rolled_back]" in msg.splitlines()[0]
+
+
+def test_regenerated_providers_doc_is_committed_with_the_config(repo, mod, monkeypatch):
+    """An infractl write makes docs/PROVIDERS.md stale; the gate would block the
+    commit, so the autocommit re-renders it and commits both together."""
+    (repo / "docs").mkdir()
+    (repo / "docs" / "PROVIDERS.md").write_text("old\n", encoding="utf-8")
+    (repo / "scripts").mkdir()
+    (repo / "scripts" / "render_providers_doc.py").write_text(
+        "from pathlib import Path\n"
+        "root = Path(__file__).resolve().parents[1]\n"
+        "(root / 'docs' / 'PROVIDERS.md').write_text('new\\n', encoding='utf-8')\n",
+        encoding="utf-8",
+    )
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "doc + renderer")
+    cfg = repo / "bifrost" / "config.json"
+    cfg.write_text(json.dumps({"providers": {"groq": {}}}) + "\n", encoding="utf-8")
+    _age(cfg)
+    monkeypatch.setattr(mod, "ledger_rows", lambda since: ([ROW], None))
+    monkeypatch.setattr("sys.argv", ["config_autocommit.py"])
+
+    assert mod.main() == 0
+    assert sorted(_git(repo, "show", "--name-only", "--format=", "HEAD").split()) == [
+        "bifrost/config.json", "docs/PROVIDERS.md"]

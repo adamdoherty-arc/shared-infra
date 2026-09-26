@@ -18,7 +18,10 @@ what makes git reflect live routing:
      ledger row is committed too, and says so: it was written outside
      infractl (an INFRA_CONFIG_WRITE_OK=1 edit), which is exactly what a
      reviewer needs to see.
-  5. `git commit -m <msg> -- <changed paths>`: only those paths, whatever else
+  5. Re-render docs/PROVIDERS.md (generated from config.json; the gate fails
+     when it is stale, so every infractl write would otherwise block its own
+     commit) and include it when it changed.
+  6. `git commit -m <msg> -- <changed paths>`: only those paths, whatever else
      is staged or dirty; the repo's pre-commit gate runs normally (never
      --no-verify). A gate failure is reported and the files stay uncommitted
      until the next run.
@@ -56,6 +59,8 @@ LANDED_STATUSES = {"succeeded", "rolled_back", "rolled_back_manual"}
 TRAILER = "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 FALLBACK_NAME = "shared-infra config-autocommit"
 FALLBACK_EMAIL = "config-autocommit@shared-infra.local"
+PROVIDERS_DOC = "docs/PROVIDERS.md"
+PROVIDERS_RENDERER = "scripts/render_providers_doc.py"
 INFRACTL_URL = os.environ.get("INFRACTL_URL", "http://127.0.0.1:8095").rstrip("/")
 
 
@@ -160,6 +165,19 @@ def build_message(rows: list[dict], ledger_error: str | None, since: float) -> s
     return subject + "\n\n" + "\n".join(body) + "\n\n" + TRAILER + "\n"
 
 
+def render_providers_doc() -> list[str]:
+    """Regenerate docs/PROVIDERS.md from the config; return it if it now differs from HEAD."""
+    renderer = REPO / PROVIDERS_RENDERER
+    if not renderer.exists():
+        return []
+    proc = subprocess.run([sys.executable, str(renderer)], cwd=str(REPO), capture_output=True,
+                          text=True, timeout=60, check=False)
+    if proc.returncode != 0:
+        log(f"render_providers_doc failed (exit {proc.returncode}): {proc.stderr.strip()[-500:]}")
+        return []
+    return [PROVIDERS_DOC] if git("status", "--porcelain=v1", "--", PROVIDERS_DOC).stdout.strip() else []
+
+
 def commit(paths: list[str], message: str) -> int:
     env = dict(os.environ)
     env["PATH"] = os.path.dirname(sys.executable) + os.pathsep + env.get("PATH", "")
@@ -199,6 +217,7 @@ def main() -> int:
     if args.dry_run:
         log(f"DRY-RUN: would commit {paths} with message:\n{message}")
         return 0
+    paths += [p for p in render_providers_doc() if p not in paths]
     log(f"committing {paths}")
     return commit(paths, message)
 

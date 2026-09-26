@@ -125,6 +125,12 @@ def init_schema(con: sqlite3.Connection) -> None:
         con.execute(ddl)
 
 
+# Cooldown and the daily cap count real runs and heal-rule dry runs (a heal
+# rule in dry-run mode should pace like the live one), but not an operator's
+# API preview: dry-run-then-apply must not trip its own cooldown.
+_COUNTED_OUTCOMES = "(outcome='executed' OR (outcome='dry_run' AND probe_name<>'api'))"
+
+
 class Ledger:
     """Thin wrapper. One Ledger per request/scheduler-tick is fine — SQLite
     WAL mode handles concurrent readers, and infractl's own single-writer
@@ -209,14 +215,14 @@ class Ledger:
     def heal_events_today(self, rule: str) -> int:
         cutoff = time.time() - 86400
         row = self.con.execute(
-            "SELECT COUNT(*) AS c FROM heal_events WHERE rule=? AND ts>=? AND outcome IN "
-            "('executed','dry_run')", (rule, cutoff),
+            "SELECT COUNT(*) AS c FROM heal_events WHERE rule=? AND ts>=? AND "
+            + _COUNTED_OUTCOMES, (rule, cutoff),
         ).fetchone()
         return row["c"]
 
     def last_heal_event_ts(self, rule: str) -> float | None:
         row = self.con.execute(
-            "SELECT MAX(ts) AS m FROM heal_events WHERE rule=? AND outcome IN ('executed','dry_run')",
+            "SELECT MAX(ts) AS m FROM heal_events WHERE rule=? AND " + _COUNTED_OUTCOMES,
             (rule,),
         ).fetchone()
         return row["m"]

@@ -92,3 +92,18 @@ def test_t3_kinds_not_registered_have_no_run_handler():
     are explicitly NOT in the registry until their mechanics exist."""
     for unimplemented in ("vk_budget_set", "vk_rotate", "compose_apply", "model_swap"):
         assert unimplemented not in actions_mod.REGISTRY
+
+
+def test_api_dry_run_does_not_start_cooldown(ledger):
+    """An operator's API preview must not block the real run right after it."""
+    ledger.record_heal_event("alias_set", "api", "dry_run", "preview")
+    assert ledger.last_heal_event_ts("alias_set") is None
+    assert ledger.heal_events_today("alias_set") == 0
+
+
+def test_heal_rule_dry_run_and_real_runs_still_count(ledger):
+    """A heal rule in dry-run mode paces like the live rule; real runs always count."""
+    ledger.record_heal_event("vk_resync", "lanes", "dry_run", "would resync")
+    ledger.record_heal_event("vk_resync", "api", "executed", "ran")
+    assert ledger.last_heal_event_ts("vk_resync") is not None
+    assert ledger.heal_events_today("vk_resync") == 2

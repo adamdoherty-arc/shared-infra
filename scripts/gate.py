@@ -77,6 +77,17 @@ def _bash_executable() -> str:
     return "bash"
 
 
+def _clean_env() -> dict[str, str]:
+    """The environment for gate subprocesses, minus git's hook variables.
+
+    A path-limited `git commit -- <paths>` (config_autocommit.py) runs this
+    gate as a pre-commit hook with GIT_INDEX_FILE pointing at a temporary
+    index. Tests that `git add` inside their own temp repos inherited it and
+    wrote their blobs into the real commit's index ("invalid object ... for
+    bifrost/config.json", 2026-09-25)."""
+    return {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+
+
 def _run(cmd: list[str], cwd: Path | None = None, timeout: int = 300) -> tuple[int, str]:
     try:
         proc = subprocess.run(
@@ -87,6 +98,7 @@ def _run(cmd: list[str], cwd: Path | None = None, timeout: int = 300) -> tuple[i
             timeout=timeout,
             encoding="utf-8",
             errors="replace",
+            env=_clean_env(),
         )
         out = (proc.stdout or "") + (proc.stderr or "")
         return proc.returncode, out[-8000:]
