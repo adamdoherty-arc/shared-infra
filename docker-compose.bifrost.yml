@@ -75,10 +75,6 @@ services:
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       # 2026-06-11: Z.ai (Zhipu) — glm-4.7-flash perpetual free tier.
       ZAI_API_KEY: ${ZAI_API_KEY:-}
-      # 2026-07-13: GitHub Models free lane (OpenAI GPT-4.1/4o + DeepSeek-R1 +
-      # Llama-3.3-70B via models.github.ai). Token from `gh auth token`. Free
-      # tier is LOW rate-limit, so ADA only wires it as a deep fallback tail.
-      GITHUB_MODELS_TOKEN: ${GITHUB_MODELS_TOKEN:-}
       # 2026-08-03: free providers sourced from OmniRoute's tos-rated catalog.
       # Each key was validated with a real completion before being wired. NB
       # these must be listed HERE, not just in .env — this service passes keys
