@@ -98,7 +98,7 @@ valid virtual key, OR the equivalent `x-bf-vk: sk-bf-...` header.
 
 ## Virtual keys
 
-Six virtual keys exist (as of 2026-07-09), created via the governance API.
+Virtual keys (six as of 2026-07-09; a-finance-prod and customer-ops-zero since), created via the governance API.
 Each has all providers allowed with `allow_all_keys=true` so it can route to
 vllm-local, embed-local, moonshot, nvidia-nim, and the other free lanes. After
 any VK add, run `bash scripts/bifrost_restart.sh` (stop -> sync -> start) so the
@@ -113,6 +113,7 @@ through infractl, whose restart ladder runs the same sync.
 | FortressOS  | `fortressos-prod`   | FortressOS project config |
 | Claude Code | `claude-code-local` | Local Claude Code / MCP sessions |
 | Hermes      | `hermes-prod`       | `~/.hermes/config.yaml` -> `model.api_key` (sk-bf-...); added 2026-07-09 when Hermes moved onto Bifrost |
+| customer-ops (Zero) | `customer-ops-zero` | `C:\code\customer-ops\.env` -> `CO_BIFROST_KEY`; **vllm-local only, no cloud lanes** (Adam's personal mail, medical and VA records must stay on this machine); added 2026-09-26 |
 
 Rotate by hitting the governance API:
 ```
