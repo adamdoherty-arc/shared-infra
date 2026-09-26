@@ -12,7 +12,7 @@ Stages:
   (a) `docker compose -f <file> config -q` for every root docker-compose*.yml
       (skips *.bak* variants).
   (b) `python -m pytest -m "not live"` over bifrost/tests, bifrost-metrics-exporter/tests,
-      .claude/hooks/tests and the two wedge-monitor test files on the host, plus
+      .claude/hooks/tests, scripts/tests, and the two wedge-monitor test files on the host, plus
       `bash scripts/run_infractl_tests.sh` for infractl's suite (it imports
       fcntl, Linux-only, so it runs inside the disposable container that
       script already sets up -- see that script's header).
@@ -161,6 +161,7 @@ def stage_tests() -> dict:
             "bifrost/tests",
             "bifrost-metrics-exporter/tests",
             ".claude/hooks/tests",
+            "scripts/tests",
             "infractl/tests/test_vllm_wedge_monitor_predicates.py",
             "infractl/tests/test_vllm_wedge_monitor.py",
             "-p",

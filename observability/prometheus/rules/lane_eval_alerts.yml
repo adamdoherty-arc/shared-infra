@@ -1,0 +1,50 @@
+# Weekly lane-quality eval alerts -- shared-infra (WS7 follow-on, 2026-09-25).
+#
+# scripts/lane_eval.py runs a fixed, deterministically-graded 12-task suite
+# against every consumer-pinned lane weekly (hostcron, Sunday 05:00) and
+# publishes state/lane_eval/latest.json. bifrost-metrics reads that file
+# (read-only bind mount, docker-compose.bifrost.yml) and republishes it as
+# bifrost_lane_eval_pass_ratio{provider,model,category} and
+# bifrost_lane_eval_age_seconds. These rules turn "a consumer is pinned to a
+# lane that quietly regressed" and "the harness stopped running" into a
+# signal instead of something only discovered by reading docs/LANE_QUALITY.md
+# by hand.
+groups:
+  - name: lane_eval_alerts
+    interval: 1h
+    rules:
+      - alert: LaneEvalPinnedLaneScoringLow
+        expr: bifrost_lane_eval_pass_ratio < 0.5
+        for: 0m
+        labels:
+          severity: warning
+          component: bifrost
+          ecosystem_project: shared
+        annotations:
+          summary: "Lane {{ $labels.provider }}/{{ $labels.model }} scoring below 0.5 on {{ $labels.category }}"
+          description: |
+            The weekly lane-quality eval (scripts/lane_eval.py) scored
+            {{ $labels.provider }}/{{ $labels.model }} at {{ $value | humanizePercentage }}
+            pass rate on the "{{ $labels.category }}" task category -- a consumer (ADA or
+            Legion) may be pinned to this lane for that purpose. Check docs/LANE_QUALITY.md
+            for the per-task detail and re-run `python scripts/lane_eval.py` after any
+            provider/model change to confirm before re-promoting a lane.
+          runbook_url: "https://internal/runbooks/lane-eval-low-score"
+
+      - alert: LaneEvalStale
+        expr: bifrost_lane_eval_age_seconds > 777600 or bifrost_lane_eval_age_seconds == -1
+        for: 1h
+        labels:
+          severity: warning
+          component: bifrost
+          ecosystem_project: shared
+        annotations:
+          summary: "Weekly lane-quality eval is stale or has never run"
+          description: |
+            bifrost_lane_eval_age_seconds is {{ $value }}s (threshold: 777600s = 9 days,
+            or -1 meaning state/lane_eval/latest.json was never read). The scheduled hostcron
+            job (`lane-eval-weekly`, Sunday 05:00) should refresh this every 7 days -- check
+            `docker logs bifrost-metrics` for read errors and confirm the
+            ./state/lane_eval:/lane_eval:ro bind mount in docker-compose.bifrost.yml is
+            present, then run `python C:/code/shared-infra/scripts/lane_eval.py` manually.
+          runbook_url: "https://internal/runbooks/lane-eval-stale"

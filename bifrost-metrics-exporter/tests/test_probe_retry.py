@@ -3,15 +3,14 @@ reads DOWN (NIM cold starts); a local lane never is."""
 
 from __future__ import annotations
 
-import importlib.util
-from pathlib import Path
+import sys
 
 import pytest
 
 pytest.importorskip("prometheus_client")
-_SPEC = importlib.util.spec_from_file_location("bifrost_exporter", Path(__file__).resolve().parents[1] / "exporter.py")
-exporter = importlib.util.module_from_spec(_SPEC)
-_SPEC.loader.exec_module(exporter)
+# Loaded once by conftest.py (avoids a duplicate-timeseries registration when
+# this module and test_lane_eval_metrics.py both import exporter.py).
+exporter = sys.modules["bifrost_exporter"]
 
 
 def _scripted(results):

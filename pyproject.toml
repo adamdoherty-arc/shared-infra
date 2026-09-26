@@ -29,6 +29,7 @@ testpaths = [
     "bifrost-metrics-exporter/tests",
     ".claude/hooks/tests",
     "infractl/tests",
+    "scripts/tests",
 ]
 # infractl/tests imports fcntl (Linux-only) so it cannot run on the Windows
 # host directly -- see scripts/run_infractl_tests.sh, which runs it inside a

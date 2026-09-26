@@ -1,0 +1,165 @@
+{
+  "_comment": "Weekly lane-quality eval suite (scripts/lane_eval.py). 12 deterministic, programmatically-graded tasks across 8 task types / 5 purpose categories (json, tools, reasoning, long_context, code). No LLM judge anywhere -- every grader in scripts/lane_eval.py is exact-match, schema-validated, keyword-checked, or subprocess-executed.",
+  "version": "2026-09-25.1",
+  "tasks": [
+    {
+      "id": "json_person",
+      "category": "json",
+      "type": "json_schema",
+      "prompt": "Return ONLY a single JSON object, no prose, no markdown code fences, matching exactly these keys and values: {\"name\": \"Ada Lovelace\", \"age\": 36, \"is_active\": true}. Output nothing else.",
+      "max_tokens": 200,
+      "schema": {
+        "type": "object",
+        "required": ["name", "age", "is_active"],
+        "properties": {
+          "name": {"type": "string"},
+          "age": {"type": "integer"},
+          "is_active": {"type": "boolean"}
+        }
+      },
+      "expected": {"name": "Ada Lovelace", "age": 36, "is_active": true}
+    },
+    {
+      "id": "json_list",
+      "category": "json",
+      "type": "json_schema",
+      "prompt": "Return ONLY a JSON array (no prose, no markdown fences) of exactly 3 objects, each with keys \"sku\" (string) and \"qty\" (integer), for these items in this order: sku=\"A1\" qty=2, sku=\"B2\" qty=5, sku=\"C3\" qty=1.",
+      "max_tokens": 250,
+      "schema": {
+        "type": "array",
+        "minItems": 3,
+        "maxItems": 3,
+        "items": {
+          "type": "object",
+          "required": ["sku", "qty"],
+          "properties": {"sku": {"type": "string"}, "qty": {"type": "integer"}}
+        }
+      },
+      "expected": [{"sku": "A1", "qty": 2}, {"sku": "B2", "qty": 5}, {"sku": "C3", "qty": 1}]
+    },
+    {
+      "id": "tool_weather",
+      "category": "tools",
+      "type": "tool_call",
+      "prompt": "What is the current weather in Tokyo, in celsius? Use the get_weather function.",
+      "max_tokens": 150,
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "get_weather",
+            "description": "Get the current weather for a location.",
+            "parameters": {
+              "type": "object",
+              "required": ["location", "unit"],
+              "properties": {
+                "location": {"type": "string", "description": "City name"},
+                "unit": {"type": "string", "enum": ["celsius", "fahrenheit"]}
+              }
+            }
+          }
+        }
+      ],
+      "expected_function": "get_weather",
+      "expected_args": {"location": "Tokyo", "unit": "celsius"}
+    },
+    {
+      "id": "tool_calculator",
+      "category": "tools",
+      "type": "tool_call",
+      "prompt": "Use the calculate function to add 47 and 128.",
+      "max_tokens": 150,
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "calculate",
+            "description": "Perform a basic arithmetic operation.",
+            "parameters": {
+              "type": "object",
+              "required": ["operation", "a", "b"],
+              "properties": {
+                "operation": {"type": "string", "enum": ["add", "subtract", "multiply", "divide"]},
+                "a": {"type": "number"},
+                "b": {"type": "number"}
+              }
+            }
+          }
+        }
+      ],
+      "expected_function": "calculate",
+      "expected_args": {"operation": "add", "a": 47, "b": 128}
+    },
+    {
+      "id": "reasoning_arithmetic",
+      "category": "reasoning",
+      "type": "exact_answer",
+      "prompt": "Compute 47 * 83 - 129. Reply with only the final integer, no words, no units, no explanation.",
+      "max_tokens": 64,
+      "expected_regex": "3[,.]?772"
+    },
+    {
+      "id": "reasoning_logic",
+      "category": "reasoning",
+      "type": "exact_answer",
+      "prompt": "Alice is older than Bob. Bob is older than Carol. Carol is older than Dave. Who is the youngest? Reply with only the first name, nothing else.",
+      "max_tokens": 32,
+      "expected_regex": "(?i)\\bdave\\b"
+    },
+    {
+      "id": "extraction_invoice",
+      "category": "long_context",
+      "type": "extraction",
+      "prompt_template": "Read the following invoice text and then answer: what is the invoice number, the total amount due (with currency symbol), and the due date? Reply as three lines exactly: \"Invoice: <number>\", \"Total: <amount>\", \"Due: <date>\".\n\n--- BEGIN DOCUMENT ---\n{context}\n--- END DOCUMENT ---",
+      "context_spec": {"kind": "filler_with_facts", "target_tokens": 2000, "seed": "extraction_invoice"},
+      "max_tokens": 150,
+      "expected_fields": {
+        "Invoice": "INV-88214",
+        "Total": "$4,392.50",
+        "Due": "2026-11-03"
+      },
+      "min_fields_matched": 3
+    },
+    {
+      "id": "needle_8k",
+      "category": "long_context",
+      "type": "needle",
+      "prompt_template": "Read the following document carefully. Somewhere in it is a single sentence containing a secret code. Find the secret code and reply with ONLY the code, nothing else.\n\n--- BEGIN DOCUMENT ---\n{context}\n--- END DOCUMENT ---",
+      "context_spec": {"kind": "filler_with_needle", "target_tokens": 8000, "seed": "needle_8k", "needle_sentence": "The secret code for today's briefing is ZEBRA-4471-QUARTZ.", "needle_answer_regex": "(?i)zebra-4471-quartz"},
+      "max_tokens": 64
+    },
+    {
+      "id": "code_bugfix",
+      "category": "code",
+      "type": "code_fix",
+      "prompt": "This Python function has a bug: it should return the second-largest DISTINCT value in a list of integers, but it currently returns the wrong thing for lists with duplicate maximums. Fix it. Reply with ONLY a single Python code block containing the corrected function named `second_largest`, no explanation.\n\n```python\ndef second_largest(nums):\n    unique = list(set(nums))\n    unique.sort()\n    return unique[-2]\n```\n",
+      "max_tokens": 400,
+      "function_name": "second_largest",
+      "test_code": "assert second_largest([1, 2, 3, 4]) == 3\nassert second_largest([5, 5, 5, 4]) == 4\nassert second_largest([10, 9]) == 9\nassert second_largest([1, 1, 2, 2, 3, 3]) == 2\nassert second_largest([-5, -1, -1, -10]) == -5\n"
+    },
+    {
+      "id": "instruction_wordcount",
+      "category": "reasoning",
+      "type": "instruction_follow",
+      "prompt": "Describe what a Prometheus counter metric is, in EXACTLY three sentences. Do not use the word 'gauge'. Each sentence must end with a period. Do not use any commas anywhere in your answer.",
+      "max_tokens": 200,
+      "constraints": {"max_sentences": 3, "min_sentences": 3, "forbid_chars": [","], "forbid_words": ["gauge"]}
+    },
+    {
+      "id": "instruction_format",
+      "category": "reasoning",
+      "type": "instruction_follow",
+      "prompt": "List the first 5 prime numbers as a single comma-separated line with no spaces, no other text, no prose, no explanation. Example format: 1,2,3,4,5",
+      "max_tokens": 64,
+      "constraints": {"format_regex": "^\\s*2,3,5,7,11\\s*$"}
+    },
+    {
+      "id": "summarize_keywords",
+      "category": "long_context",
+      "type": "summarize_keywords",
+      "prompt": "Summarize the following paragraph in 2-3 sentences. Your summary must include the words \"gateway\" and \"providers\".\n\nBifrost is an LLM gateway that routes chat and embedding requests to multiple backend providers, including a local vLLM engine and several free-tier cloud providers. It normalizes every request into an OpenAI-compatible format, enforces per-virtual-key authorization, and records usage so operators can measure cost, latency, and reliability across every provider without changing client code.",
+      "max_tokens": 200,
+      "required_keywords": ["gateway", "provider"]
+    }
+  ]
+}

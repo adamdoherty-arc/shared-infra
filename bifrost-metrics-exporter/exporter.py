@@ -59,6 +59,12 @@ STATE_DIR = Path(os.getenv("EXPORTER_STATE_DIR", "/state"))
 CURSOR_FILE = STATE_DIR / "cursor.txt"
 SCRAPE_INTERVAL_S = int(os.getenv("EXPORTER_INTERVAL_S", "15"))
 PORT = int(os.getenv("EXPORTER_PORT", "9100"))
+# Weekly lane-quality eval (scripts/lane_eval.py) writes state/lane_eval/latest.json
+# on the host; docker-compose.bifrost.yml bind-mounts that directory read-only here
+# so bifrost_lane_eval_* gauges reflect the last completed run without this
+# container needing to run the harness itself.
+LANE_EVAL_STATE_DIR = Path(os.getenv("LANE_EVAL_STATE_DIR", "/lane_eval"))
+LANE_EVAL_LATEST = LANE_EVAL_STATE_DIR / "latest.json"
 
 # ---- Active lane prober ---------------------------------------------------
 # The metrics above are PASSIVE — they only reflect requests that organically
@@ -218,6 +224,20 @@ lane_probe_skipped = Gauge(
 lane_probe_lanes = Gauge(
     "bifrost_lane_probe_lanes",
     "Number of lanes currently derived from config.json for active probing.",
+)
+
+# ---- Weekly lane-quality eval metrics (scripts/lane_eval.py) --------------
+lane_eval_pass_ratio = Gauge(
+    "bifrost_lane_eval_pass_ratio",
+    "Pass ratio (0-1) of the weekly lane-quality eval's most recent run, per "
+    "provider/model/task-category (json, tools, reasoning, long_context, code).",
+    ["provider", "model", "category"],
+)
+lane_eval_age_seconds = Gauge(
+    "bifrost_lane_eval_age_seconds",
+    "Seconds since the weekly lane-quality eval last completed a run "
+    "(state/lane_eval/latest.json's generated_at_unixtime). -1 if no run has "
+    "ever been read.",
 )
 
 
@@ -423,6 +443,35 @@ def _scrape_config() -> None:
         exporter_scrape_errors_total.labels(table="config").inc()
 
 
+def _scrape_lane_eval() -> None:
+    """Read state/lane_eval/latest.json (written weekly by scripts/lane_eval.py
+    on the host) and republish it as bifrost_lane_eval_pass_ratio /
+    bifrost_lane_eval_age_seconds. Missing file (harness never run yet, or the
+    bind mount isn't wired) is not an error -- age stays -1 and no pass-ratio
+    series are exported, which is what the alert rule keys off of."""
+    if not LANE_EVAL_LATEST.exists():
+        lane_eval_age_seconds.set(-1)
+        return
+    try:
+        data = json.loads(LANE_EVAL_LATEST.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        exporter_scrape_errors_total.labels(table="lane_eval").inc()
+        return
+    generated_at_unixtime = data.get("generated_at_unixtime")
+    if isinstance(generated_at_unixtime, (int, float)):
+        lane_eval_age_seconds.set(max(0.0, time.time() - generated_at_unixtime))
+    else:
+        lane_eval_age_seconds.set(-1)
+    for lane in data.get("lanes") or []:
+        provider = lane.get("provider")
+        model = lane.get("model")
+        if not provider or not model:
+            continue
+        for category, ratio in (lane.get("category_pass_ratio") or {}).items():
+            if isinstance(ratio, (int, float)):
+                lane_eval_pass_ratio.labels(provider, model, category).set(ratio)
+
+
 def _scrape_loop() -> None:
     cursor = _read_cursor()
     if not cursor:
@@ -452,6 +501,7 @@ def _scrape_loop() -> None:
                 if iteration <= 3 or iteration % 60 == 0:
                     print(f"scrape #{iteration}: no new rows (cursor={cursor})", flush=True)
             _scrape_config()
+            _scrape_lane_eval()
             if LOGS_STORE_TYPE == "postgres":
                 try:
                     conn = _pg_connect()
