@@ -151,12 +151,15 @@ UPDATE governance_virtual_key_provider_configs SET allow_all_keys=1
   model: the OFFICIAL `ggml-org/Qwen3-Reranker-0.6B-Q8_0-GGUF` (community GGUFs
   strip `cls.output.weight` and score every doc ~1e-23). Fetched once by the
   profile-gated `qwen3-rerank-prepare` into `shared-hf-cache`.
-- Measured: 10 docs p50 1.05 s on GPU, +1.6 GB VRAM (31.0/32.6 GB). CPU could not
-  meet the consumers' 3 s budget (3.6 s at `-t 8`, 8-9 s at `-t 4`, >120 s at
-  `-t 16`: cores are shared with qwen38-chat and vllm-embed).
+- Measured: 10 docs p50 1.05 s on an idle GPU, +1.6 GB VRAM (31.0/32.6 GB).
+  Under chat load it time-slices with qwen38-chat: 6 running chat requests gave
+  2.4-2.7 s for 10 docs of 800 chars, 3.3-4.5 s for 15 of 1500; a per-doc floor
+  of ~0.2-0.3 s, so `--parallel 4` made it slower (3-8.7 s), not faster. CPU was
+  3.6 s at `-t 8`, 8-9 s at `-t 4`, >120 s at `-t 16` (cores shared).
 - **Chat cost scales with rerank call rate** (continuous calls cut chat 265 ->
   76 tok/s). Consumers therefore enforce `RERANK_MAX_PER_MIN` (default 10 per
-  process), trim docs to `RERANK_DOC_MAX_CHARS` (1500) and fall back to vector
+  process), trim docs to `RERANK_DOC_MAX_CHARS` (800), over-fetch 2x, wait up to
+  `RERANK_TIMEOUT_S` (6 s, sized for p95 under chat load) and fall back to vector
   order on any failure. Consumers: ADA `stock_knowledge_enrichment_service`
   (chat RAG hits), Legion `rag_service.retrieve_context` and
   `/knowledge/semantic-search`. Do not add a high-volume caller without

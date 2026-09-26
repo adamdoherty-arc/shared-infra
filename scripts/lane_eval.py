@@ -86,7 +86,14 @@ BASE_URL = os.getenv("LANE_EVAL_BASE_URL", "http://127.0.0.1:4445").rstrip("/")
 MAX_LANES = int(os.getenv("LANE_EVAL_MAX_LANES", "20"))
 MAX_MODELS_PER_PROVIDER = int(os.getenv("LANE_EVAL_MAX_MODELS_PER_PROVIDER", "2"))
 CALL_DELAY_S = float(os.getenv("LANE_EVAL_CALL_DELAY_S", "1.5"))
-MAX_TOKENS_CAP = int(os.getenv("LANE_EVAL_MAX_TOKENS_CAP", "512"))
+MAX_TOKENS_CAP = int(os.getenv("LANE_EVAL_MAX_TOKENS_CAP", "2048"))
+# Reasoning lanes (gpt-oss, Nemotron, GLM-5.1, DeepSeek) think before they
+# answer; at the suite's 32-400 answer budgets they stopped at
+# finish_reason=length with empty content and were graded as wrong answers
+# (2026-09-25: all three answered 47*83-129 correctly at 1024, none at 64).
+# Every request gets this floor, as ADA's ladder gives reasoning rungs >= 900
+# in production; non-reasoning models stop on their own well before it.
+MIN_REQUEST_TOKENS = int(os.getenv("LANE_EVAL_MIN_REQUEST_TOKENS", "1024"))
 TIMEOUT_LOCAL_S = float(os.getenv("LANE_EVAL_TIMEOUT_LOCAL_S", "180"))
 TIMEOUT_CLOUD_S = float(os.getenv("LANE_EVAL_TIMEOUT_CLOUD_S", "90"))
 MAX_CALLS_PER_RUN = int(os.getenv("LANE_EVAL_MAX_CALLS_PER_RUN", "300"))
@@ -335,7 +342,7 @@ def call_chat_completion(vk: str, model: str, messages: list, max_tokens: int, t
     payload = {
         "model": model,
         "messages": messages,
-        "max_tokens": min(max_tokens, MAX_TOKENS_CAP),
+        "max_tokens": min(max(max_tokens, MIN_REQUEST_TOKENS), MAX_TOKENS_CAP),
         "temperature": 0.0,
     }
     if tools:
@@ -383,6 +390,13 @@ def call_chat_completion(vk: str, model: str, messages: list, max_tokens: int, t
 def _extract_text(body: dict) -> str:
     try:
         return body["choices"][0]["message"].get("content") or ""
+    except (KeyError, IndexError, TypeError):
+        return ""
+
+
+def _finish_reason(body: dict | None) -> str:
+    try:
+        return body["choices"][0].get("finish_reason") or ""
     except (KeyError, IndexError, TypeError):
         return ""
 
@@ -603,6 +617,10 @@ def run_task(vk: str, lane: dict, task: dict, context_cache: dict) -> dict:
     if not call.ok:
         record.update(outcome="error", detail=call.error)
         return record
+    if _finish_reason(call.body) == "length" and not _extract_tool_call(call.body):
+        # Out of budget before the answer: a harness limit, not a wrong answer.
+        record.update(outcome="truncated", detail=f"finish_reason=length at max_tokens<={MAX_TOKENS_CAP}")
+        return record
     try:
         grader = GRADERS[task["type"]]
         passed, detail = grader(call, task, context_cache)
@@ -658,6 +676,7 @@ def _summarize_lane(lane: dict, task_records: list[dict]) -> dict:
     p50 = statistics.median(latencies) if latencies else None
     errors = sum(1 for r in task_records if r["outcome"] == "error")
     rate_limited = sum(1 for r in task_records if r["outcome"] == "rate_limited")
+    truncated = sum(1 for r in task_records if r["outcome"] == "truncated")
 
     return {
         "provider": lane["provider"],
@@ -668,6 +687,7 @@ def _summarize_lane(lane: dict, task_records: list[dict]) -> dict:
         "p50_latency_ms": p50,
         "errors": errors,
         "rate_limited": rate_limited,
+        "truncated": truncated,
         "attempted": len(task_records),
         "tasks": task_records,
     }

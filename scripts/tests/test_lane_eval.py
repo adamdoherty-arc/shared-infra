@@ -283,3 +283,40 @@ def test_best_lane_per_purpose_picks_highest_pass_ratio_then_lower_latency():
 
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))
+
+def test_request_budget_has_reasoning_floor(monkeypatch):
+    """Reasoning lanes need room to think; a 64-token task still asks for the floor."""
+    sent = {}
+
+    class _Resp:
+        status = 200
+
+        def read(self):
+            return b'{"choices": [{"message": {"content": "3772"}, "finish_reason": "stop"}]}'
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    def _fake_urlopen(req, timeout):
+        sent.update(json.loads(req.data))
+        return _Resp()
+
+    monkeypatch.setattr(lane_eval.urllib.request, "urlopen", _fake_urlopen)
+    lane_eval.call_chat_completion("vk", "groq/x", [{"role": "user", "content": "q"}], 64, 5)
+    assert sent["max_tokens"] == min(max(64, lane_eval.MIN_REQUEST_TOKENS), lane_eval.MAX_TOKENS_CAP) >= 1024
+
+
+def test_length_cutoff_is_truncated_not_failed(monkeypatch):
+    body = {"choices": [{"message": {"content": ""}, "finish_reason": "length"}]}
+    monkeypatch.setattr(lane_eval, "call_chat_completion",
+                        lambda *a, **k: lane_eval.CallResult(True, 200, body, 10.0))
+    task = {"id": "t", "category": "reasoning", "type": "exact_answer", "prompt": "q", "answer_regex": "x"}
+    lane = {"provider": "groq", "model": "x", "timeout_s": 5}
+    rec = lane_eval.run_task("vk", lane, task, {})
+    assert rec["outcome"] == "truncated"
+    summary = lane_eval._summarize_lane({"provider": "groq", "model": "x", "is_pinned": True}, [rec])
+    assert summary["truncated"] == 1
+    assert summary["category_pass_ratio"]["reasoning"] is None
