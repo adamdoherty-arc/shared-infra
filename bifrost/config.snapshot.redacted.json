@@ -65,11 +65,7 @@
           "name": "nvidia-nim-secondary",
           "value": "env.NV_API_KEY_2",
           "models": [
-            "deepseek-v4-flash",
             "meta/llama-3.2-11b-vision-instruct",
-            "meta/llama-3.2-90b-vision-instruct",
-            "mistralai/mistral-nemotron",
-            "moonshotai/kimi-k3",
             "nemoguard-safety",
             "nemotron-lightning",
             "nemotron-safety",
@@ -82,11 +78,11 @@
             "nvidia/nemotron-3.5-content-safety",
             "nvidia/nemotron-3.5-lightning-30b-a3b",
             "nvidia/nemotron-parse-2.0",
+            "nvidia/riva-translate-4b-instruct-v2",
             "openai/gpt-oss-20b",
             "poolside/laguna-xs-2.1"
           ],
           "aliases": {
-            "deepseek-v4-flash": "deepseek-ai/deepseek-v4-flash-0731",
             "nemoguard-safety": "nvidia/llama-3.1-nemoguard-8b-content-safety",
             "nemotron-lightning": "nvidia/nemotron-3.5-lightning-30b-a3b",
             "nemotron-safety": "nvidia/nemotron-3.5-content-safety"
@@ -97,13 +93,8 @@
           "name": "nvidia-nim-primary",
           "value": "env.NV_API_KEY",
           "models": [
-            "deepseek-v4",
-            "deepseek-v4-flash",
             "llama-90b-vision",
             "meta/llama-3.2-11b-vision-instruct",
-            "meta/llama-3.2-90b-vision-instruct",
-            "mistralai/mistral-nemotron",
-            "moonshotai/kimi-k3",
             "nemoguard-safety",
             "nemotron-lightning",
             "nemotron-safety",
@@ -118,13 +109,12 @@
             "nvidia/nemotron-3.5-content-safety",
             "nvidia/nemotron-3.5-lightning-30b-a3b",
             "nvidia/nemotron-parse-2.0",
+            "nvidia/riva-translate-4b-instruct-v2",
             "openai/gpt-oss-20b",
             "poolside/laguna-xs-2.1"
           ],
           "aliases": {
-            "deepseek-v4": "deepseek-ai/deepseek-v4-flash-0731",
-            "deepseek-v4-flash": "deepseek-ai/deepseek-v4-flash-0731",
-            "llama-90b-vision": "meta/llama-3.2-90b-vision-instruct",
+            "llama-90b-vision": "meta/llama-3.2-11b-vision-instruct",
             "nemoguard-safety": "nvidia/llama-3.1-nemoguard-8b-content-safety",
             "nemotron-lightning": "nvidia/nemotron-3.5-lightning-30b-a3b",
             "nemotron-safety": "nvidia/nemotron-3.5-content-safety",
@@ -137,11 +127,7 @@
           "name": "nvidia-nim-tertiary",
           "value": "env.NV_API_KEY_3",
           "models": [
-            "deepseek-v4-flash",
             "meta/llama-3.2-11b-vision-instruct",
-            "meta/llama-3.2-90b-vision-instruct",
-            "mistralai/mistral-nemotron",
-            "moonshotai/kimi-k3",
             "nemoguard-safety",
             "nemotron-lightning",
             "nemotron-safety",
@@ -154,11 +140,11 @@
             "nvidia/nemotron-3.5-content-safety",
             "nvidia/nemotron-3.5-lightning-30b-a3b",
             "nvidia/nemotron-parse-2.0",
+            "nvidia/riva-translate-4b-instruct-v2",
             "openai/gpt-oss-20b",
             "poolside/laguna-xs-2.1"
           ],
           "aliases": {
-            "deepseek-v4-flash": "deepseek-ai/deepseek-v4-flash-0731",
             "nemoguard-safety": "nvidia/llama-3.1-nemoguard-8b-content-safety",
             "nemotron-lightning": "nvidia/nemotron-3.5-lightning-30b-a3b",
             "nemotron-safety": "nvidia/nemotron-3.5-content-safety"
@@ -194,20 +180,15 @@
             "inclusionai/ling-3.0-flash",
             "inclusionai/ling-3.0-flash-fin:free",
             "inclusionai/ling-3.0-flash-sante:free",
-            "inclusionai/ling-3.0-flash-vl:free",
-            "kimi-k2.5",
-            "kimi-k2.6-or",
-            "kimi-k3",
             "ling-flash-fin",
             "ling-flash-sante",
             "minimax-m3",
             "minimax/minimax-m3",
-            "moonshotai/kimi-k2.5",
-            "moonshotai/kimi-k2.6",
-            "moonshotai/kimi-k3",
             "nemotron-lightning-free",
             "nemotron-super-free",
             "nemotron-ultra-free",
+            "nex-agi/nex-n2.5-mini:free",
+            "nex-agi/nex-n2.5-pro:free",
             "north-code-free",
             "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
             "nvidia/nemotron-3-super-120b-a12b:free",
@@ -231,9 +212,6 @@
             "glm-5.2-or-free": "z-ai/glm-5.2:free",
             "glm-5.2-paid": "z-ai/glm-5.2",
             "glm-5.3-flash": "z-ai/glm-5.3-flash",
-            "kimi-k2.5": "moonshotai/kimi-k2.5",
-            "kimi-k2.6-or": "moonshotai/kimi-k2.6",
-            "kimi-k3": "moonshotai/kimi-k3",
             "ling-flash-fin": "inclusionai/ling-3.0-flash-fin:free",
             "ling-flash-sante": "inclusionai/ling-3.0-flash-sante:free",
             "minimax-m3": "minimax/minimax-m3",
@@ -271,14 +249,9 @@
             "gemma-4-31b-hf",
             "glm-5.1-hf",
             "google/gemma-4-31B-it",
-            "kimi-code-hf",
-            "kimi-k2.6-hf",
             "meta-llama/Llama-3.1-8B-Instruct",
             "minimax-m2.7-hf",
-            "moonshotai/Kimi-K2.6",
-            "moonshotai/Kimi-K2.7-Code",
             "openai/gpt-oss-120b",
-            "openai/gpt-oss-20b",
             "qwen3-coder-480b-hf",
             "qwen3-coder-hf",
             "zai-org/GLM-5.1"
@@ -287,8 +260,6 @@
             "deepseek-v4-hf": "deepseek-ai/DeepSeek-V4-Flash",
             "gemma-4-31b-hf": "google/gemma-4-31B-it",
             "glm-5.1-hf": "zai-org/GLM-5.1",
-            "kimi-code-hf": "moonshotai/Kimi-K2.7-Code",
-            "kimi-k2.6-hf": "moonshotai/Kimi-K2.6",
             "minimax-m2.7-hf": "MiniMaxAI/MiniMax-M2.7",
             "qwen3-coder-480b-hf": "Qwen/Qwen3-Coder-480B-A35B-Instruct",
             "qwen3-coder-hf": "Qwen/Qwen3-Coder-Next"
@@ -310,8 +281,6 @@
           "value": "env.GROQ_API_KEY",
           "models": [
             "allam-2-7b",
-            "groq/compound",
-            "groq/compound-mini",
             "openai/gpt-oss-120b",
             "openai/gpt-oss-20b",
             "openai/gpt-oss-safeguard-20b",
@@ -375,31 +344,9 @@
           "models": [
             "aisingapore/Gemma-SEA-LION-v4-27B-IT",
             "aisingapore/Llama-SEA-LION-v3-70B-IT",
+            "aisingapore/Nemotron-SEA-LION-v4.8-120B-A12B",
             "aisingapore/Qwen-SEA-LION-v4-32B-IT",
             "aisingapore/Qwen-SEA-LION-v4.5-27B-IT"
-          ],
-          "aliases": {},
-          "weight": 1.0
-        }
-      ],
-      "concurrency_and_buffer_size": {
-        "concurrency": 2,
-        "buffer_size": 50
-      }
-    },
-    "aion": {
-      "base_url": "https://api.aionlabs.ai",
-      "list_models": null,
-      "keys": [
-        {
-          "name": "aion_api_key-primary",
-          "value": "env.AION_API_KEY",
-          "models": [
-            "aion-labs/aion-2.0",
-            "aion-labs/aion-2.5",
-            "aion-labs/aion-3.0",
-            "aion-labs/aion-3.0-mini",
-            "aion-labs/aion-rp-llama-3.1-8b"
           ],
           "aliases": {},
           "weight": 1.0
@@ -412,6 +359,7 @@
     }
   },
   "disabled_providers": [
+    "aion",
     "anthropic",
     "bazaarlink",
     "cerebras",
@@ -434,11 +382,6 @@
       "is_active": true,
       "providers": [
         {
-          "provider": "aion",
-          "allow_all_keys": true,
-          "allowed_models": 5
-        },
-        {
           "provider": "embed-local",
           "allow_all_keys": true,
           "allowed_models": 1
@@ -451,27 +394,27 @@
         {
           "provider": "groq",
           "allow_all_keys": true,
-          "allowed_models": 9
+          "allowed_models": 7
         },
         {
           "provider": "hf-router",
           "allow_all_keys": true,
-          "allowed_models": 21
+          "allowed_models": 16
         },
         {
           "provider": "nvidia-nim",
           "allow_all_keys": true,
-          "allowed_models": 23
+          "allowed_models": 19
         },
         {
           "provider": "openrouter",
           "allow_all_keys": true,
-          "allowed_models": 45
+          "allowed_models": 40
         },
         {
           "provider": "sealion",
           "allow_all_keys": true,
-          "allowed_models": 4
+          "allowed_models": 5
         },
         {
           "provider": "vllm-local",
@@ -486,11 +429,6 @@
       "is_active": true,
       "providers": [
         {
-          "provider": "aion",
-          "allow_all_keys": true,
-          "allowed_models": 5
-        },
-        {
           "provider": "embed-local",
           "allow_all_keys": true,
           "allowed_models": 1
@@ -503,27 +441,27 @@
         {
           "provider": "groq",
           "allow_all_keys": true,
-          "allowed_models": 9
+          "allowed_models": 7
         },
         {
           "provider": "hf-router",
           "allow_all_keys": true,
-          "allowed_models": 21
+          "allowed_models": 16
         },
         {
           "provider": "nvidia-nim",
           "allow_all_keys": true,
-          "allowed_models": 23
+          "allowed_models": 19
         },
         {
           "provider": "openrouter",
           "allow_all_keys": true,
-          "allowed_models": 45
+          "allowed_models": 40
         },
         {
           "provider": "sealion",
           "allow_all_keys": true,
-          "allowed_models": 4
+          "allowed_models": 5
         },
         {
           "provider": "vllm-local",
@@ -538,11 +476,6 @@
       "is_active": true,
       "providers": [
         {
-          "provider": "aion",
-          "allow_all_keys": true,
-          "allowed_models": 5
-        },
-        {
           "provider": "embed-local",
           "allow_all_keys": true,
           "allowed_models": 1
@@ -555,22 +488,22 @@
         {
           "provider": "groq",
           "allow_all_keys": true,
-          "allowed_models": 9
+          "allowed_models": 7
         },
         {
           "provider": "hf-router",
           "allow_all_keys": true,
-          "allowed_models": 21
+          "allowed_models": 16
         },
         {
           "provider": "nvidia-nim",
           "allow_all_keys": true,
-          "allowed_models": 23
+          "allowed_models": 19
         },
         {
           "provider": "sealion",
           "allow_all_keys": true,
-          "allowed_models": 4
+          "allowed_models": 5
         },
         {
           "provider": "vllm-local",
@@ -585,11 +518,6 @@
       "is_active": true,
       "providers": [
         {
-          "provider": "aion",
-          "allow_all_keys": true,
-          "allowed_models": 5
-        },
-        {
           "provider": "embed-local",
           "allow_all_keys": true,
           "allowed_models": 1
@@ -602,22 +530,22 @@
         {
           "provider": "groq",
           "allow_all_keys": true,
-          "allowed_models": 9
+          "allowed_models": 7
         },
         {
           "provider": "hf-router",
           "allow_all_keys": true,
-          "allowed_models": 21
+          "allowed_models": 16
         },
         {
           "provider": "nvidia-nim",
           "allow_all_keys": true,
-          "allowed_models": 23
+          "allowed_models": 19
         },
         {
           "provider": "sealion",
           "allow_all_keys": true,
-          "allowed_models": 4
+          "allowed_models": 5
         },
         {
           "provider": "vllm-local",
@@ -632,11 +560,6 @@
       "is_active": true,
       "providers": [
         {
-          "provider": "aion",
-          "allow_all_keys": true,
-          "allowed_models": 5
-        },
-        {
           "provider": "embed-local",
           "allow_all_keys": true,
           "allowed_models": 1
@@ -649,22 +572,22 @@
         {
           "provider": "groq",
           "allow_all_keys": true,
-          "allowed_models": 9
+          "allowed_models": 7
         },
         {
           "provider": "hf-router",
           "allow_all_keys": true,
-          "allowed_models": 21
+          "allowed_models": 16
         },
         {
           "provider": "nvidia-nim",
           "allow_all_keys": true,
-          "allowed_models": 23
+          "allowed_models": 19
         },
         {
           "provider": "sealion",
           "allow_all_keys": true,
-          "allowed_models": 4
+          "allowed_models": 5
         },
         {
           "provider": "vllm-local",
@@ -679,11 +602,6 @@
       "is_active": true,
       "providers": [
         {
-          "provider": "aion",
-          "allow_all_keys": true,
-          "allowed_models": 5
-        },
-        {
           "provider": "embed-local",
           "allow_all_keys": true,
           "allowed_models": 1
@@ -696,22 +614,22 @@
         {
           "provider": "groq",
           "allow_all_keys": true,
-          "allowed_models": 9
+          "allowed_models": 7
         },
         {
           "provider": "hf-router",
           "allow_all_keys": true,
-          "allowed_models": 21
+          "allowed_models": 16
         },
         {
           "provider": "nvidia-nim",
           "allow_all_keys": true,
-          "allowed_models": 23
+          "allowed_models": 19
         },
         {
           "provider": "sealion",
           "allow_all_keys": true,
-          "allowed_models": 4
+          "allowed_models": 5
         },
         {
           "provider": "vllm-local",
@@ -726,11 +644,6 @@
       "is_active": true,
       "providers": [
         {
-          "provider": "aion",
-          "allow_all_keys": true,
-          "allowed_models": 5
-        },
-        {
           "provider": "embed-local",
           "allow_all_keys": true,
           "allowed_models": 1
@@ -743,22 +656,22 @@
         {
           "provider": "groq",
           "allow_all_keys": true,
-          "allowed_models": 9
+          "allowed_models": 7
         },
         {
           "provider": "hf-router",
           "allow_all_keys": true,
-          "allowed_models": 21
+          "allowed_models": 16
         },
         {
           "provider": "nvidia-nim",
           "allow_all_keys": true,
-          "allowed_models": 23
+          "allowed_models": 19
         },
         {
           "provider": "sealion",
           "allow_all_keys": true,
-          "allowed_models": 4
+          "allowed_models": 5
         },
         {
           "provider": "vllm-local",

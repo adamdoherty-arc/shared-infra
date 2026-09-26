@@ -46,7 +46,7 @@
       "custom_provider_config": {
         "base_provider_type": "openai",
         "allowed_requests": {
-          "_comment_list_models": "MUST stay false. /v1/models fans out to every provider with list_models=true, so a model-list call joins the inference queue behind real work (Legion's stack_monitor.py documented it hanging past 150s on 2026-08-03, when vllm-chat ran --max-num-seqs 1). vllm-chat now runs --max-num-seqs 6, which makes the hang less likely but NOT impossible — model discovery must never depend on inference capacity, at any concurrency. Corrected 2026-08-11: this comment previously asserted seqs=1 as current fact.",
+          "_comment_list_models": "MUST stay false. /v1/models fans out to every provider with list_models=true, so a model-list call joins the inference queue behind real work (Legion's stack_monitor.py documented it hanging past 150s on 2026-08-03, when vllm-chat ran --max-num-seqs 1). vllm-chat now runs --max-num-seqs 6, which makes the hang less likely but NOT impossible \u2014 model discovery must never depend on inference capacity, at any concurrency. Corrected 2026-08-11: this comment previously asserted seqs=1 as current fact.",
           "list_models": false,
           "chat_completion": true,
           "chat_completion_stream": true
@@ -97,7 +97,6 @@
           "value": "env.NV_API_KEY_2",
           "models": [
             "meta/llama-3.2-11b-vision-instruct",
-            "meta/llama-3.2-90b-vision-instruct",
             "nvidia/ising-calibration-1.5-31b",
             "nvidia/llama-3.1-nemoguard-8b-content-safety",
             "nvidia/llama-3.1-nemotron-safety-guard-8b-v3",
@@ -126,7 +125,6 @@
           "value": "env.NV_API_KEY",
           "models": [
             "meta/llama-3.2-11b-vision-instruct",
-            "meta/llama-3.2-90b-vision-instruct",
             "nvidia/ising-calibration-1.5-31b",
             "nvidia/llama-3.1-nemoguard-8b-content-safety",
             "nvidia/llama-3.1-nemotron-safety-guard-8b-v3",
@@ -150,7 +148,7 @@
           "aliases": {
             "nemotron-ultra-550b": "nvidia/nemotron-3-ultra-550b-a55b",
             "nemotron-super-120b": "nvidia/nemotron-3-super-120b-a12b",
-            "llama-90b-vision": "meta/llama-3.2-90b-vision-instruct",
+            "llama-90b-vision": "meta/llama-3.2-11b-vision-instruct",
             "nemotron-lightning": "nvidia/nemotron-3.5-lightning-30b-a3b",
             "nemotron-safety": "nvidia/nemotron-3.5-content-safety",
             "nemoguard-safety": "nvidia/llama-3.1-nemoguard-8b-content-safety"
@@ -161,7 +159,6 @@
           "value": "env.NV_API_KEY_3",
           "models": [
             "meta/llama-3.2-11b-vision-instruct",
-            "meta/llama-3.2-90b-vision-instruct",
             "nvidia/ising-calibration-1.5-31b",
             "nvidia/llama-3.1-nemoguard-8b-content-safety",
             "nvidia/llama-3.1-nemotron-safety-guard-8b-v3",
