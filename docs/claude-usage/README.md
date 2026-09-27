@@ -10,6 +10,6 @@ spend is invisible here. Targets: top-tier share <= 30%, avg top-tier cache-read
 
 | host | generated (UTC) | window | est. cost | top-tier share | avg top cache-read | subagent top share | targets |
 |---|---|---|---|---|---|---|---|
-| [`VENGEANCE`](hosts/VENGEANCE/README.md) | 2026-09-21 16:36 | 7d | $13,413 | 74.5% | 291,272 | 39.7% | OVER OVER OVER |
+| [`VENGEANCE`](hosts/VENGEANCE/README.md) | 2026-09-27 12:00 | 7d | $25,681 | 66.5% | 281,961 | 31.3% | OVER OVER OVER |
 
 _Rendered by `scripts/claude_usage_index.py`; re-run it after any host page changes._
