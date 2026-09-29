@@ -771,3 +771,19 @@ def test_fit_rows_keeps_failures_and_stays_under_the_budget():
     assert any(r["node_id"] == "t::fail" for r in kept)
     assert 0 < len(kept) < len(rows)
     assert parsers.fit_rows(rows[:3], {}, budget=10_000) == rows[:3]
+
+
+def test_testmon_miss_for_a_file_falls_back_to_the_import_graph(tmp_path, monkeypatch):
+    from tplib import selection
+    (tmp_path / "backend" / "tests").mkdir(parents=True)
+    (tmp_path / "backend" / "services").mkdir()
+    for name in ("known_mod", "missing_mod"):
+        (tmp_path / "backend" / "services" / f"{name}.py").write_text("x = 1\n", encoding="utf-8")
+    (tmp_path / "backend" / "tests" / "test_a.py").write_text("from backend.services.known_mod import x\n", encoding="utf-8")
+    (tmp_path / "backend" / "tests" / "test_b.py").write_text("from backend.services.missing_mod import x\n", encoding="utf-8")
+    monkeypatch.setattr(selection, "testmon_pairs", lambda *a, **k: [["backend/services/known_mod.py", "backend/tests/test_a.py::t"]])
+    ids, info = selection.select_for_paths(
+        tmp_path, {"kind": "exec", "container": "c"}, "/d",
+        ["backend/services/known_mod.py", "backend/services/missing_mod.py"], ["backend/tests/**/test_*.py"])
+    assert ids == ["backend/tests/test_a.py::t", "backend/tests/test_b.py"]
+    assert info["source"] == "testmon+import-graph" and info["import_graph_files"] == ["backend/services/missing_mod.py"]

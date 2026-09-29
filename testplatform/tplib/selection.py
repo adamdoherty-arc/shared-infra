@@ -23,10 +23,10 @@ if any(not need[t] <= cols(t) for t in need):
     raise SystemExit(0)
 marks = ",".join("?" * len(files))
 rows = con.execute(
-    "select distinct te.test_name from test_execution te "
+    "select distinct f.filename, te.test_name from test_execution te "
     "join test_execution_file_fp l on l.test_execution_id = te.id "
     "join file_fp f on f.id = l.fingerprint_id where f.filename in (%s)" % marks, files).fetchall()
-os.write(1, json.dumps({"schema": True, "tests": sorted(r[0] for r in rows)}).encode())
+os.write(1, json.dumps({"schema": True, "pairs": sorted([r[0], r[1]] for r in rows)}).encode())
 """
 
 
@@ -46,8 +46,8 @@ def testmon_data_exists(runtime: dict[str, Any], data_file: str) -> bool:
     return rc == 0
 
 
-def tests_from_testmon(runtime: dict[str, Any], data_file: str, files: list[str]) -> list[str] | None:
-    """Node ids testmon recorded as depending on any of `files`; None when the DB cannot answer."""
+def testmon_pairs(runtime: dict[str, Any], data_file: str, files: list[str]) -> list[list[str]] | None:
+    """(source file, node id) pairs recorded by testmon; None when the database cannot answer."""
     if not files or not testmon_data_exists(runtime, data_file):
         return None
     rc, out = _exec(["docker", "exec", "-i", runtime["container"], "python", "-c", _TESTMON_QUERY, data_file],
@@ -58,9 +58,7 @@ def tests_from_testmon(runtime: dict[str, Any], data_file: str, files: list[str]
         data = json.loads(out.strip().splitlines()[-1])
     except (ValueError, IndexError):
         return None
-    if not data.get("schema"):
-        return None
-    return list(data["tests"])
+    return list(data["pairs"]) if data.get("schema") else None
 
 
 def _dotted(rel: str) -> str:
@@ -125,13 +123,21 @@ def select_for_paths(root: Path, runtime: dict[str, Any], data_file: str, files:
     direct = [f for f in norm if f.endswith(".py") and _is_test(f, test_globs) and (root / f).exists()]
     sources = [f for f in norm if f not in direct]
     selection: dict[str, Any] = {"mode": "paths", "paths": norm}
-    from_db = tests_from_testmon(runtime, data_file, sources)
-    if from_db is not None:
-        selection["source"] = "testmon"
-        chosen = sorted(set(direct) | set(from_db))
-    else:
+    pairs = testmon_pairs(runtime, data_file, sources)
+    chosen = set(direct)
+    if pairs is None:
         selection["source"] = "import-graph"
-        chosen = sorted(set(direct) | set(tests_from_imports(root, sources, test_globs)))
+        chosen |= set(tests_from_imports(root, sources, test_globs))
+    else:
+        selection["source"] = "testmon"
+        chosen |= {test for _, test in pairs}
+        known = {f for f, _ in pairs}
+        unknown = [f for f in sources if f.endswith(".py") and f not in known]
+        if unknown:
+            selection["source"] = "testmon+import-graph"
+            selection["import_graph_files"] = unknown
+            chosen |= set(tests_from_imports(root, unknown, test_globs))
+    chosen = sorted(chosen)
     files_only = sorted({t.split("::", 1)[0] for t in chosen})
     ids = chosen if len(chosen) <= MAX_NODE_IDS else files_only
     selection["tests"] = len(ids)
