@@ -30,6 +30,12 @@ def emit(lines: list[str] | str, detail: bool = False, stream=None) -> int:
         lines = lines.splitlines()
     out = fit(list(lines), detail)
     target = stream if stream is not None else sys.stdout
-    target.write("\n".join(out) + "\n")
+    text = "\n".join(out) + "\n"
+    encoding = getattr(target, "encoding", None) or "utf-8"
+    try:
+        text.encode(encoding)
+    except UnicodeEncodeError:
+        text = text.encode(encoding, "replace").decode(encoding)
+    target.write(text)
     target.flush()
     return len(out)

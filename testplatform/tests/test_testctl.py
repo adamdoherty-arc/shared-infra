@@ -787,3 +787,13 @@ def test_testmon_miss_for_a_file_falls_back_to_the_import_graph(tmp_path, monkey
         ["backend/services/known_mod.py", "backend/services/missing_mod.py"], ["backend/tests/**/test_*.py"])
     assert ids == ["backend/tests/test_a.py::t", "backend/tests/test_b.py"]
     assert info["source"] == "testmon+import-graph" and info["import_graph_files"] == ["backend/services/missing_mod.py"]
+
+
+def test_emit_survives_characters_the_console_cannot_encode():
+    import io
+    from tplib import printer
+    raw = io.BytesIO()
+    stream = io.TextIOWrapper(raw, encoding="cp1252", errors="strict")
+    printer.emit(["PASS ✔ done"], stream=stream)
+    stream.flush()
+    assert raw.getvalue().startswith(b"PASS ")
