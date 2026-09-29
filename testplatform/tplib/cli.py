@@ -83,6 +83,11 @@ def _run_detached(args: argparse.Namespace, name: str, lock: ProjectLock) -> int
                      creationflags=flags, close_fds=True)
     held = lock.wait_for_run_id(20.0)
     if held is not None and held.run_id is not None:
+        project = load_project(name)
+        _, target = parse_target_spec(args.spec)
+        if held.key != runner.request_key(target or project.default_target, args.paths):
+            emit([f"queued {args.spec} behind run {held.run_id} (first come, first served); poll with: testctl status"])
+            return 0
         emit([f"started run {held.run_id} for {args.spec}; poll with: testctl status {held.run_id}"])
         return 0
     emit([f"started {args.spec}; run id not registered yet; poll with: testctl status"])
