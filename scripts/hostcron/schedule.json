@@ -407,6 +407,23 @@
       "schedule": {},
       "timeout_s": 120,
       "enabled": true
+    },
+    {
+      "name": "ada-feature-map-nightly",
+      "owner": "ada",
+      "_note": "Rebuilds the derived per-feature architecture maps (docs/architecture/**) and generated nested CLAUDE.md files. Leaves the result on disk; the feature_map_fresh pre-commit gate carries it into the next commit that touches a feature (Enhancement-1001108).",
+      "cmd": [
+        "cmd.exe",
+        "/c",
+        "C:\\code\\shared-infra\\scripts\\run-feature-map.cmd"
+      ],
+      "cwd": "C:\\code\\ADA",
+      "schedule": {
+        "minute": 10,
+        "hour": 5
+      },
+      "timeout_s": 900,
+      "enabled": true
     }
   ]
 }
