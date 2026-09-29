@@ -108,7 +108,7 @@ through infractl, whose restart ladder runs the same sync.
 | Project     | Virtual key name    | Where the key lives |
 |---|---|---|
 | ADA         | `ada-prod`          | `C:\code\ADA\.env` -> `BIFROST_GATEWAY_KEY=sk-bf-...` |
-| Zero        | `zero-prod`         | `C:\code\zero\.env` -> `VLLM_API_KEY` + `ZERO_BIFROST_API_KEY` |
+| Zero (retired 2026-09-29) | `zero-prod` | Deactivated (`is_active=false`), not deleted; the gateway answers 403. Its cap stays in `vk-rate-limits.json` because the apply gate requires one for every live VK row. |
 | Legion      | `legion-prod`       | `C:\code\Legion\.env` + `Legion\backend\.env` -> `BIFROST_API_KEY` |
 | FortressOS  | `fortressos-prod`   | FortressOS project config |
 | Claude Code | `claude-code-local` | Local Claude Code / MCP sessions |

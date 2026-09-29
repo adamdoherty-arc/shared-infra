@@ -246,9 +246,9 @@ services:
               capabilities: [gpu]
     volumes:
       # Pre-downloaded GGUF files. Host path
-      # ``c:/code/zero/workspace/llm-models/`` is shared with zero-api
-      # so we can use that container's ``huggingface_hub`` to fetch new
-      # quants. Mount is read-only inside llama.cpp — it doesn't write here.
+      # ``c:/code/zero/workspace/llm-models/``. Zero was retired 2026-09-29
+      # but this directory is still the only copy of the GGUF files, so it
+      # must not be deleted with the Zero repo. Read-only inside llama.cpp.
       - ../zero/workspace/llm-models:/models:ro
     restart: unless-stopped
     healthcheck:
