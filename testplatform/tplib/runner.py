@@ -572,6 +572,13 @@ def start_and_run(project: Project, target: str | None, trigger: str, legion: Le
         except LegionError:
             known = {}
     rows = parsers.select_rows(exe.cases, known, sparse_target)
+    if sum(len(json.dumps(c)) for c in rows) > parsers.MAX_PAYLOAD_BYTES:
+        if not known:
+            try:
+                known = legion.hashes(project.legion_project_id)
+            except LegionError:
+                known = {}
+        rows = parsers.fit_rows(rows, known)
     payload: dict[str, Any] = {
         "status": exe.status, "completed_at": _iso(), "duration_s": round(duration, 2), "totals": totals,
         "error_summary": exe.error_summary, "cases": rows, "quarantined_deselected": exe.quarantined_deselected}

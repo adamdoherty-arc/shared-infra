@@ -217,6 +217,31 @@ def parse_playwright_smoke(results: list[dict[str, Any]]) -> list[dict[str, Any]
     return cases
 
 
+MAX_PAYLOAD_BYTES = 4_000_000
+
+
+def fit_rows(rows: list[dict[str, Any]], known_hashes: dict[str, str],
+             budget: int = MAX_PAYLOAD_BYTES) -> list[dict[str, Any]]:
+    """Keep the ingest body under Legion's 5 MB request limit: every failed/error/rerun row, then passed rows
+    whose body changed, then the rest in node order until the byte budget is spent."""
+    import json
+    sizes = [len(json.dumps(r)) for r in rows]
+    if sum(sizes) <= budget:
+        return rows
+    bad = {"failed", "error", "rerun_passed"}
+    order = sorted(range(len(rows)), key=lambda i: (
+        0 if rows[i]["status"] in bad else (1 if known_hashes.get(rows[i]["node_id"]) != rows[i].get("body_hash") else 2),
+        rows[i]["node_id"]))
+    kept: set[int] = set()
+    used = 0
+    for i in order:
+        if rows[i]["status"] not in bad and used + sizes[i] > budget:
+            continue
+        kept.add(i)
+        used += sizes[i]
+    return [r for i, r in enumerate(rows) if i in kept]
+
+
 def totals_of(cases: list[dict[str, Any]]) -> dict[str, int]:
     def n(*statuses: str) -> int:
         return sum(1 for c in cases if c["status"] in statuses)

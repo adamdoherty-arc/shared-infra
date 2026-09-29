@@ -761,3 +761,13 @@ def test_create_rejected_is_reported_as_rejected_and_not_saved_for_replay(tmp_pa
     lock.release()
     assert outcome.run_id is None and "rejected" in outcome.text
     assert not (outcome.artifact_dir / "pending_ingest.json").exists()
+
+
+def test_fit_rows_keeps_failures_and_stays_under_the_budget():
+    from tplib import parsers
+    rows = [{"node_id": f"t::{i:05d}", "status": "passed", "body_hash": "h", "pad": "x" * 200} for i in range(200)]
+    rows.append({"node_id": "t::fail", "status": "failed", "body_hash": "h", "pad": "x" * 200})
+    kept = parsers.fit_rows(rows, {r["node_id"]: "h" for r in rows}, budget=10_000)
+    assert any(r["node_id"] == "t::fail" for r in kept)
+    assert 0 < len(kept) < len(rows)
+    assert parsers.fit_rows(rows[:3], {}, budget=10_000) == rows[:3]
