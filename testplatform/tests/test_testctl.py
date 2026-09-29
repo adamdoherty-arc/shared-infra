@@ -548,6 +548,7 @@ def test_lock_records_the_request_key_and_a_second_holder_can_queue(tmp_path):
 
 def test_service_queues_a_different_request_once(tmp_path, monkeypatch):
     from types import SimpleNamespace
+
     from tplib import runner, server
     from tplib.lock import ProjectLock
     project = SimpleNamespace(name="p", default_target="fast", profile={})
@@ -564,3 +565,31 @@ def test_service_queues_a_different_request_once(tmp_path, monkeypatch):
     assert first == (202, {"accepted": True, "run_id": None, "queued": True, "duplicate": False})
     assert second[1]["duplicate"] is True and len(started) == 1
     holder.release()
+
+
+def test_lock_queue_is_first_come_first_served(tmp_path):
+    import threading
+    import time
+
+    from tplib.lock import ProjectLock
+    holder = ProjectLock("p", tmp_path)
+    assert holder.acquire("h")[0]
+    order: list[str] = []
+
+    def waiter(name: str) -> None:
+        lock = ProjectLock("p", tmp_path)
+        assert lock.wait_acquire(name, timeout=20, poll=0.05)
+        order.append(name)
+        time.sleep(0.1)
+        lock.release()
+
+    threads = []
+    for name in ("first", "second", "third"):
+        t = threading.Thread(target=waiter, args=(name,))
+        t.start()
+        threads.append(t)
+        time.sleep(0.15)
+    holder.release()
+    for t in threads:
+        t.join(timeout=30)
+    assert order == ["first", "second", "third"]

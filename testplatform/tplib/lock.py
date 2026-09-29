@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import itertools
 import json
 import os
 import sys
@@ -10,6 +11,7 @@ from pathlib import Path
 from .profile import ARTIFACTS_ROOT
 
 LOCK_DIR = ARTIFACTS_ROOT / ".locks"
+_TICKETS = itertools.count()
 
 
 def pid_alive(pid: int) -> bool:
@@ -109,14 +111,36 @@ class ProjectLock:
         self.mine = False
 
     def wait_acquire(self, key: str | None, timeout: float, poll: float = 5.0) -> bool:
-        """Queue behind whoever holds the lock; True once this process owns it."""
+        """Queue behind whoever holds the lock, first come first served; True once this process owns it."""
+        queue_dir = self.dir / f"{self.project}.queue"
+        queue_dir.mkdir(parents=True, exist_ok=True)
+        ticket = queue_dir / f"{time.time_ns():020d}-{os.getpid()}-{next(_TICKETS)}"
+        ticket.write_text(str(os.getpid()), encoding="utf-8")
         deadline = time.time() + timeout
-        while time.time() < deadline:
-            ok, _ = self.acquire(key)
-            if ok:
+        try:
+            while time.time() < deadline:
+                if self._is_next(queue_dir, ticket):
+                    ok, _ = self.acquire(key)
+                    if ok:
+                        return True
+                time.sleep(poll)
+            return False
+        finally:
+            ticket.unlink(missing_ok=True)
+
+    @staticmethod
+    def _is_next(queue_dir: Path, ticket: Path) -> bool:
+        for other in sorted(queue_dir.iterdir()):
+            if other == ticket:
                 return True
-            time.sleep(poll)
-        return False
+            try:
+                owner = int(other.read_text(encoding="utf-8").strip() or 0)
+            except (OSError, ValueError):
+                continue
+            if pid_alive(owner):
+                return False
+            other.unlink(missing_ok=True)
+        return True
 
     def wait_for_run_id(self, timeout: float = 15.0) -> Held | None:
         deadline = time.time() + timeout
