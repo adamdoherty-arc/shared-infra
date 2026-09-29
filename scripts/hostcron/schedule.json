@@ -409,9 +409,26 @@
       "enabled": true
     },
     {
+      "name": "ada-docs-refresh-commit",
+      "owner": "ada",
+      "_note": "Commits .claude/memory/topics/*.md files whose diff vs HEAD is confined below the docs_refresh auto marker (docs_refresh.py runs in ada-scheduler and never commits). Runs after the 03:00 UTC refresh (Enhancement-1001108).",
+      "cmd": [
+        "cmd.exe",
+        "/c",
+        "C:\\code\\shared-infra\\scripts\\run-docs-refresh-commit.cmd"
+      ],
+      "cwd": "C:\\code\\ADA",
+      "schedule": {
+        "minute": 40,
+        "hour": 5
+      },
+      "timeout_s": 900,
+      "enabled": true
+    },
+    {
       "name": "ada-feature-map-nightly",
       "owner": "ada",
-      "_note": "Rebuilds the derived per-feature architecture maps (docs/architecture/**) and generated nested CLAUDE.md files. Leaves the result on disk; the feature_map_fresh pre-commit gate carries it into the next commit that touches a feature (Enhancement-1001108).",
+      "_note": "Rebuilds the derived per-feature architecture maps (docs/architecture/**) and generated nested CLAUDE.md files. Commits only the changed generated files through ADA's safe_commit.sh (feature-map-commit.sh; skips when nothing changed) (Enhancement-1001108).",
       "cmd": [
         "cmd.exe",
         "/c",
