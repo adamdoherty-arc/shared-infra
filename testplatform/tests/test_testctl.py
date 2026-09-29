@@ -593,3 +593,171 @@ def test_lock_queue_is_first_come_first_served(tmp_path):
     for t in threads:
         t.join(timeout=30)
     assert order == ["first", "second", "third"]
+
+
+class _FlakyLegion(BaseHTTPRequestHandler):
+    fail_creates = 0
+    reject_creates = 0
+    fail_results = 0
+    results_ok_but_drop = False
+    ingested: list = []
+    created = 0
+
+    def _json(self, code, payload):
+        raw = json.dumps(payload).encode()
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(raw)))
+        self.end_headers()
+        self.wfile.write(raw)
+
+    def do_POST(self):
+        body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        cls = _FlakyLegion
+        if self.path.endswith("/runs"):
+            if cls.reject_creates > 0:
+                cls.reject_creates -= 1
+                return self._json(422, {"detail": "invalid"})
+            if cls.fail_creates > 0:
+                cls.fail_creates -= 1
+                return self._json(503, {"detail": "busy"})
+            cls.created += 1
+            return self._json(201, {"run_id": 200 + cls.created})
+        run_id = int(self.path.split("/")[-2])
+        if run_id in cls.ingested:
+            return self._json(409, {"detail": "already"})
+        if cls.fail_results > 0:
+            cls.fail_results -= 1
+            if cls.results_ok_but_drop:
+                cls.ingested.append(run_id)
+            return self._json(500, {"detail": "boom"})
+        cls.ingested.append(run_id)
+        self._json(200, {"run_id": run_id, "verdict": {"status": body["status"]}, "text": f"ingested {run_id}"})
+
+    def do_GET(self):
+        run_id = int(self.path.split("?")[0].split("/")[-1])
+        self._json(200, {"status": "passed", "verdict": {"status": "passed"}, "text": f"stored {run_id}"})
+
+    def log_message(self, *a):
+        pass
+
+
+@pytest.fixture()
+def flaky_legion():
+    cls = _FlakyLegion
+    cls.fail_creates = cls.fail_results = cls.created = cls.reject_creates = 0
+    cls.results_ok_but_drop = False
+    cls.ingested = []
+    srv = HTTPServer(("127.0.0.1", 0), cls)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    yield LegionClient(f"http://127.0.0.1:{srv.server_address[1]}", backoff=(0.0,))
+    srv.shutdown()
+
+
+def test_create_run_retries_5xx_then_succeeds(flaky_legion):
+    _FlakyLegion.fail_creates = 2
+    assert flaky_legion.create_run({"project_id": 1}) == 201
+
+
+def test_create_run_gives_up_after_three_attempts(flaky_legion):
+    from tplib.legion import LegionError
+    _FlakyLegion.fail_creates = 3
+    with pytest.raises(LegionError):
+        flaky_legion.create_run({"project_id": 1})
+    assert _FlakyLegion.fail_creates == 0
+
+
+def test_post_results_409_after_dropped_response_returns_stored_verdict(flaky_legion):
+    _FlakyLegion.fail_results = 1
+    _FlakyLegion.results_ok_but_drop = True
+    resp = flaky_legion.post_results(7, {"status": "passed"})
+    assert resp["text"] == "stored 7"
+
+
+def test_post_results_first_attempt_409_is_not_retried(flaky_legion):
+    from tplib.legion import LegionError
+    _FlakyLegion.ingested.append(9)
+    with pytest.raises(LegionError) as ei:
+        flaky_legion.post_results(9, {"status": "passed"})
+    assert ei.value.status == 409
+
+
+def _write_pending(root, name, run_id, day="2026-09-29"):
+    d = root / "demo" / day / name
+    d.mkdir(parents=True)
+    (d / "pending_ingest.json").write_text(json.dumps({
+        "project": "demo", "run_id": run_id,
+        "payload": {"status": "passed", "cases": []},
+        "create_run": {"project_id": 1, "target": "t"}}))
+    return d
+
+
+def test_drain_ingests_pending_once_and_marks_ingested(tmp_path, flaky_legion):
+    a = _write_pending(tmp_path, "a", None)
+    b = _write_pending(tmp_path, "b", 55)
+    first = runner.drain_pending(flaky_legion, tmp_path)
+    assert len(first) == 2 and not any(x.startswith("failed") for x in first)
+    assert (a / "ingested.json").exists() and (b / "ingested.json").exists()
+    assert not (a / "pending_ingest.json").exists()
+    assert (a / "verdict.txt").read_text().startswith("ingested")
+    assert runner.drain_pending(flaky_legion, tmp_path) == []
+    assert _FlakyLegion.created == 1 and sorted(_FlakyLegion.ingested) == [55, 201]
+
+
+def test_drain_stops_at_first_unreachable_and_restores_pending(tmp_path):
+    a = _write_pending(tmp_path, "a", None)
+    b = _write_pending(tmp_path, "b", None)
+    dead = LegionClient("http://127.0.0.1:9", timeout=1, backoff=(0.0,))
+    out = runner.drain_pending(dead, tmp_path)
+    assert len(out) == 1 and out[0].startswith("failed")
+    assert (a / "pending_ingest.json").exists() and (b / "pending_ingest.json").exists()
+
+
+def test_drain_claim_prevents_double_ingest_and_stale_claim_is_released(tmp_path, flaky_legion):
+    d = _write_pending(tmp_path, "a", 77)
+    claim = d / "ingesting.1.1.json"
+    (d / "pending_ingest.json").rename(claim)
+    assert runner.drain_pending(flaky_legion, tmp_path) == []
+    assert _FlakyLegion.ingested == []
+    old = os.path.getmtime(claim) - runner.CLAIM_STALE_S - 10
+    os.utime(claim, (old, old))
+    out = runner.drain_pending(flaky_legion, tmp_path)
+    assert out == ["run 77 <- a"] and _FlakyLegion.ingested == [77]
+
+
+def test_start_and_run_drains_earlier_pending_first(tmp_path, monkeypatch, flaky_legion):
+    art = tmp_path / "art"
+    old = _write_pending(art, "old", 88)
+    project = profile.load_project("demo", _registry(tmp_path))
+    exe = runner.Execution("passed", [], None, 0, None)
+    monkeypatch.setattr(runner, "execute_framework", lambda *a, **k: exe)
+    lock = ProjectLock("demo", tmp_path / "locks")
+    lock.acquire()
+    outcome = runner.start_and_run(project, None, "manual", flaky_legion, lock, artifacts_root=art)
+    lock.release()
+    assert outcome.run_id == 201
+    assert (old / "ingested.json").exists() and 88 in _FlakyLegion.ingested
+
+
+def test_drain_rejected_item_is_parked_and_does_not_block_the_queue(tmp_path, flaky_legion):
+    bad = _write_pending(tmp_path, "a-bad", None)
+    good = _write_pending(tmp_path, "b-good", 66)
+    _FlakyLegion.reject_creates = 1
+    out = runner.drain_pending(flaky_legion, tmp_path)
+    assert out[0].startswith("rejected") and out[1] == "run 66 <- b-good"
+    assert (bad / "pending_ingest.rejected.json").exists() and not (bad / "pending_ingest.json").exists()
+    assert (good / "ingested.json").exists()
+    assert runner.drain_pending(flaky_legion, tmp_path) == []
+
+
+def test_create_rejected_is_reported_as_rejected_and_not_saved_for_replay(tmp_path, monkeypatch, flaky_legion):
+    project = profile.load_project("demo", _registry(tmp_path))
+    exe = runner.Execution("passed", [], None, 0, None)
+    monkeypatch.setattr(runner, "execute_framework", lambda *a, **k: exe)
+    _FlakyLegion.reject_creates = 1
+    lock = ProjectLock("demo", tmp_path / "locks")
+    lock.acquire()
+    outcome = runner.start_and_run(project, None, "manual", flaky_legion, lock, artifacts_root=tmp_path / "art")
+    lock.release()
+    assert outcome.run_id is None and "rejected" in outcome.text
+    assert not (outcome.artifact_dir / "pending_ingest.json").exists()

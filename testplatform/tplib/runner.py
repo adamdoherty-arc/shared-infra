@@ -17,7 +17,7 @@ from typing import Any
 from . import parsers
 from . import selection as sel
 from .artifacts import new_artifact_dir
-from .legion import LegionClient, LegionError
+from .legion import LegionClient, LegionError, retryable
 from .lock import ProjectLock
 from .profile import ARTIFACTS_ROOT, Project
 
@@ -538,13 +538,15 @@ def start_and_run(project: Project, target: str | None, trigger: str, legion: Le
     sha = git_sha(project.root)
     started_at = time.time()
     run_id: int | None = None
+    create_error: LegionError | None = None
     try:
         run_id = legion.create_run({
-            "project_id": project.legion_project_id, "target": target_label, "tier": tier_name, "trigger": trigger,
+            "project_id": project.legion_project_id, "target": target_label[:MAX_TARGET_LEN], "tier": tier_name, "trigger": trigger,
             "git_sha": sha, "framework": framework, "runner_host": socket.gethostname(),
             "artifact_path": art.as_posix()})
         lock.set_run_id(run_id)
     except LegionError as exc:
+        create_error = exc
         (art / "legion_error.txt").write_text(str(exc), encoding="utf-8")
     if on_started:
         on_started(run_id, art)
@@ -587,12 +589,15 @@ def start_and_run(project: Project, target: str | None, trigger: str, legion: Le
                                  f"Legion ingest failed, saved for replay: {str(exc)[:60]}")
             (art / "pending_ingest.json").write_text(json.dumps({"project": project.name, "run_id": run_id,
                                                                   "payload": payload}), encoding="utf-8")
+    elif create_error is not None and not retryable(create_error):
+        text = local_verdict(exe.status, totals, exe.cases, exe.error_summary,
+                             f"Legion rejected the run, not saved for replay: {str(create_error)[:80]}")
     else:
         text = local_verdict(exe.status, totals, exe.cases, exe.error_summary, "Legion unreachable, saved for replay")
         (art / "pending_ingest.json").write_text(json.dumps({"project": project.name, "run_id": None, "payload": payload,
                                                               "create_run": {
                                                                   "project_id": project.legion_project_id,
-                                                                  "target": target_label, "tier": tier_name,
+                                                                  "target": target_label[:MAX_TARGET_LEN], "tier": tier_name,
                                                                   "trigger": trigger, "git_sha": sha,
                                                                   "framework": framework,
                                                                   "runner_host": socket.gethostname(),
@@ -601,6 +606,7 @@ def start_and_run(project: Project, target: str | None, trigger: str, legion: Le
     return Outcome(run_id, exe.status, text, art)
 
 
+MAX_TARGET_LEN = 200
 CLAIM_STALE_S = 900
 DRAIN_MAX_ITEMS = 5
 DRAIN_BUDGET_S = 90.0
@@ -641,9 +647,13 @@ def drain_pending(legion: LegionClient, root: Path = ARTIFACTS_ROOT, max_items: 
                 claim.write_text(json.dumps(data), encoding="utf-8")
             resp = legion.post_results(int(run_id), data["payload"])
         except LegionError as exc:
-            claim.rename(pending)
-            done.append(f"failed {pending.parent.name}: {str(exc)[:80]}")
-            break
+            if retryable(exc):
+                claim.rename(pending)
+                done.append(f"failed {pending.parent.name}: {str(exc)[:80]}")
+                break
+            claim.rename(pending.with_name("pending_ingest.rejected.json"))
+            done.append(f"rejected {pending.parent.name}: {str(exc)[:80]}")
+            continue
         except (OSError, ValueError, KeyError) as exc:
             claim.rename(pending.with_name("pending_ingest.bad.json"))
             done.append(f"unreadable {pending.parent.name}: {type(exc).__name__}")
