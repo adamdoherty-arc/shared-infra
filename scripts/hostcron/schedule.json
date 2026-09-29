@@ -372,6 +372,24 @@
       "timeout_s": 600,
       "enabled": true,
       "_comment": "Commits live gateway routing state (config.json, disabled-providers.json) so git reflects what infractl and autoheal wrote."
+    },
+    {
+      "name": "testctl-serve-ensure",
+      "owner": "shared-infra",
+      "_note": "Supervises the test platform runner (testctl serve, :8790). No-op when it already answers; otherwise starts it detached. Legion's scheduler POSTs runs to it.",
+      "cmd": [
+        "C:\\Python314\\python.exe",
+        "C:\\code\\shared-infra\\testplatform\\testctl.py",
+        "serve",
+        "--ensure"
+      ],
+      "cwd": "C:\\code\\shared-infra\\testplatform",
+      "env": {
+        "PYTHONPATH": "C:\\Users\\hadam\\AppData\\Roaming\\Python\\Python314\\site-packages"
+      },
+      "schedule": {},
+      "timeout_s": 120,
+      "enabled": true
     }
   ]
 }

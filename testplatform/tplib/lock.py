@@ -1,0 +1,117 @@
+from __future__ import annotations
+
+import json
+import os
+import sys
+import time
+from dataclasses import dataclass
+from pathlib import Path
+
+from .profile import ARTIFACTS_ROOT
+
+LOCK_DIR = ARTIFACTS_ROOT / ".locks"
+
+
+def pid_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    if sys.platform == "win32":
+        import ctypes
+        from ctypes import wintypes
+        query_limited = 0x1000
+        still_active = 259
+        kernel32 = ctypes.windll.kernel32
+        kernel32.OpenProcess.restype = wintypes.HANDLE
+        handle = kernel32.OpenProcess(query_limited, False, pid)
+        if not handle:
+            return False
+        try:
+            code = wintypes.DWORD()
+            if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
+                return False
+            return code.value == still_active
+        finally:
+            kernel32.CloseHandle(handle)
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+@dataclass
+class Held:
+    project: str
+    path: Path
+    pid: int
+    run_id: int | None
+    stale: bool = False
+
+
+class ProjectLock:
+    def __init__(self, project: str, lock_dir: Path = LOCK_DIR):
+        self.project = project
+        self.dir = lock_dir
+        self.path = lock_dir / f"{project}.json"
+        self.mine = False
+        self.stale_taken: Held | None = None
+
+    def read(self) -> Held | None:
+        try:
+            data = json.loads(self.path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        pid = int(data.get("pid", 0))
+        return Held(self.project, self.path, pid, data.get("run_id"), stale=not pid_alive(pid))
+
+    def acquire(self) -> tuple[bool, Held | None]:
+        self.dir.mkdir(parents=True, exist_ok=True)
+        for _ in range(4):
+            try:
+                fd = os.open(str(self.path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            except FileExistsError:
+                held = self.read()
+                if held is None:
+                    time.sleep(0.05)
+                    continue
+                if held.stale:
+                    self.stale_taken = held
+                    try:
+                        self.path.unlink()
+                    except OSError:
+                        pass
+                    continue
+                return False, held
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                json.dump({"pid": os.getpid(), "run_id": None, "started_at": time.time()}, fh)
+            self.mine = True
+            return True, None
+        return False, self.read()
+
+    def set_run_id(self, run_id: int) -> None:
+        self.path.write_text(json.dumps({"pid": os.getpid(), "run_id": run_id, "started_at": time.time()}),
+                             encoding="utf-8")
+
+    def release(self) -> None:
+        if not self.mine:
+            return
+        held = self.read()
+        if held is not None and held.pid == os.getpid():
+            try:
+                self.path.unlink()
+            except OSError:
+                pass
+        self.mine = False
+
+    def wait_for_run_id(self, timeout: float = 15.0) -> Held | None:
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            held = self.read()
+            if held is None:
+                return None
+            if held.run_id is not None or held.stale:
+                return held
+            time.sleep(0.2)
+        return self.read()

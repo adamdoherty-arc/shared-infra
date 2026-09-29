@@ -1,0 +1,8 @@
+legion_url: http://127.0.0.1:8005
+projects:
+  ada:
+    root: C:/code/ADA
+    legion_project_id: 5
+  legion:
+    root: C:/code/legion
+    legion_project_id: 1
