@@ -251,7 +251,7 @@ def test_profile_loader_and_target_resolution(tmp_path):
     assert profile.parse_target_spec("ada") == ("ada", None)
 
 
-VITEST_PROFILE = PROFILE.replace("path_tier: path", "path_tier: path\nvitest_path_tier: vitest") + "  vitest: {framework: vitest, timeout_s: 60}\n"
+VITEST_PROFILE = PROFILE.replace("path_tier: path", "path_tier: path\nvitest_path_tier: vitest") + "  vitest: {framework: vitest, timeout_s: 60}\n"  # noqa: E501
 
 
 def test_ts_path_targets_route_to_the_vitest_tier(tmp_path):
@@ -420,6 +420,10 @@ def test_start_and_run_posts_contract_and_prints_verbatim_text(tmp_path, monkeyp
     assert (outcome.artifact_dir / "verdict.txt").exists()
 
 
+_ONE_PASS = {"node_id": "tests/t.py::a", "file": "tests/t.py", "status": "passed", "duration_ms": 1, "attempts": 1,
+             "body_hash": "h", "feature_slug": None, "requirement_ids": []}
+
+
 def test_legion_down_saves_pending_and_renders_local_verdict(tmp_path, monkeypatch):
     project = profile.load_project("demo", _registry(tmp_path))
     exe = runner.Execution("error", [], "container c is not running", 0, None)
@@ -518,7 +522,6 @@ def test_check_floors_flags_zero_match_and_shortfall(tmp_path):
 
 
 def test_commands_framework_maps_exit_codes_to_case_statuses(tmp_path):
-    import sys
     from types import SimpleNamespace
 
     from tplib import runner
@@ -574,17 +577,18 @@ def test_service_queues_a_different_request_once(tmp_path, monkeypatch):
 
     from tplib import runner, server
     from tplib.lock import ProjectLock
-    project = SimpleNamespace(name="p", default_target="fast", profile={})
+    project = profile.load_project("demo", _registry(tmp_path))
+    project.name = "p"
     monkeypatch.setattr(server, "load_project", lambda name: project)
     monkeypatch.setattr(runner, "preflight", lambda *a, **k: None)
     started = []
-    monkeypatch.setattr(server.threading, "Thread", lambda target, args, daemon, name: SimpleNamespace(
+    monkeypatch.setattr(server.threading, "Thread", lambda target, args=(), daemon=True, name="": SimpleNamespace(
         start=lambda: started.append(args)))
     holder = ProjectLock("p", tmp_path)
     assert holder.acquire(runner.request_key("changed", None))[0]
     service = server.RunnerService(legion=object(), lock_dir=tmp_path)
-    first = service.submit({"project": "p", "target": "full", "trigger": "schedule"})
-    second = service.submit({"project": "p", "target": "full", "trigger": "schedule"})
+    first = service.submit({"project": "p", "target": "fast", "trigger": "schedule"})
+    second = service.submit({"project": "p", "target": "fast", "trigger": "schedule"})
     assert first == (202, {"accepted": True, "run_id": None, "queued": True, "duplicate": False})
     assert second[1]["duplicate"] is True and len(started) == 1
     holder.release()
@@ -752,7 +756,7 @@ def test_start_and_run_drains_earlier_pending_first(tmp_path, monkeypatch, flaky
     art = tmp_path / "art"
     old = _write_pending(art, "old", 88)
     project = profile.load_project("demo", _registry(tmp_path))
-    exe = runner.Execution("passed", [], None, 0, None)
+    exe = runner.Execution("passed", [_ONE_PASS], None, 0, None)
     monkeypatch.setattr(runner, "execute_framework", lambda *a, **k: exe)
     lock = ProjectLock("demo", tmp_path / "locks")
     lock.acquire()
@@ -775,7 +779,7 @@ def test_drain_rejected_item_is_parked_and_does_not_block_the_queue(tmp_path, fl
 
 def test_create_rejected_is_reported_as_rejected_and_not_saved_for_replay(tmp_path, monkeypatch, flaky_legion):
     project = profile.load_project("demo", _registry(tmp_path))
-    exe = runner.Execution("passed", [], None, 0, None)
+    exe = runner.Execution("passed", [_ONE_PASS], None, 0, None)
     monkeypatch.setattr(runner, "execute_framework", lambda *a, **k: exe)
     _FlakyLegion.reject_creates = 1
     lock = ProjectLock("demo", tmp_path / "locks")
@@ -814,6 +818,7 @@ def test_testmon_miss_for_a_file_falls_back_to_the_import_graph(tmp_path, monkey
 
 def test_emit_survives_characters_the_console_cannot_encode():
     import io
+
     from tplib import printer
     raw = io.BytesIO()
     stream = io.TextIOWrapper(raw, encoding="cp1252", errors="strict")

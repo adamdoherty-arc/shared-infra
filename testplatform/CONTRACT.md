@@ -98,16 +98,22 @@ A flaky event is either:
 ## Scheduling
 - Legion's APScheduler fires each enabled schedule by calling `POST {TESTPLATFORM_RUNNER_URL}/run` with `{"project":"ada","target":"full","trigger":"schedule","schedule_id":7}`.
 - The default runner URL is `http://host.docker.internal:8790`.
-- The runner answers `202 {"accepted":true,"run_id":123}`, or `409 {"attached_run_id":...}` when a run for that project is already in flight.
+- The runner answers `202 {"accepted":true,"run_id":123}`, or `409 {"attached_run_id":...}` when the same request (same target and paths) is already in flight. A different request is `202 {"queued":true}` and starts when its lane has room.
 - A fire that fails is recorded on the schedule (`last_error`) and appears in Legion's scheduler catch-up ledger.
 
 ## Runner (testctl)
 - **Profiles:** read from `<repo>/.testplatform.yml`. The repo roots are registered in `C:\code\shared-infra\testplatform\projects.yml`.
-- **Host service:** `testctl serve` listens on 127.0.0.1:8790 and 0.0.0.0 for the Docker bridge. It keeps one run per project (a lock), and a second request attaches to the run already in flight.
+- **Host service:** `testctl serve` listens on 127.0.0.1:8790 and 0.0.0.0 for the Docker bridge. It schedules two lanes per project:
+  - **Heavy lane** (one run at a time): every whole-tier target (`fast`, `full`, `live_db`, `testmon`, `changed` without paths, `vitest`, `fuzz`, `e2e`, `gates`). Lock file `artifacts/.locks/<project>.json`, queue `<project>.queue/`.
+  - **Light lane** (bounded concurrency): a request naming files (a path or node-id target, a `.ts/.tsx` path, or `changed --paths`). `light_concurrency` slots (`projects.yml` entry, overridden by the profile's `lanes.light_concurrency`; integer 1..8; default 1; `ada` is 3, sized against the 8 GiB `ada-tests` container where one path run peaks near 0.6 GiB). Slot files `<project>.light<N>.json` are claimed under a short-lived `<project>.light.gate` mutex, queue `<project>.light.queue/`.
+  - Lanes do not block each other. Within a lane the queue is first come, first served. A request identical to one in flight (same target and paths, in either lane) attaches to it instead of starting a second run.
+  - Every run keeps its own Legion run id, artifact directory, junit/report file (uuid names) and verdict. Light runs disable testmon (`-p no:testmon`); only heavy tiers write `.testmondata`. `testctl status` and `GET /runs/active` report each active run with its `lane`.
 - **Artifacts:** stored under `testplatform/artifacts/<project>/<date>/<uuid>/` (report.json, output.log). Retention is 14 days.
 - **CLI:**
   - `testctl run <project>[:<target>] [--wait|--no-wait] [--detail] [--paths FILE...] [--quiet]`. `--wait` is the default and prints `text` verbatim. The exit code is 0 only on pass.
   - `--paths` (changed tier only) selects the tests that depend on the given files: testmon dependency data first, an import-graph scan otherwise. The runner service accepts the same list as `"paths"` in `POST /run`.
+  - `--paths` also accepts frontend files (`.ts/.tsx/.js/.jsx/.mts/.cts` under the profile's `vitest.repo_subdir`) when the profile names a `vitest_path_tier`: test files (`*.test.*`, `*.spec.*`, `__tests__/`) run by path, other files run through `vitest related <files> --run`, and a mixed set runs pytest and vitest and merges the verdict (worst status wins).
+  - **Zero selection is never PASSED.** A run of a pytest or vitest tier that executed no test (skipped tests do not count) is reported `error` (exit 2) with the single-line text `NO TESTS SELECTED for <n> paths (<reason>)` when `--paths` was given, or `NO TESTS EXECUTED by tier (<reason>)` for a whole tier. The one exception is plain `changed` (testmon, no `--paths`), where nothing depending on the edit legitimately selects nothing.
   - `changed` with no `--paths` and no testmon data is refused (exit 2, one line) before any Legion run row exists. It never falls back to a git-diff guess.
   - `--quiet` prints nothing on a pass; failures print the normal verdict. Exit code gates.
   - `testctl failure <id>`, `testctl run-failures <run_id>`, `testctl history <project> <node_id>`, `testctl flaky <project>`, `testctl status [run_id]`, `testctl schedule list`.

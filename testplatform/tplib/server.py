@@ -15,7 +15,7 @@ from typing import Any
 from . import runner
 from .artifacts import prune
 from .legion import LegionClient
-from .lock import LOCK_DIR, ProjectLock, pid_alive
+from .lock import LOCK_DIR, pid_alive, split_stem
 from .profile import PLATFORM_ROOT, ProfileError, legion_url, load_project
 
 DEFAULT_PORT = 8790
@@ -37,7 +37,8 @@ def active_runs(lock_dir: Path = LOCK_DIR) -> list[dict[str, Any]]:
             continue
         pid = int(data.get("pid", 0))
         if pid_alive(pid):
-            rows.append({"project": path.stem, "run_id": data.get("run_id"), "pid": pid,
+            project, lane = split_stem(path.stem)
+            rows.append({"project": project, "lane": lane, "run_id": data.get("run_id"), "pid": pid,
                          "started_at": data.get("started_at")})
     return rows
 
@@ -50,7 +51,7 @@ class RunnerService:
         self._queue_lock = threading.Lock()
 
     def _run_queued(self, project, body: dict[str, Any], trigger: str, key: str, queue_id: str) -> None:
-        lock = ProjectLock(project.name, self.lock_dir)
+        lock = runner.lock_for(project, body.get("target"), body.get("paths") or None, self.lock_dir)
         acquired = lock.wait_acquire(key, QUEUE_TIMEOUT_S)
         with self._queue_lock:
             self._queued.discard(queue_id)
@@ -77,7 +78,7 @@ class RunnerService:
             runner.preflight(project, body.get("target"), body.get("paths") or None)
         except (ProfileError, runner.RunError) as exc:
             return 404, {"accepted": False, "error": str(exc)}
-        lock = ProjectLock(name, self.lock_dir)
+        lock = runner.lock_for(project, body.get("target"), body.get("paths") or None, self.lock_dir)
         key = runner.request_key(body.get("target") or project.default_target, body.get("paths") or None)
         ok, held = lock.acquire(key)
         if not ok and held is not None and held.key != key:

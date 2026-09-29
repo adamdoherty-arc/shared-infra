@@ -18,7 +18,7 @@ from . import parsers
 from . import selection as sel
 from .artifacts import new_artifact_dir
 from .legion import LegionClient, LegionError, retryable
-from .lock import ProjectLock
+from .lock import HEAVY, LIGHT, ProjectLock
 from .profile import ARTIFACTS_ROOT, Project
 
 TRIGGERS = ("claude", "schedule", "hook", "manual")
@@ -76,6 +76,21 @@ def resolve_target(project: Project, target: str | None) -> tuple[str, dict[str,
     if not path_tier:
         raise RunError(f"target {target!r} is not a tier ({', '.join(project.tier_names)}) and the profile has no path_tier")
     return path_tier, project.tier(path_tier), [target]
+
+
+def lane_of(project: Project, target: str | None, changed_paths: list[str] | None = None) -> str:
+    """`light` for a request scoped to named files (a path target or `changed --paths`), `heavy` for any whole tier."""
+    _, tier, paths = resolve_target(project, target)
+    return LIGHT if (paths or (changed_paths and tier.get("mode") == "changed")) else HEAVY
+
+
+def lock_for(project: Project, target: str | None, changed_paths: list[str] | None = None,
+             lock_dir: Path | None = None) -> ProjectLock:
+    """The lock a request must hold: the project's single heavy slot, or one of its light-lane slots."""
+    kwargs: dict[str, Any] = {} if lock_dir is None else {"lock_dir": lock_dir}
+    if lane_of(project, target, changed_paths) == LIGHT:
+        return ProjectLock(project.name, lane=LIGHT, slots=project.light_concurrency, **kwargs)
+    return ProjectLock(project.name, **kwargs)
 
 
 def request_key(target: str | None, paths: list[str] | None) -> str:
@@ -236,6 +251,8 @@ def run_pytest(project: Project, tier: dict[str, Any], paths: list[str] | None, 
         env["TESTMON_DATAFILE"] = tier.get("testmon_datafile", "/tmp/testplatform/.testmondata")
         extra += ["--testmon-noselect"]
         selection = {"mode": "testmon-build"}
+    if paths or changed_paths:
+        extra += ["-p", "no:testmon"]
     (art / "selection.json").write_text(json.dumps(selection, indent=1), encoding="utf-8")
 
     report_name = f"{uuid.uuid4().hex}.json"
@@ -339,7 +356,8 @@ def interpret_pytest(project: Project, tier: dict[str, Any], paths: list[str] | 
     if rc == 5 and min_executed == 0:
         return Execution("passed", cases, None, quarantined_count, rc)
     if executed < min_executed:
-        hint = f" (marker {tier['marker']!r} deselects slow tests from file runs; name a node id to force one)"             if tier.get("marker_unless_node_id") else ""
+        hint = (f" (marker {tier['marker']!r} deselects slow tests from file runs; name a node id to force one)"
+                if tier.get("marker_unless_node_id") else "")
         return Execution("error", cases, f"executed {executed} tests, tier requires at least {min_executed}{hint}",
                          quarantined_count, rc)
     if totals["errors"] and totals["failed"] == 0 and rc != 1:

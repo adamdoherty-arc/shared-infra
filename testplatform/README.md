@@ -10,6 +10,10 @@ The wire contract is `CONTRACT.md`.
 
 ```
 testctl run ada:changed --paths <files...>   the tests that depend on those files; <=15 line verdict; exit 0 pass, 1 fail, 2 error/timeout
+                                              python files select pytest tests; frontend files (.ts/.tsx/.js/.jsx under the
+                                              profile's vitest repo_subdir) run vitest: test files by path, source files via
+                                              `vitest related --run`; a mixed set runs both. Zero tests selected/executed is
+                                              never PASSED: `NO TESTS SELECTED for <n> paths (<reason>)`, exit 2
 testctl run ada:changed          testmon-selected (needs testmon data; refuses with a one-line hint otherwise, never a git-diff guess)
 testctl run ada:fast --quiet     prints nothing on pass, the verdict on failure; the exit code gates (hooks)
 testctl run ada                  default tier (fast)
@@ -50,8 +54,14 @@ command is one case, exit 0 pass / 1 fail / 2 error; used for the non-test stati
 
 ## Service
 
-`testctl serve` keeps one run per project (lock file per project; a second request attaches to the run
-in flight, HTTP 409 with `attached_run_id`). It is supervised by the hostcron job `testctl-serve-ensure`
+`testctl serve` schedules runs per project in two lanes. The **heavy** lane (any whole tier: `fast`, `full`,
+`live_db`, `testmon`, `changed` without paths, `vitest`, `fuzz`, `e2e`, `gates`) is one run at a time. The
+**light** lane (a path target such as `ada:backend/tests/test_x.py`, a `.tsx` path, or `changed --paths`) runs up
+to `light_concurrency` requests at once (`ada`: 3, set in `projects.yml`; a profile's `lanes: {light_concurrency: N}`
+overrides it; default 1) and never waits behind a heavy run. A second request for the same spec attaches to the
+run in flight (HTTP 409 with `attached_run_id`); a different request queues first come, first served within its
+own lane. Light runs always pass `-p no:testmon` so only heavy runs ever write `.testmondata`. `testctl status`
+lists active runs with their lane. It is supervised by the hostcron job `testctl-serve-ensure`
 (every minute, no-op when the port answers). `install-testctl-service.ps1` is the NSSM alternative
 (elevated). Logs: `logs/serve.log`.
 

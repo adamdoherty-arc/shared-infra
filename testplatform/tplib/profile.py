@@ -11,6 +11,8 @@ PLATFORM_ROOT = Path(__file__).resolve().parent.parent
 PROJECTS_FILE = PLATFORM_ROOT / "projects.yml"
 ARTIFACTS_ROOT = PLATFORM_ROOT / "artifacts"
 PROFILE_NAME = ".testplatform.yml"
+DEFAULT_LIGHT_CONCURRENCY = 1
+MAX_LIGHT_CONCURRENCY = 8
 FRAMEWORKS = frozenset({"pytest", "vitest", "playwright", "schemathesis", "commands"})
 
 
@@ -24,6 +26,7 @@ class Project:
     root: Path
     legion_project_id: int
     profile: dict[str, Any] = field(default_factory=dict)
+    light_concurrency: int = DEFAULT_LIGHT_CONCURRENCY
 
     def tier(self, name: str) -> dict[str, Any] | None:
         return (self.profile.get("tiers") or {}).get(name)
@@ -46,6 +49,14 @@ def load_registry(path: Path = PROJECTS_FILE) -> dict[str, Any]:
     return data
 
 
+def check_light_concurrency(value: Any, where: str) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= MAX_LIGHT_CONCURRENCY:
+        raise ProfileError(f"{where}: light_concurrency must be an integer 1..{MAX_LIGHT_CONCURRENCY}, got {value!r}")
+    return value
+
+
 def validate_profile(profile: dict[str, Any], where: str) -> None:
     if not isinstance(profile, dict):
         raise ProfileError(f"{where}: profile must be a mapping")
@@ -60,6 +71,11 @@ def validate_profile(profile: dict[str, Any], where: str) -> None:
             raise ProfileError(f"{where}: tier {name!r} framework {fw!r} not in {sorted(FRAMEWORKS)}")
         if int(tier.get("timeout_s", 0)) <= 0:
             raise ProfileError(f"{where}: tier {name!r} needs a positive timeout_s")
+    lanes = profile.get("lanes")
+    if lanes is not None:
+        if not isinstance(lanes, dict):
+            raise ProfileError(f"{where}: 'lanes' must be a mapping")
+        check_light_concurrency(lanes.get("light_concurrency"), where)
     default = profile.get("default_target", "fast")
     if default not in tiers:
         raise ProfileError(f"{where}: default_target {default!r} is not a tier")
@@ -84,7 +100,11 @@ def load_project(name: str, registry_path: Path = PROJECTS_FILE) -> Project:
         raise ProfileError(f"no {PROFILE_NAME} in {root}")
     profile = yaml.safe_load(pfile.read_text(encoding="utf-8")) or {}
     validate_profile(profile, str(pfile))
-    return Project(name=name, root=root, legion_project_id=int(entry["legion_project_id"]), profile=profile)
+    light = check_light_concurrency((profile.get("lanes") or {}).get("light_concurrency"), str(pfile))
+    if light is None:
+        light = check_light_concurrency(entry.get("light_concurrency"), str(registry_path))
+    return Project(name=name, root=root, legion_project_id=int(entry["legion_project_id"]), profile=profile,
+                   light_concurrency=light or DEFAULT_LIGHT_CONCURRENCY)
 
 
 def legion_url(registry_path: Path = PROJECTS_FILE) -> str:

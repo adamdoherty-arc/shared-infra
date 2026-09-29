@@ -10,7 +10,7 @@ from typing import Any
 from . import runner, server
 from .artifacts import prune
 from .legion import LegionClient, LegionError
-from .lock import ProjectLock
+from .lock import LIGHT, ProjectLock
 from .printer import budget, emit
 from .profile import ARTIFACTS_ROOT, PLATFORM_ROOT, ProfileError, legion_url, load_project, parse_target_spec
 
@@ -53,7 +53,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     runner.preflight(project, target, args.paths)
     trigger = args.trigger
     client = _client()
-    lock = ProjectLock(name)
+    lock = runner.lock_for(project, target, args.paths)
     if not args.wait:
         return _run_detached(args, name, lock)
     key = runner.request_key(target or project.default_target, args.paths)
@@ -81,12 +81,14 @@ def _run_detached(args: argparse.Namespace, name: str, lock: ProjectLock) -> int
     subprocess.Popen([sys.executable, str(PLATFORM_ROOT / "testctl.py"), "run", args.spec, "--wait",
                       "--trigger", args.trigger, *extra], stdout=out, stderr=out, stdin=subprocess.DEVNULL,
                      creationflags=flags, close_fds=True)
-    held = lock.wait_for_run_id(20.0)
+    project = load_project(name)
+    _, target = parse_target_spec(args.spec)
+    mine = runner.request_key(target or project.default_target, args.paths)
+    held = lock.wait_for_run_id(20.0, mine) if lock.lane == LIGHT else lock.wait_for_run_id(20.0)
     if held is not None and held.run_id is not None:
-        project = load_project(name)
-        _, target = parse_target_spec(args.spec)
-        if held.key != runner.request_key(target or project.default_target, args.paths):
-            emit([f"queued {args.spec} behind run {held.run_id} (first come, first served); poll with: testctl status"])
+        if held.key != mine:
+            emit([f"queued {args.spec} behind run {held.run_id} in the {lock.lane} lane (first come, first served); "
+                  f"poll with: testctl status"])
             return 0
         emit([f"started run {held.run_id} for {args.spec}; poll with: testctl status {held.run_id}"])
         return 0
@@ -180,7 +182,7 @@ def cmd_status(args: argparse.Namespace) -> int:
                   f"totals {run.get('totals')}"], args.detail)
         return 0
     active = server.active_runs()
-    lines = [f"active: {a['project']} run {a['run_id']} (pid {a['pid']})" for a in active] or ["active: none"]
+    lines = [f"active: {a['project']} {a['lane']} run {a['run_id']} (pid {a['pid']})" for a in active] or ["active: none"]
     lines.append(f"runner service: {'up' if server.is_up() else 'DOWN'} on :{server.DEFAULT_PORT}")
     lines += _local_recent()
     emit(lines, args.detail)
