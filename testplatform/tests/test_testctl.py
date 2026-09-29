@@ -251,6 +251,29 @@ def test_profile_loader_and_target_resolution(tmp_path):
     assert profile.parse_target_spec("ada") == ("ada", None)
 
 
+VITEST_PROFILE = PROFILE.replace("path_tier: path", "path_tier: path\nvitest_path_tier: vitest") + "  vitest: {framework: vitest, timeout_s: 60}\n"
+
+
+def test_ts_path_targets_route_to_the_vitest_tier(tmp_path):
+    """A .tsx path handed to the pytest path tier collects 0 items and errors; it must reach vitest."""
+    project = profile.load_project("demo", _registry(tmp_path, VITEST_PROFILE))
+    tier, _cfg, paths = runner.resolve_target(project, "frontend/src/a/__tests__/X.test.tsx")
+    assert tier == "vitest" and paths == ["frontend/src/a/__tests__/X.test.tsx"]
+    assert runner.resolve_target(project, "tests/test_a.py")[0] == "path"
+
+
+def test_ts_path_without_vitest_path_tier_keeps_the_old_routing(tmp_path):
+    project = profile.load_project("demo", _registry(tmp_path))
+    assert runner.resolve_target(project, "frontend/src/X.test.tsx")[0] == "path"
+
+
+def test_vitest_path_tier_must_name_a_vitest_tier(tmp_path):
+    with pytest.raises(profile.ProfileError):
+        profile.load_project("demo", _registry(tmp_path, PROFILE.replace("path_tier: path", "path_tier: path\nvitest_path_tier: nope")))
+    with pytest.raises(profile.ProfileError):
+        profile.load_project("demo", _registry(tmp_path, PROFILE.replace("path_tier: path", "path_tier: path\nvitest_path_tier: fast")))
+
+
 def test_profile_loader_rejects_bad_profiles(tmp_path):
     with pytest.raises(profile.ProfileError):
         profile.load_project("nope", _registry(tmp_path))
@@ -797,3 +820,11 @@ def test_emit_survives_characters_the_console_cannot_encode():
     printer.emit(["PASS ✔ done"], stream=stream)
     stream.flush()
     assert raw.getvalue().startswith(b"PASS ")
+
+
+def test_vitest_container_paths_strip_the_repo_subdir():
+    assert runner.vitest_container_paths(["frontend/src/X.test.tsx", r"frontend\src\Y.test.ts"], "frontend") == [
+        "src/X.test.tsx", "src/Y.test.ts"]
+    assert runner.vitest_container_paths(["src/Z.test.ts"], "frontend") == ["src/Z.test.ts"]
+    assert runner.vitest_container_paths(["frontend/src/X.test.tsx"], "") == ["frontend/src/X.test.tsx"]
+    assert runner.vitest_container_paths(None, "frontend") == []

@@ -62,12 +62,17 @@ def git_sha(root: Path) -> str:
         return "unknown"
 
 
+VITEST_SUFFIXES = frozenset({".ts", ".tsx", ".js", ".jsx", ".mts", ".cts"})
+
+
 def resolve_target(project: Project, target: str | None) -> tuple[str, dict[str, Any], list[str] | None]:
     target = target or project.default_target
     tier = project.tier(target)
     if tier is not None:
         return target, tier, None
     path_tier = project.profile.get("path_tier")
+    if Path(target.split("::")[0]).suffix in VITEST_SUFFIXES and project.profile.get("vitest_path_tier"):
+        path_tier = project.profile["vitest_path_tier"]
     if not path_tier:
         raise RunError(f"target {target!r} is not a tier ({', '.join(project.tier_names)}) and the profile has no path_tier")
     return path_tier, project.tier(path_tier), [target]
@@ -347,6 +352,16 @@ def interpret_pytest(project: Project, tier: dict[str, Any], paths: list[str] | 
     return Execution(status, cases, summary, quarantined_count, rc)
 
 
+def vitest_container_paths(paths: list[str] | None, repo_subdir: str) -> list[str]:
+    """Repo-relative paths -> paths relative to the vitest container workdir (which is `repo_subdir`)."""
+    subdir = repo_subdir.strip("/")
+    out = []
+    for raw in paths or []:
+        norm = raw.replace("\\", "/")
+        out.append(norm[len(subdir) + 1:] if subdir and norm.startswith(subdir + "/") else norm)
+    return out
+
+
 def run_vitest(project: Project, tier: dict[str, Any], paths: list[str] | None, trigger: str, art: Path,
                legion: LegionClient, target: str) -> Execution:
     runtime = project.profile["runtime"]
@@ -360,7 +375,8 @@ def run_vitest(project: Project, tier: dict[str, Any], paths: list[str] | None, 
     report_in = f"/tmp/{uuid.uuid4().hex}.json"
     cmd = ["docker", "exec", "-w", vt.get("workdir", "/app"), container, "timeout", "-s", "TERM", "-k", "20",
            str(timeout_s), "npx", "vitest", "run", "--reporter=json", f"--outputFile={report_in}"]
-    cmd += list(tier.get("args", [])) + list(paths or tier.get("paths", []))
+    vt_paths = vitest_container_paths(paths, str(vt.get("repo_subdir", "")))
+    cmd += list(tier.get("args", [])) + (vt_paths or list(tier.get("paths", [])))
     out_log = art / "output.log"
     started = time.time()
     rc, _ = _run(cmd, timeout_s + 120, out_log)

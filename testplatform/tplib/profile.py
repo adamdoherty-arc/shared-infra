@@ -65,6 +65,12 @@ def validate_profile(profile: dict[str, Any], where: str) -> None:
         raise ProfileError(f"{where}: default_target {default!r} is not a tier")
     if profile.get("path_tier") not in (None, *tiers.keys()):
         raise ProfileError(f"{where}: path_tier must name a tier")
+    vpt = profile.get("vitest_path_tier")
+    if vpt is not None:
+        if vpt not in tiers:
+            raise ProfileError(f"{where}: vitest_path_tier must name a tier")
+        if tiers[vpt].get("framework", profile.get("framework")) != "vitest":
+            raise ProfileError(f"{where}: vitest_path_tier {vpt!r} must be a vitest tier")
 
 
 def load_project(name: str, registry_path: Path = PROJECTS_FILE) -> Project:
