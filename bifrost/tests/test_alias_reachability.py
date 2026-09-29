@@ -38,6 +38,8 @@ from pathlib import Path
 import pytest
 import requests
 
+pytestmark = pytest.mark.live
+
 _CONFIG_PATH = Path(__file__).resolve().parent.parent / "config.json"
 _BIFROST_URL = os.getenv("BIFROST_TEST_URL", "http://localhost:4445")
 _REQUEST_TIMEOUT_S = 30

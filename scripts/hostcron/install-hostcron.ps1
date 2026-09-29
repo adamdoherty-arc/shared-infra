@@ -52,7 +52,6 @@ $MigratedTasks = @(
     'Shared Infra - WSL Memory Reclaim',
     'ADA Restart Window - Hourly',
     'ADA Master - Pulse',
-    'ADA Master - Watchdog',
     'ADA Ratchet Sweep - Nightly',
     'ADA CI-Replacement Gate - Nightly',
     'ADA Comment Burndown - Nightly',
