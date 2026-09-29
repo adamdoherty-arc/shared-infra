@@ -62,6 +62,26 @@
       "enabled": true
     },
     {
+      "name": "ada-frontend-prod-release",
+      "owner": "ada",
+      "_note": "Builds committed master into the production frontend (ada-nginx :5421) and releases it only if a browser smoke passes; no-op when already current. 22:20 and 02:20 ET by owner choice 2026-09-28, after the :00 restart window settles and clear of the 03:00-04:00 backup.",
+      "cmd": [
+        "cmd.exe",
+        "/c",
+        "C:\\code\\ADA\\scripts\\setup\\run-frontend-prod-release.cmd"
+      ],
+      "cwd": "C:\\code\\ADA",
+      "schedule": {
+        "minute": 20,
+        "hour": [
+          22,
+          2
+        ]
+      },
+      "timeout_s": 3000,
+      "enabled": true
+    },
+    {
       "name": "ada-master-pulse",
       "owner": "ada",
       "_note": "36 LLM-free probes; writes probe_cache/heartbeat/escalation.flag. Already native and 0-token - only its scheduler changes.",
@@ -132,7 +152,7 @@
         "minute": 0,
         "hour": 4
       },
-      "timeout_s": 2700,
+      "timeout_s": 10800,
       "enabled": true
     },
     {
