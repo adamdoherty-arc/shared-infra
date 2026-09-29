@@ -237,6 +237,23 @@
       "enabled": true
     },
     {
+      "name": "claude-discovery-cost-weekly",
+      "owner": "ada",
+      "cmd": [
+        "cmd.exe",
+        "/c",
+        "C:\\code\\shared-infra\\scripts\\run-discovery-cost.cmd"
+      ],
+      "cwd": "C:\\code\\shared-infra",
+      "schedule": {
+        "minute": 30,
+        "hour": 8,
+        "dow": 0
+      },
+      "timeout_s": 600,
+      "enabled": true
+    },
+    {
       "name": "ada-dr-restore-drill-weekly",
       "owner": "ada",
       "cmd": [
