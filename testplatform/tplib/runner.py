@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -39,6 +40,7 @@ class Execution:
     error_summary: str | None = None
     quarantined_deselected: int = 0
     rc: int | None = None
+    reason: str | None = None
 
 
 @dataclass
@@ -239,7 +241,8 @@ def run_pytest(project: Project, tier: dict[str, Any], paths: list[str] | None, 
                                                      tier.get("test_globs", []))
             if not mapped:
                 (art / "selection.json").write_text(json.dumps(selection, indent=1), encoding="utf-8")
-                return Execution("passed", [], None, 0, 0)
+                return Execution("passed", [], None, 0, 0, reason=(
+                    f"no test names or imports any of them via {selection.get('source', 'selection')}"))
             paths = mapped
         else:
             problem = sel.preflight_changed(runtime, tier, False)
@@ -380,8 +383,26 @@ def vitest_container_paths(paths: list[str] | None, repo_subdir: str) -> list[st
     return out
 
 
-def run_vitest(project: Project, tier: dict[str, Any], paths: list[str] | None, trigger: str, art: Path,
-               legion: LegionClient, target: str) -> Execution:
+VITEST_TEST_FILE = re.compile(r"\.(test|spec)\.[cm]?[jt]sx?$|(^|/)__tests__/")
+
+
+def split_frontend_paths(paths: list[str], repo_subdir: str) -> tuple[list[str], list[str]]:
+    """Split caller paths into (frontend files vitest can act on, everything else).
+
+    Frontend means a vitest-suffixed file under the repo's frontend subdir; files are normalised to `/`.
+    """
+    subdir = repo_subdir.strip("/")
+    fe: list[str] = []
+    rest: list[str] = []
+    for raw in paths:
+        norm = raw.replace("\\", "/").removeprefix("./")
+        under = not subdir or norm.startswith(subdir + "/")
+        (fe if under and Path(norm).suffix in VITEST_SUFFIXES else rest).append(norm)
+    return fe, rest
+
+
+def _vitest_call(project: Project, tier: dict[str, Any], argv: list[str], art: Path, tag: str) -> Execution:
+    """One `npx vitest ...` invocation in the vitest container; `argv` is everything after `npx vitest`."""
     runtime = project.profile["runtime"]
     vt = project.profile.get("vitest", {})
     container = vt.get("container", runtime["container"])
@@ -392,25 +413,64 @@ def run_vitest(project: Project, tier: dict[str, Any], paths: list[str] | None, 
         return Execution("error", error_summary=problem)
     report_in = f"/tmp/{uuid.uuid4().hex}.json"
     cmd = ["docker", "exec", "-w", vt.get("workdir", "/app"), container, "timeout", "-s", "TERM", "-k", "20",
-           str(timeout_s), "npx", "vitest", "run", "--reporter=json", f"--outputFile={report_in}"]
-    vt_paths = vitest_container_paths(paths, str(vt.get("repo_subdir", "")))
-    cmd += list(tier.get("args", [])) + (vt_paths or list(tier.get("paths", [])))
+           str(timeout_s), "npx", "vitest", *argv, "--reporter=json", f"--outputFile={report_in}"]
+    cmd += list(tier.get("args", []))
     out_log = art / "output.log"
     started = time.time()
     rc, _ = _run(cmd, timeout_s + 120, out_log)
-    report_host = art / "report.json"
+    report_host = art / f"report{tag}.json"
     cp_rc = pull_file(container, report_in, report_host)
     _run(["docker", "exec", container, "rm", "-f", report_in], 30)
     tail = _summary(_tail(out_log))
     if rc in (124, 137) and time.time() - started >= timeout_s - 5:
         return Execution("timeout", error_summary=f"exceeded {timeout_s}s; {tail}"[:500], rc=rc)
     if cp_rc != 0 or not report_host.exists():
+        if rc == 0 and "related" in argv:
+            return Execution("passed", [], None, 0, rc)
         return Execution("error", error_summary=f"vitest exit {rc}, no report: {tail}"[:500], rc=rc)
     report = json.loads(report_host.read_text(encoding="utf-8"))
     cases = parsers.parse_vitest_json(report, project.root, vt.get("container_root", "/app"))
     totals = parsers.totals_of(cases)
     status = "failed" if (totals["failed"] or totals["errors"] or rc == 1) else "passed"
     return Execution(status, cases, None, 0, rc)
+
+
+def run_vitest(project: Project, tier: dict[str, Any], paths: list[str] | None, trigger: str, art: Path,
+               legion: LegionClient, target: str) -> Execution:
+    vt = project.profile.get("vitest", {})
+    vt_paths = vitest_container_paths(paths, str(vt.get("repo_subdir", "")))
+    return _vitest_call(project, tier, ["run", *(vt_paths or list(tier.get("paths", [])))], art, "")
+
+
+def merge_executions(parts: list[Execution]) -> Execution:
+    """Combine the pytest and vitest halves of one mixed `--paths` run into one verdict (worst status wins)."""
+    order = {"passed": 0, "failed": 1, "error": 2, "timeout": 3}
+    seen: dict[str, dict[str, Any]] = {}
+    for part in parts:
+        for case in part.cases:
+            seen[case["node_id"]] = case
+    worst = max(parts, key=lambda e: order.get(e.status, 2))
+    summaries = [p.error_summary for p in parts if p.error_summary]
+    reasons = [p.reason for p in parts if p.reason]
+    return Execution(worst.status, list(seen.values()), "; ".join(summaries)[:500] or None,
+                     sum(p.quarantined_deselected for p in parts), worst.rc, "; ".join(reasons) or None)
+
+
+def run_vitest_for_changed(project: Project, tier: dict[str, Any], fe_paths: list[str], art: Path) -> Execution:
+    """Vitest for frontend `--paths`: test files by path, source files through vitest's own `related` import graph."""
+    vt = project.profile.get("vitest", {})
+    container_paths = vitest_container_paths(fe_paths, str(vt.get("repo_subdir", "")))
+    direct = [p for p in container_paths if VITEST_TEST_FILE.search(p)]
+    sources = [p for p in container_paths if p not in direct]
+    parts: list[Execution] = []
+    if direct:
+        parts.append(_vitest_call(project, tier, ["run", *direct], art, "-direct"))
+    if sources:
+        parts.append(_vitest_call(project, tier, ["related", *sources, "--run", "--passWithNoTests"], art, "-related"))
+    merged = merge_executions(parts)
+    if not merged.cases and merged.status == "passed":
+        merged.reason = f"vitest found no test that is or imports {len(fe_paths)} frontend file(s)"
+    return merged
 
 
 def run_schemathesis(project: Project, tier: dict[str, Any], trigger: str, art: Path) -> Execution:
@@ -523,9 +583,50 @@ def run_commands(project: Project, tier: dict[str, Any], art: Path) -> Execution
     return Execution(status, cases, summary, 0, 0)
 
 
+def run_changed_paths(project: Project, tier: dict[str, Any], trigger: str, art: Path, legion: LegionClient,
+                      target: str, changed_paths: list[str]) -> Execution:
+    """`changed --paths`: python files select pytest tests, frontend files run vitest; a mixed set runs both.
+
+    This path would pass trivially if a path set no leg of it can act on (docs, yaml, a frontend file in a
+    project with no vitest_path_tier) returned an empty passed run; start_and_run refuses that as NO TESTS SELECTED.
+    """
+    vt_tier_name = project.profile.get("vitest_path_tier")
+    vt_tier = project.tier(vt_tier_name) if vt_tier_name else None
+    subdir = str(project.profile.get("vitest", {}).get("repo_subdir", ""))
+    fe, rest = split_frontend_paths(changed_paths, subdir) if vt_tier else ([], list(changed_paths))
+    parts: list[Execution] = []
+    if fe and vt_tier:
+        parts.append(run_vitest_for_changed(project, vt_tier, fe, art))
+    if rest or not fe:
+        parts.append(run_pytest(project, tier, None, trigger, art, legion, target, rest or list(changed_paths)))
+    return parts[0] if len(parts) == 1 else merge_executions(parts)
+
+
+def zero_test_refusal(framework: str | None, tier: dict[str, Any], changed_paths: list[str] | None,
+                      exe: Execution, totals: dict[str, int]) -> str | None:
+    """One-line refusal when a run that must execute tests executed none, else None.
+
+    This gate would pass trivially if it only inspected `exe.status`: a zero-test run reports `passed`, which is
+    exactly the defect (testctl runs #227 and #248, 2026-09-29). It therefore reads the executed count itself and
+    only stands down for tiers that do not run tests (commands, playwright, schemathesis), a non-passed run, and a
+    testmon `changed` run without paths, where zero selected tests legitimately means nothing depends on the edit.
+    """
+    if exe.status != "passed" or framework not in ("pytest", "vitest"):
+        return None
+    if totals["total"] - totals["skipped"] > 0:
+        return None
+    if tier.get("mode") == "changed" and not changed_paths:
+        return None
+    if changed_paths:
+        return f"NO TESTS SELECTED for {len(changed_paths)} paths ({exe.reason or 'no test depends on them'})"
+    return f"NO TESTS EXECUTED by tier ({exe.reason or 'zero tests ran'})"
+
+
 def execute_framework(project: Project, tier: dict[str, Any], paths: list[str] | None, trigger: str, art: Path,
                       legion: LegionClient, target: str, changed_paths: list[str] | None = None) -> Execution:
     framework = tier.get("framework", project.profile.get("framework"))
+    if framework == "pytest" and changed_paths and tier.get("mode") == "changed":
+        return run_changed_paths(project, tier, trigger, art, legion, target, changed_paths)
     if framework == "pytest":
         return run_pytest(project, tier, paths, trigger, art, legion, target, changed_paths)
     if framework == "vitest":
@@ -598,6 +699,9 @@ def start_and_run(project: Project, target: str | None, trigger: str, legion: Le
         exe = Execution("error", error_summary=f"runner exception: {type(exc).__name__}: {exc}"[:500])
     duration = time.time() - started_at
     totals = parsers.totals_of(exe.cases)
+    refusal = zero_test_refusal(framework, tier, changed_paths, exe, totals)
+    if refusal:
+        exe = Execution("error", exe.cases, refusal, exe.quarantined_deselected, exe.rc, exe.reason)
     sparse_target = target_label == "changed" and trigger != "schedule"
     known: dict[str, str] = {}
     if sparse_target:
@@ -643,6 +747,8 @@ def start_and_run(project: Project, target: str | None, trigger: str, legion: Le
                                                                   "framework": framework,
                                                                   "runner_host": socket.gethostname(),
                                                                   "artifact_path": art.as_posix()}}), encoding="utf-8")
+    if refusal:
+        text = refusal
     (art / "verdict.txt").write_text(text, encoding="utf-8")
     return Outcome(run_id, exe.status, text, art)
 
