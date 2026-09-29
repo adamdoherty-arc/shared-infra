@@ -46,10 +46,15 @@ class RunnerService:
     def __init__(self, legion: LegionClient | None = None, lock_dir: Path = LOCK_DIR):
         self.legion = legion or LegionClient(legion_url())
         self.lock_dir = lock_dir
+        self._queued: set[str] = set()
+        self._queue_lock = threading.Lock()
 
-    def _run_queued(self, project, body: dict[str, Any], trigger: str, key: str) -> None:
+    def _run_queued(self, project, body: dict[str, Any], trigger: str, key: str, queue_id: str) -> None:
         lock = ProjectLock(project.name, self.lock_dir)
-        if not lock.wait_acquire(key, QUEUE_TIMEOUT_S):
+        acquired = lock.wait_acquire(key, QUEUE_TIMEOUT_S)
+        with self._queue_lock:
+            self._queued.discard(queue_id)
+        if not acquired:
             sys.stderr.write(f"queued run for {project.name} gave up after {QUEUE_TIMEOUT_S}s\n")
             return
         try:
@@ -76,9 +81,14 @@ class RunnerService:
         key = runner.request_key(body.get("target") or project.default_target, body.get("paths") or None)
         ok, held = lock.acquire(key)
         if not ok and held is not None and held.key != key:
-            threading.Thread(target=self._run_queued, args=(project, body, trigger, key), daemon=True,
-                             name=f"queued-{name}").start()
-            return 202, {"accepted": True, "run_id": None, "queued": True}
+            queue_id = f"{name}:{key}"
+            with self._queue_lock:
+                already = queue_id in self._queued
+                self._queued.add(queue_id)
+            if not already:
+                threading.Thread(target=self._run_queued, args=(project, body, trigger, key, queue_id), daemon=True,
+                                 name=f"queued-{name}").start()
+            return 202, {"accepted": True, "run_id": None, "queued": True, "duplicate": already}
         if not ok:
             held = lock.wait_for_run_id(5.0) or held
             return 409, {"accepted": False, "attached_run_id": held.run_id if held else None}

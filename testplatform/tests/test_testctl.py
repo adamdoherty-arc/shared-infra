@@ -544,3 +544,23 @@ def test_lock_records_the_request_key_and_a_second_holder_can_queue(tmp_path):
     assert second.wait_acquire(runner.request_key("full", None), timeout=10, poll=0.1)
     assert time.time() - started < 5
     second.release()
+
+
+def test_service_queues_a_different_request_once(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from tplib import runner, server
+    from tplib.lock import ProjectLock
+    project = SimpleNamespace(name="p", default_target="fast", profile={})
+    monkeypatch.setattr(server, "load_project", lambda name: project)
+    monkeypatch.setattr(runner, "preflight", lambda *a, **k: None)
+    started = []
+    monkeypatch.setattr(server.threading, "Thread", lambda target, args, daemon, name: SimpleNamespace(
+        start=lambda: started.append(args)))
+    holder = ProjectLock("p", tmp_path)
+    assert holder.acquire(runner.request_key("changed", None))[0]
+    service = server.RunnerService(legion=object(), lock_dir=tmp_path)
+    first = service.submit({"project": "p", "target": "full", "trigger": "schedule"})
+    second = service.submit({"project": "p", "target": "full", "trigger": "schedule"})
+    assert first == (202, {"accepted": True, "run_id": None, "queued": True, "duplicate": False})
+    assert second[1]["duplicate"] is True and len(started) == 1
+    holder.release()
