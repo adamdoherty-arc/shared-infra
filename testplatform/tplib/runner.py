@@ -175,7 +175,7 @@ def map_changed_to_tests(root: Path, files: list[str], test_globs: list[str]) ->
         f = f.replace("\\", "/")
         if not f.endswith(".py"):
             continue
-        if any(fnmatch.fnmatch(f, g) for g in test_globs):
+        if any(fnmatch.fnmatch(f, g) or fnmatch.fnmatch(f, g.replace("/**/", "/")) for g in test_globs):
             if (root / f).exists():
                 tests.add(f)
             continue
@@ -183,7 +183,8 @@ def map_changed_to_tests(root: Path, files: list[str], test_globs: list[str]) ->
         if stem == "__init__" or len(stem) < 3:
             continue
         for t in all_tests:
-            if stem in Path(t).stem:
+            tstem = Path(t).stem
+            if tstem == f"test_{stem}" or tstem.startswith(f"test_{stem}_"):
                 tests.add(t)
     return sorted(tests)
 
@@ -536,11 +537,17 @@ def attach_and_wait(legion: LegionClient, lock: ProjectLock, timeout_s: int = 54
     if held is None or held.run_id is None:
         return Outcome(None, "error", "attach failed: the in-flight run has not registered a run id", None, True)
     deadline = time.time() + timeout_s
+    failures = 0
     while time.time() < deadline:
         try:
             run = legion.run(int(held.run_id))
         except LegionError as exc:
-            return Outcome(int(held.run_id), "error", f"attach failed: {exc}", None, True)
+            failures += 1
+            if failures >= 5:
+                return Outcome(int(held.run_id), "error", f"attach failed: {exc}", None, True)
+            time.sleep(5)
+            continue
+        failures = 0
         status = str(run.get("status", "running"))
         if status != "running":
             text = run.get("text") or (run.get("verdict") or {}).get("text") or run.get("verdict_text") or \
