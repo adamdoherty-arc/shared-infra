@@ -14,7 +14,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from . import parsers, selection as sel
+from . import parsers
+from . import selection as sel
 from .artifacts import new_artifact_dir
 from .legion import LegionClient, LegionError
 from .lock import ProjectLock
@@ -70,6 +71,11 @@ def resolve_target(project: Project, target: str | None) -> tuple[str, dict[str,
     if not path_tier:
         raise RunError(f"target {target!r} is not a tier ({', '.join(project.tier_names)}) and the profile has no path_tier")
     return path_tier, project.tier(path_tier), [target]
+
+
+def request_key(target: str | None, paths: list[str] | None) -> str:
+    """Identity of a run request: a second request with the same key attaches, a different one queues."""
+    return json.dumps([target or "", sorted(paths or [])])
 
 
 def preflight(project: Project, target: str | None, changed_paths: list[str] | None) -> None:
@@ -148,7 +154,8 @@ def _pytest_args(project: Project, tier: dict[str, Any], paths: list[str] | None
     args += list(cfg.get("common_args", []))
     workers = int(tier.get("workers", cfg.get("workers", 0)))
     args += ["-n", str(workers), "--dist", "loadfile"] if workers > 0 else ["-n0"]
-    if tier.get("marker"):
+    node_id_run = bool(tier.get("marker_unless_node_id")) and any("::" in p for p in (paths or []))
+    if tier.get("marker") and not node_id_run:
         args += ["-m", tier["marker"]]
     args += list(tier.get("args", []))
     args += extra
@@ -327,7 +334,8 @@ def interpret_pytest(project: Project, tier: dict[str, Any], paths: list[str] | 
     if rc == 5 and min_executed == 0:
         return Execution("passed", cases, None, quarantined_count, rc)
     if executed < min_executed:
-        return Execution("error", cases, f"executed {executed} tests, tier requires at least {min_executed}",
+        hint = f" (marker {tier['marker']!r} deselects slow tests from file runs; name a node id to force one)"             if tier.get("marker_unless_node_id") else ""
+        return Execution("error", cases, f"executed {executed} tests, tier requires at least {min_executed}{hint}",
                          quarantined_count, rc)
     if totals["errors"] and totals["failed"] == 0 and rc != 1:
         status = "error"

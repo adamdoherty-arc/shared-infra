@@ -481,6 +481,7 @@ def test_changed_without_paths_or_testmon_data_refuses_with_a_hint():
 
 def test_check_floors_flags_zero_match_and_shortfall(tmp_path):
     import json as _json
+
     from tplib import runner
     floors = tmp_path / "floors.json"
     floors.write_text(_json.dumps({"floors": {"svc": {"classname_prefixes": ["test_a", "test_b"], "min_executed": 3}}}),
@@ -496,6 +497,7 @@ def test_check_floors_flags_zero_match_and_shortfall(tmp_path):
 def test_commands_framework_maps_exit_codes_to_case_statuses(tmp_path):
     import sys
     from types import SimpleNamespace
+
     from tplib import runner
     art = tmp_path / "art"
     art.mkdir()
@@ -509,3 +511,36 @@ def test_commands_framework_maps_exit_codes_to_case_statuses(tmp_path):
     assert by == {"gates::green": "passed", "gates::red": "failed", "gates::broken": "error"}
     assert exe.status == "failed"
     assert all("failure" in c for c in exe.cases if c["status"] != "passed")
+
+
+def test_path_tier_marker_applies_to_file_runs_but_not_node_ids():
+    from types import SimpleNamespace
+
+    from tplib import runner
+    project = SimpleNamespace(profile={"pytest": {"command": ["python", "-m", "pytest"]}})
+    tier = {"marker": "not slow", "marker_unless_node_id": True, "workers": 0}
+    whole_file = runner._pytest_args(project, tier, ["backend/tests/test_x.py"], "claude", "/r.json", [], [])
+    one_test = runner._pytest_args(project, tier, ["backend/tests/test_x.py::TestA::test_b"], "claude", "/r.json", [], [])
+    assert "not slow" in whole_file
+    assert "not slow" not in one_test
+
+
+def test_lock_records_the_request_key_and_a_second_holder_can_queue(tmp_path):
+    import threading
+    import time
+
+    from tplib import runner
+    from tplib.lock import ProjectLock
+    first = ProjectLock("p", tmp_path)
+    key_a = runner.request_key("changed", ["a.py"])
+    assert first.acquire(key_a)[0]
+    first.set_run_id(7)
+    second = ProjectLock("p", tmp_path)
+    ok, held = second.acquire(runner.request_key("full", None))
+    assert not ok and held.key == key_a and held.run_id == 7
+    assert runner.request_key("changed", ["b.py", "a.py"]) == runner.request_key("changed", ["a.py", "b.py"])
+    threading.Timer(0.3, first.release).start()
+    started = time.time()
+    assert second.wait_acquire(runner.request_key("full", None), timeout=10, poll=0.1)
+    assert time.time() - started < 5
+    second.release()

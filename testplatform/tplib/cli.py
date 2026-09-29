@@ -14,6 +14,8 @@ from .lock import ProjectLock
 from .printer import budget, emit
 from .profile import ARTIFACTS_ROOT, PLATFORM_ROOT, ProfileError, legion_url, load_project, parse_target_spec
 
+QUEUE_TIMEOUT_S = 5400
+
 
 def _client() -> LegionClient:
     return LegionClient(legion_url())
@@ -54,7 +56,13 @@ def cmd_run(args: argparse.Namespace) -> int:
     lock = ProjectLock(name)
     if not args.wait:
         return _run_detached(args, name, lock)
-    ok, held = lock.acquire()
+    key = runner.request_key(target or project.default_target, args.paths)
+    ok, held = lock.acquire(key)
+    if not ok and held is not None and held.key != key:
+        if not lock.wait_acquire(key, QUEUE_TIMEOUT_S):
+            emit([f"error: {name} test lock still held by another run after {QUEUE_TIMEOUT_S}s"])
+            return 2
+        ok = True
     if not ok:
         return _finish_run(runner.attach_and_wait(client, lock), args.detail, args.quiet)
     try:

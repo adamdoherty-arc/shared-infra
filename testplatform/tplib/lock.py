@@ -48,6 +48,7 @@ class Held:
     pid: int
     run_id: int | None
     stale: bool = False
+    key: str | None = None
 
 
 class ProjectLock:
@@ -56,6 +57,7 @@ class ProjectLock:
         self.dir = lock_dir
         self.path = lock_dir / f"{project}.json"
         self.mine = False
+        self.key: str | None = None
         self.stale_taken: Held | None = None
 
     def read(self) -> Held | None:
@@ -64,10 +66,11 @@ class ProjectLock:
         except (OSError, ValueError):
             return None
         pid = int(data.get("pid", 0))
-        return Held(self.project, self.path, pid, data.get("run_id"), stale=not pid_alive(pid))
+        return Held(self.project, self.path, pid, data.get("run_id"), stale=not pid_alive(pid), key=data.get("key"))
 
-    def acquire(self) -> tuple[bool, Held | None]:
+    def acquire(self, key: str | None = None) -> tuple[bool, Held | None]:
         self.dir.mkdir(parents=True, exist_ok=True)
+        self.key = key
         for _ in range(4):
             try:
                 fd = os.open(str(self.path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
@@ -85,14 +88,14 @@ class ProjectLock:
                     continue
                 return False, held
             with os.fdopen(fd, "w", encoding="utf-8") as fh:
-                json.dump({"pid": os.getpid(), "run_id": None, "started_at": time.time()}, fh)
+                json.dump({"pid": os.getpid(), "run_id": None, "started_at": time.time(), "key": key}, fh)
             self.mine = True
             return True, None
         return False, self.read()
 
     def set_run_id(self, run_id: int) -> None:
-        self.path.write_text(json.dumps({"pid": os.getpid(), "run_id": run_id, "started_at": time.time()}),
-                             encoding="utf-8")
+        self.path.write_text(json.dumps({"pid": os.getpid(), "run_id": run_id, "started_at": time.time(),
+                                         "key": self.key}), encoding="utf-8")
 
     def release(self) -> None:
         if not self.mine:
@@ -104,6 +107,16 @@ class ProjectLock:
             except OSError:
                 pass
         self.mine = False
+
+    def wait_acquire(self, key: str | None, timeout: float, poll: float = 5.0) -> bool:
+        """Queue behind whoever holds the lock; True once this process owns it."""
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            ok, _ = self.acquire(key)
+            if ok:
+                return True
+            time.sleep(poll)
+        return False
 
     def wait_for_run_id(self, timeout: float = 15.0) -> Held | None:
         deadline = time.time() + timeout

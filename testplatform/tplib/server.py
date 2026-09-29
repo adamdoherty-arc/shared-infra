@@ -20,6 +20,7 @@ from .profile import PLATFORM_ROOT, ProfileError, legion_url, load_project
 
 DEFAULT_PORT = 8790
 PRUNE_INTERVAL_S = 6 * 3600
+QUEUE_TIMEOUT_S = 4 * 3600
 DRAIN_INTERVAL_S = 300
 START_WAIT_S = 20.0
 LOG_DIR = PLATFORM_ROOT / "logs"
@@ -46,6 +47,19 @@ class RunnerService:
         self.legion = legion or LegionClient(legion_url())
         self.lock_dir = lock_dir
 
+    def _run_queued(self, project, body: dict[str, Any], trigger: str, key: str) -> None:
+        lock = ProjectLock(project.name, self.lock_dir)
+        if not lock.wait_acquire(key, QUEUE_TIMEOUT_S):
+            sys.stderr.write(f"queued run for {project.name} gave up after {QUEUE_TIMEOUT_S}s\n")
+            return
+        try:
+            runner.start_and_run(project, body.get("target"), trigger, self.legion, lock,
+                                 changed_paths=body.get("paths") or None)
+        except Exception as exc:
+            sys.stderr.write(f"queued run failed: {type(exc).__name__}: {exc}\n")
+        finally:
+            lock.release()
+
     def submit(self, body: dict[str, Any]) -> tuple[int, dict[str, Any]]:
         name = body.get("project")
         trigger = body.get("trigger", "manual")
@@ -59,7 +73,12 @@ class RunnerService:
         except (ProfileError, runner.RunError) as exc:
             return 404, {"accepted": False, "error": str(exc)}
         lock = ProjectLock(name, self.lock_dir)
-        ok, held = lock.acquire()
+        key = runner.request_key(body.get("target") or project.default_target, body.get("paths") or None)
+        ok, held = lock.acquire(key)
+        if not ok and held is not None and held.key != key:
+            threading.Thread(target=self._run_queued, args=(project, body, trigger, key), daemon=True,
+                             name=f"queued-{name}").start()
+            return 202, {"accepted": True, "run_id": None, "queued": True}
         if not ok:
             held = lock.wait_for_run_id(5.0) or held
             return 409, {"accepted": False, "attached_run_id": held.run_id if held else None}
