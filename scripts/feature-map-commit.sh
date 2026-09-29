@@ -7,7 +7,7 @@ paths=()
 while IFS= read -r line; do
     st="${line:0:2}"; p="${line:3}"
     case "$p" in
-        docs/architecture/features/*|docs/architecture/INDEX.md|docs/architecture/index.json|docs/architecture/inputs.json|docs/architecture/tables.json)
+        docs/architecture/features/*|docs/architecture/INDEX.md|docs/architecture/index.json|docs/architecture/inputs.json|docs/architecture/tables.json|docs/architecture/ownership.json)
             paths+=("$p") ;;
         */CLAUDE.md)
             if [[ "$st" == *D* ]]; then
