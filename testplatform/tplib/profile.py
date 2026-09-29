@@ -11,7 +11,7 @@ PLATFORM_ROOT = Path(__file__).resolve().parent.parent
 PROJECTS_FILE = PLATFORM_ROOT / "projects.yml"
 ARTIFACTS_ROOT = PLATFORM_ROOT / "artifacts"
 PROFILE_NAME = ".testplatform.yml"
-FRAMEWORKS = {"pytest", "vitest", "playwright", "schemathesis"}
+FRAMEWORKS = frozenset({"pytest", "vitest", "playwright", "schemathesis", "commands"})
 
 
 class ProfileError(Exception):

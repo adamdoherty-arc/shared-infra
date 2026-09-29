@@ -451,3 +451,61 @@ def test_pytest_args_by_trigger(tmp_path):
     claude = runner._pytest_args(project, tier, None, "claude", "/r.json", ["tests/a.py::q"], [])
     assert "--reruns" not in claude and "no:randomly" in claude
     assert claude[claude.index("--deselect") + 1] == "tests/a.py::q"
+
+
+def test_paths_map_via_import_graph_and_direct_tests(tmp_path):
+    from tplib import selection
+    (tmp_path / "backend" / "tests").mkdir(parents=True)
+    (tmp_path / "backend" / "services").mkdir()
+    (tmp_path / "backend" / "services" / "widget_core.py").write_text("x = 1\n", encoding="utf-8")
+    (tmp_path / "backend" / "tests" / "test_uses.py").write_text(
+        "from backend.services.widget_core import x\n", encoding="utf-8")
+    (tmp_path / "backend" / "tests" / "test_other.py").write_text("import os\n", encoding="utf-8")
+    globs = ["backend/tests/**/test_*.py"]
+    runtime = {"kind": "run", "container": "none"}
+    ids, info = selection.select_for_paths(tmp_path, runtime, "/nope", ["backend/services/widget_core.py"], globs)
+    assert ids == ["backend/tests/test_uses.py"] and info["source"] == "import-graph"
+    ids, _ = selection.select_for_paths(tmp_path, runtime, "/nope", ["backend/tests/test_other.py"], globs)
+    assert ids == ["backend/tests/test_other.py"]
+    ids, _ = selection.select_for_paths(tmp_path, runtime, "/nope", ["README.md"], globs)
+    assert ids == []
+
+
+def test_changed_without_paths_or_testmon_data_refuses_with_a_hint():
+    from tplib import selection
+    hint = selection.preflight_changed({"kind": "run", "container": "none"}, {"mode": "changed"}, False)
+    assert hint and "--paths" in hint and "testmon" in hint
+    assert selection.preflight_changed({"kind": "run", "container": "none"}, {"mode": "changed"}, True) is None
+    assert selection.preflight_changed({"kind": "run", "container": "none"}, {"mode": "tier"}, False) is None
+
+
+def test_check_floors_flags_zero_match_and_shortfall(tmp_path):
+    import json as _json
+    from tplib import runner
+    floors = tmp_path / "floors.json"
+    floors.write_text(_json.dumps({"floors": {"svc": {"classname_prefixes": ["test_a", "test_b"], "min_executed": 3}}}),
+                      encoding="utf-8")
+    ok = [{"node_id": f"backend/tests/test_a.py::t{i}", "status": "passed"} for i in range(3)]
+    ok += [{"node_id": "backend/tests/test_b.py::t", "status": "passed"}]
+    assert runner.check_floors(floors, ok) is None
+    assert "zero tests" in runner.check_floors(floors, ok[:3])
+    assert "floor=3" in runner.check_floors(floors, [ok[0], ok[3]])
+    assert runner.check_floors(tmp_path / "absent.json", ok) is None
+
+
+def test_commands_framework_maps_exit_codes_to_case_statuses(tmp_path):
+    import sys
+    from types import SimpleNamespace
+    from tplib import runner
+    art = tmp_path / "art"
+    art.mkdir()
+    py = "import sys; sys.exit(int(sys.argv[1]))"
+    tier = {"timeout_s": 60, "commands": [
+        {"name": "green", "run": ["python", "-c", py, "0"]},
+        {"name": "red", "run": ["python", "-c", py, "1"]},
+        {"name": "broken", "run": ["python", "-c", py, "2"]}]}
+    exe = runner.run_commands(SimpleNamespace(root=tmp_path), tier, art)
+    by = {c["node_id"]: c["status"] for c in exe.cases}
+    assert by == {"gates::green": "passed", "gates::red": "failed", "gates::broken": "error"}
+    assert exe.status == "failed"
+    assert all("failure" in c for c in exe.cases if c["status"] != "passed")

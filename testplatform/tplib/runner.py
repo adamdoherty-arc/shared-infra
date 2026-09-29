@@ -6,6 +6,7 @@ import os
 import socket
 import subprocess
 import sys
+import threading
 import time
 import uuid
 from collections.abc import Callable
@@ -13,7 +14,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from . import parsers
+from . import parsers, selection as sel
 from .artifacts import new_artifact_dir
 from .legion import LegionClient, LegionError
 from .lock import ProjectLock
@@ -69,6 +70,17 @@ def resolve_target(project: Project, target: str | None) -> tuple[str, dict[str,
     if not path_tier:
         raise RunError(f"target {target!r} is not a tier ({', '.join(project.tier_names)}) and the profile has no path_tier")
     return path_tier, project.tier(path_tier), [target]
+
+
+def preflight(project: Project, target: str | None, changed_paths: list[str] | None) -> None:
+    """Refuse before a Legion run row exists when the request cannot be scoped."""
+    _, tier, _ = resolve_target(project, target)
+    if changed_paths and tier.get("mode") != "changed":
+        raise RunError("--paths only applies to the changed tier (testctl run <project>:changed --paths <files>)")
+    if tier.get("mode") == "changed" and project.profile.get("runtime"):
+        problem = sel.preflight_changed(project.profile["runtime"], tier, bool(changed_paths))
+        if problem:
+            raise RunError(problem)
 
 
 def _run(cmd: list[str], timeout: float, out_file: Path | None = None, cwd: Path | None = None,
@@ -152,16 +164,6 @@ def _pytest_args(project: Project, tier: dict[str, Any], paths: list[str] | None
     return args
 
 
-def changed_files(root: Path) -> list[str]:
-    files: set[str] = set()
-    for cmd in (["git", "-c", "safe.directory=*", "-C", str(root), "diff", "--name-only", "HEAD"],
-                ["git", "-c", "safe.directory=*", "-C", str(root), "ls-files", "--others", "--exclude-standard"]):
-        rc, out = _run(cmd, 60)
-        if rc == 0:
-            files.update(ln.strip() for ln in out.splitlines() if ln.strip())
-    return sorted(files)
-
-
 def map_changed_to_tests(root: Path, files: list[str], test_globs: list[str]) -> list[str]:
     import fnmatch
     tests: set[str] = set()
@@ -190,7 +192,7 @@ def map_changed_to_tests(root: Path, files: list[str], test_globs: list[str]) ->
 
 
 def run_pytest(project: Project, tier: dict[str, Any], paths: list[str] | None, trigger: str, art: Path,
-               legion: LegionClient, target: str) -> Execution:
+               legion: LegionClient, target: str, changed_paths: list[str] | None = None) -> Execution:
     runtime = project.profile["runtime"]
     timeout_s = int(tier["timeout_s"])
     quarantined: list[str] = []
@@ -205,19 +207,19 @@ def run_pytest(project: Project, tier: dict[str, Any], paths: list[str] | None, 
     if tier.get("mode") == "changed":
         data_file = tier.get("testmon_datafile", "/tmp/testplatform/.testmondata")
         env["TESTMON_DATAFILE"] = data_file
-        rc, _ = _run(["docker", "exec", runtime["container"], "test", "-f", data_file], 30) \
-            if runtime["kind"] == "exec" else (1, "")
-        if rc == 0:
-            extra += ["--testmon"]
-            selection = {"mode": "testmon", "datafile": data_file}
-        else:
-            files = changed_files(project.root)
-            mapped = map_changed_to_tests(project.root, files, tier.get("test_globs", []))
-            selection = {"mode": "mapped", "changed_files": files, "tests": mapped}
+        if changed_paths:
+            mapped, selection = sel.select_for_paths(project.root, runtime, data_file, changed_paths,
+                                                     tier.get("test_globs", []))
             if not mapped:
                 (art / "selection.json").write_text(json.dumps(selection, indent=1), encoding="utf-8")
                 return Execution("passed", [], None, 0, 0)
             paths = mapped
+        else:
+            problem = sel.preflight_changed(runtime, tier, False)
+            if problem:
+                raise RunError(problem)
+            extra += ["--testmon"]
+            selection = {"mode": "testmon", "datafile": data_file}
     elif tier.get("testmon_build"):
         env["TESTMON_DATAFILE"] = tier.get("testmon_datafile", "/tmp/testplatform/.testmondata")
         extra += ["--testmon-noselect"]
@@ -266,6 +268,33 @@ def run_pytest(project: Project, tier: dict[str, Any], paths: list[str] | None, 
                             elapsed, timeout_s, len(quarantined[:MAX_DESELECT]))
 
 
+def check_floors(path: Path, cases: list[dict[str, Any]]) -> str | None:
+    """Per-critical-service executed-test floors keyed on test module stem; a prefix matching nothing is an error."""
+    try:
+        floors = json.loads(path.read_text(encoding="utf-8")).get("floors")
+    except (OSError, ValueError):
+        return None
+    if not isinstance(floors, dict):
+        return None
+    executed: dict[str, int] = {}
+    for c in cases:
+        if c["status"] == "skipped":
+            continue
+        stem = Path(str(c["node_id"]).split("::", 1)[0]).stem
+        executed[stem] = executed.get(stem, 0) + 1
+    problems: list[str] = []
+    for service, cfg in floors.items():
+        prefixes = cfg.get("classname_prefixes", []) or []
+        zero = [p for p in prefixes if executed.get(p, 0) == 0]
+        total = sum(executed.get(p, 0) for p in prefixes)
+        floor = int(cfg.get("min_executed", 0))
+        if zero:
+            problems.append(f"{service}: prefixes matched zero tests {zero}")
+        elif total < floor:
+            problems.append(f"{service}: executed={total} floor={floor}")
+    return ("service floor breach: " + "; ".join(problems)) if problems else None
+
+
 def interpret_pytest(project: Project, tier: dict[str, Any], paths: list[str] | None, trigger: str, rc: int,
                      report_path: Path | None, out_log: Path, elapsed: float, timeout_s: int,
                      quarantined_count: int) -> Execution:
@@ -286,6 +315,10 @@ def interpret_pytest(project: Project, tier: dict[str, Any], paths: list[str] | 
     reruns = SCHEDULE_RERUNS if trigger == "schedule" else 0
     cases = parsers.parse_pytest_json(report, project.root, reruns=reruns,
                                       path_prefix=project.profile.get("pytest", {}).get("path_prefix", ""))
+    if tier.get("floors_file") and paths is None:
+        breach = check_floors(project.root / tier["floors_file"], cases)
+        if breach:
+            return Execution("error", cases, breach[:500], quarantined_count, rc)
     executed = sum(1 for c in cases if c["status"] not in ("skipped",))
     min_executed = int(tier.get("min_executed", 0))
     totals = parsers.totals_of(cases)
@@ -409,17 +442,58 @@ def run_playwright(project: Project, tier: dict[str, Any], art: Path) -> Executi
     return Execution("failed" if totals["failed"] else "passed", cases, None, 0, 0)
 
 
+def run_commands(project: Project, tier: dict[str, Any], art: Path) -> Execution:
+    """Static gates: each configured command is one case; exit 0 passes, 1 fails, 2 or a timeout errors."""
+    import hashlib
+    specs = tier.get("commands") or []
+    if not specs:
+        return Execution("error", error_summary="commands tier has no commands")
+    deadline = time.time() + int(tier["timeout_s"])
+    cases: list[dict[str, Any]] = []
+    log = art / "output.log"
+    for spec in specs:
+        name = spec["name"]
+        argv = [sys.executable if a == "python" and i == 0 else a for i, a in enumerate(spec["run"])]
+        left = deadline - time.time()
+        node_id = f"{tier.get('case_prefix', 'gates')}::{name}"
+        started = time.time()
+        if left <= 0:
+            rc, text = 124, "tier deadline reached before this gate ran"
+        else:
+            rc, text = _run(argv, min(float(spec.get("timeout_s", 900)), left), cwd=project.root)
+        with open(log, "a", encoding="utf-8") as fh:
+            fh.write(f"== {name} rc={rc}\n{text[-6000:]}\n")
+        status = "passed" if rc == 0 else ("failed" if rc == 1 else "error")
+        case: dict[str, Any] = {
+            "node_id": node_id, "file": spec.get("file", node_id.split("::")[0]), "status": status,
+            "duration_ms": int((time.time() - started) * 1000), "attempts": 1,
+            "body_hash": hashlib.sha1(json.dumps(spec, sort_keys=True).encode()).hexdigest(),
+            "feature_slug": None, "requirement_ids": []}
+        if rc != 0:
+            lines = [ln for ln in text.splitlines() if ln.strip()]
+            message = (lines[-1] if lines else f"exit {rc}")
+            case["failure"] = parsers.make_failure("GateFailed" if rc == 1 else "GateError",
+                                                   f"{name}: {message}", "\n".join(lines))
+        cases.append(case)
+    totals = parsers.totals_of(cases)
+    status = "error" if totals["errors"] and not totals["failed"] else ("failed" if totals["failed"] or totals["errors"] else "passed")
+    summary = f"{totals['errors']} gates errored" if status == "error" else None
+    return Execution(status, cases, summary, 0, 0)
+
+
 def execute_framework(project: Project, tier: dict[str, Any], paths: list[str] | None, trigger: str, art: Path,
-                      legion: LegionClient, target: str) -> Execution:
+                      legion: LegionClient, target: str, changed_paths: list[str] | None = None) -> Execution:
     framework = tier.get("framework", project.profile.get("framework"))
     if framework == "pytest":
-        return run_pytest(project, tier, paths, trigger, art, legion, target)
+        return run_pytest(project, tier, paths, trigger, art, legion, target, changed_paths)
     if framework == "vitest":
         return run_vitest(project, tier, paths, trigger, art, legion, target)
     if framework == "schemathesis":
         return run_schemathesis(project, tier, trigger, art)
     if framework == "playwright":
         return run_playwright(project, tier, art)
+    if framework == "commands":
+        return run_commands(project, tier, art)
     raise RunError(f"unsupported framework {framework}")
 
 
@@ -444,9 +518,13 @@ def _iso(ts: float | None = None) -> str:
 
 def start_and_run(project: Project, target: str | None, trigger: str, legion: LegionClient,
                   lock: ProjectLock, on_started: Callable[[int | None, Path], None] | None = None,
-                  artifacts_root: Path = ARTIFACTS_ROOT) -> Outcome:
+                  artifacts_root: Path = ARTIFACTS_ROOT, changed_paths: list[str] | None = None) -> Outcome:
     tier_name, tier, paths = resolve_target(project, target)
     target_label = target or project.default_target
+    try:
+        drain_pending(legion, artifacts_root, DRAIN_MAX_ITEMS, DRAIN_BUDGET_S)
+    except OSError:
+        pass
     framework = tier.get("framework", project.profile.get("framework"))
     art = new_artifact_dir(project.name, artifacts_root)
     sha = git_sha(project.root)
@@ -471,7 +549,7 @@ def start_and_run(project: Project, target: str | None, trigger: str, legion: Le
         except LegionError:
             pass
     try:
-        exe = execute_framework(project, tier, paths, trigger, art, legion, target_label)
+        exe = execute_framework(project, tier, paths, trigger, art, legion, target_label, changed_paths)
     except Exception as exc:
         exe = Execution("error", error_summary=f"runner exception: {type(exc).__name__}: {exc}"[:500])
     duration = time.time() - started_at
@@ -515,21 +593,61 @@ def start_and_run(project: Project, target: str | None, trigger: str, legion: Le
     return Outcome(run_id, exe.status, text, art)
 
 
-def replay_pending(legion: LegionClient, root: Path = ARTIFACTS_ROOT) -> list[str]:
-    done: list[str] = []
-    for pending in sorted(root.glob("*/*/*/pending_ingest.json")):
-        data = json.loads(pending.read_text(encoding="utf-8"))
+CLAIM_STALE_S = 900
+DRAIN_MAX_ITEMS = 5
+DRAIN_BUDGET_S = 90.0
+
+
+def _release_stale_claims(root: Path, now: float) -> None:
+    for claim in root.glob("*/*/*/ingesting.*.json"):
         try:
+            if now - claim.stat().st_mtime > CLAIM_STALE_S:
+                claim.rename(claim.with_name("pending_ingest.json"))
+        except OSError:
+            continue
+
+
+def drain_pending(legion: LegionClient, root: Path = ARTIFACTS_ROOT, max_items: int | None = None,
+                  budget_s: float | None = None) -> list[str]:
+    done: list[str] = []
+    started = time.time()
+    _release_stale_claims(root, started)
+    taken = 0
+    for pending in sorted(root.glob("*/*/*/pending_ingest.json")):
+        if max_items is not None and taken >= max_items:
+            break
+        if budget_s is not None and time.time() - started > budget_s:
+            break
+        claim = pending.with_name(f"ingesting.{os.getpid()}.{threading.get_ident()}.json")
+        try:
+            pending.rename(claim)
+        except OSError:
+            continue
+        taken += 1
+        try:
+            data = json.loads(claim.read_text(encoding="utf-8"))
             run_id = data.get("run_id")
             if run_id is None:
                 run_id = legion.create_run(data["create_run"])
+                data["run_id"] = run_id
+                claim.write_text(json.dumps(data), encoding="utf-8")
             resp = legion.post_results(int(run_id), data["payload"])
-            (pending.parent / "verdict.txt").write_text(str(resp.get("text", "")), encoding="utf-8")
-            pending.rename(pending.with_name("ingested.json"))
-            done.append(f"run {run_id} <- {pending.parent.name}")
         except LegionError as exc:
+            claim.rename(pending)
             done.append(f"failed {pending.parent.name}: {str(exc)[:80]}")
+            break
+        except (OSError, ValueError, KeyError) as exc:
+            claim.rename(pending.with_name("pending_ingest.bad.json"))
+            done.append(f"unreadable {pending.parent.name}: {type(exc).__name__}")
+            continue
+        (pending.parent / "verdict.txt").write_text(str(resp.get("text") or ""), encoding="utf-8")
+        claim.rename(pending.with_name("ingested.json"))
+        done.append(f"run {run_id} <- {pending.parent.name}")
     return done
+
+
+def replay_pending(legion: LegionClient, root: Path = ARTIFACTS_ROOT) -> list[str]:
+    return drain_pending(legion, root)
 
 
 def attach_and_wait(legion: LegionClient, lock: ProjectLock, timeout_s: int = 5400) -> Outcome:

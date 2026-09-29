@@ -50,6 +50,7 @@ import socket
 import sys
 import urllib.request
 import urllib.error
+import re
 from collections import defaultdict
 
 CLAUDE_HOME = os.environ.get("CLAUDE_HOME") or os.path.join(os.path.expanduser("~"), ".claude")
@@ -64,6 +65,10 @@ PRICING = {
     "other":  (3.0,  3.75,  0.30, 15.0),  # other = sonnet rates
 }
 
+TEST_COMMAND_RE = re.compile(r"pytest|vitest|runner[.]py|testctl", re.I)
+TESTCTL_RE = re.compile(r"(^|[\s/])testctl([\s.]|$)", re.I)
+CHARS_PER_TOKEN = 4
+
 TARGETS = {
     "top_tier_share": 0.30,
     "avg_top_cache_read": 200000,
@@ -75,6 +80,22 @@ TARGET_LABELS = {
     "avg_top_cache_read": ("Avg cache-read tokens per top-tier turn", "int"),
     "subagent_top_share": ("Subagent spend on top-tier", "pct"),
 }
+
+
+def tool_result_text(content):
+    """Flatten a tool_result content field (string or list of text blocks) to text."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "".join(b.get("text", "") for b in content if isinstance(b, dict))
+    return ""
+
+
+def classify_test_command(command):
+    """'testctl', 'raw' (pytest/vitest/runner.py without testctl) or None for unrelated commands."""
+    if not command or not TEST_COMMAND_RE.search(command):
+        return None
+    return "testctl" if TESTCTL_RE.search(command) else "raw"
 
 
 def classify_family(model_name):
@@ -232,6 +253,18 @@ def render_markdown(report, history_rows):
         lines.append("| %s | `%s` | $%s | %s | %s |" % (
             row["project"], row["session_id"][:8], "{:,.2f}".format(row["est_cost"]), "{:,}".format(row["turns"]), mix))
     lines.append("")
+    tot = report.get("test_output_tokens")
+    if tot:
+        lines.append("## Test output tokens")
+        lines.append("")
+        lines.append("| Path | Tool calls | Result tokens (approx) |")
+        lines.append("|---|---|---|")
+        lines.append(f"| raw pytest/vitest/runner.py | {tot['raw_calls']:,} | {tot['raw_tokens']:,} |")
+        lines.append(f"| testctl | {tot['testctl_calls']:,} | {tot['testctl_tokens']:,} |")
+        lines.append("")
+        lines.append(f"Tokens in Bash/PowerShell results whose command matches the test runners, {tot['method'].split(', ')[0]}. "
+                     "The route gate (Sprint 15175) is what drives the raw row down.")
+        lines.append("")
     lines.append("## Agent model gate")
     lines.append("")
     gate = report["gate"]
@@ -340,6 +373,8 @@ def main():
     day_cost = defaultdict(float)
     sessions = defaultdict(lambda: {"cost": 0.0, "turns": 0, "families": defaultdict(int), "project": ""})
 
+    test_out = {"raw": {"calls": 0, "tokens": 0}, "testctl": {"calls": 0, "tokens": 0}}
+
     total_lines = 0
     parsed_lines = 0
     files_scanned = 0
@@ -355,6 +390,7 @@ def main():
         subagent = is_subagent_path(path)
         project, session_id = session_key_of(path, root)
         skey = (project, session_id)
+        pending_test_calls = {}
         try:
             with open(path, "r", encoding="utf-8", errors="replace") as fh:
                 for line in fh:
@@ -366,9 +402,28 @@ def main():
                         obj = json.loads(line)
                     except Exception:
                         continue
-                    if obj.get("type") != "assistant":
+                    kind = obj.get("type")
+                    if kind == "user" and pending_test_calls:
+                        blocks = (obj.get("message") or {}).get("content")
+                        for block in blocks if isinstance(blocks, list) else []:
+                            if not isinstance(block, dict) or block.get("type") != "tool_result":
+                                continue
+                            klass = pending_test_calls.pop(block.get("tool_use_id"), None)
+                            if klass:
+                                text = tool_result_text(block.get("content"))
+                                test_out[klass]["calls"] += 1
+                                test_out[klass]["tokens"] += len(text) // CHARS_PER_TOKEN
+                        continue
+                    if kind != "assistant":
                         continue
                     msg = obj.get("message") or {}
+                    ts = obj.get("timestamp")
+                    if isinstance(msg.get("content"), list) and within_window(ts, cutoff_date_str):
+                        for block in msg["content"]:
+                            if isinstance(block, dict) and block.get("type") == "tool_use" and block.get("name") in ("Bash", "PowerShell"):
+                                klass = classify_test_command((block.get("input") or {}).get("command"))
+                                if klass:
+                                    pending_test_calls[block.get("id")] = klass
                     usage = msg.get("usage")
                     if not usage:
                         continue
@@ -516,6 +571,11 @@ def main():
         "subagent_top_share_of_subagent_spend": round(subagent_top_share, 4),
         "targets": targets_block,
         "gate": gate_block,
+        "test_output_tokens": {
+            "raw_calls": test_out["raw"]["calls"], "raw_tokens": test_out["raw"]["tokens"],
+            "testctl_calls": test_out["testctl"]["calls"], "testctl_tokens": test_out["testctl"]["tokens"],
+            "method": f"tool_result characters / {CHARS_PER_TOKEN}, Bash/PowerShell commands matching pytest|vitest|runner.py|testctl",
+        },
     }
 
     if args.baseline and os.path.isfile(args.baseline):
@@ -573,6 +633,8 @@ def main():
         print("Agent-model-gate counts by reason (window): %s" % gate_block["counts_by_reason"])
     else:
         print("Agent-model-gate log not found: %s" % GATE_LOG)
+    print(f"Test output tokens: raw={test_out['raw']['tokens']} ({test_out['raw']['calls']} calls) "
+          f"testctl={test_out['testctl']['tokens']} ({test_out['testctl']['calls']} calls)")
 
     if "baseline_compare" in report:
         print("")

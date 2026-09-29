@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import json
+import time
 import urllib.error
 import urllib.request
 from typing import Any
 from urllib.parse import urlencode
 
 PREFIX = "/api/test-platform"
+ATTEMPTS = 3
+BACKOFF_S = (2.0, 6.0)
+RETRYABLE_STATUS = {408, 425, 429}
 
 
 class LegionError(Exception):
@@ -15,10 +19,29 @@ class LegionError(Exception):
         self.status = status
 
 
+def retryable(exc: LegionError) -> bool:
+    return exc.status is None or exc.status >= 500 or exc.status in RETRYABLE_STATUS
+
+
 class LegionClient:
-    def __init__(self, base_url: str, timeout: float = 30.0):
+    def __init__(self, base_url: str, timeout: float = 30.0, backoff: tuple[float, ...] = BACKOFF_S):
         self.base = base_url.rstrip("/")
         self.timeout = timeout
+        self.backoff = backoff
+
+    def _retry(self, fn):
+        last: LegionError | None = None
+        for attempt in range(ATTEMPTS):
+            try:
+                return fn(attempt)
+            except LegionError as exc:
+                if not retryable(exc):
+                    raise
+                last = exc
+                if attempt < ATTEMPTS - 1:
+                    time.sleep(self.backoff[min(attempt, len(self.backoff) - 1)])
+        assert last is not None
+        raise last
 
     def _call(self, method: str, path: str, body: Any = None, query: dict[str, Any] | None = None,
               timeout: float | None = None) -> Any:
@@ -42,10 +65,20 @@ class LegionClient:
             raise LegionError(f"{method} {path} unreachable: {exc}") from exc
 
     def create_run(self, body: dict) -> int:
-        return int(self._call("POST", "/runs", body)["run_id"])
+        return self._retry(lambda _n: int(self._call("POST", "/runs", body)["run_id"]))
 
     def post_results(self, run_id: int, body: dict) -> dict:
-        return self._call("POST", f"/runs/{run_id}/results", body, timeout=180)
+        def attempt(n: int) -> dict:
+            try:
+                return self._call("POST", f"/runs/{run_id}/results", body, timeout=180)
+            except LegionError as exc:
+                if exc.status != 409 or n == 0:
+                    raise
+                run = self._call("GET", f"/runs/{run_id}")
+                if not run or run.get("status") == "running":
+                    raise
+                return {"run_id": run_id, "verdict": run.get("verdict"), "text": run.get("text")}
+        return self._retry(attempt)
 
     def runs(self, project_id: int, limit: int = 20) -> Any:
         return self._call("GET", "/runs", query={"project_id": project_id, "limit": limit})

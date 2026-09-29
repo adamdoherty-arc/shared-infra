@@ -9,7 +9,9 @@ The wire contract is `CONTRACT.md`.
 ## Commands (`testctl` is on PATH next to `mcp`)
 
 ```
-testctl run ada:changed          one call, <=15 line verdict; exit 0 pass, 1 fail, 2 error/timeout
+testctl run ada:changed --paths <files...>   the tests that depend on those files; <=15 line verdict; exit 0 pass, 1 fail, 2 error/timeout
+testctl run ada:changed          testmon-selected (needs testmon data; refuses with a one-line hint otherwise, never a git-diff guess)
+testctl run ada:fast --quiet     prints nothing on pass, the verdict on failure; the exit code gates (hooks)
 testctl run ada                  default tier (fast)
 testctl run ada:backend/tests/test_x.py[::Class::test]    a file or node id (uses the path tier)
 testctl run legion:fast --no-wait                          start and return the run id
@@ -34,10 +36,15 @@ pass `--reruns 2` and keep random ordering.
 `.testplatform.yml` (`ada`: `C:/code/ADA/.testplatform.yml`, `legion`: `C:/code/legion/.testplatform.yml`)
 with `runtime` (how to reach a test container), `pytest` defaults and named `tiers`
 (framework, marker, paths, workers, `timeout_s`, `min_executed`). A target that is not a tier name is a
-path or node id and runs under `path_tier`.
+path or node id and runs under `path_tier`. A tier may carry `floors_file` (per-service executed-test floors keyed on
+test module stem; a prefix that matches zero tests, or a shortfall, makes the run an `error`).
 
-ADA tiers: `changed` (pytest-testmon; when no testmon data exists, git-changed files mapped to test
-files), `testmon` (builds the testmon data), `fast`, `live_db`, `full`, `path`, `vitest`,
+ADA tiers: `changed` (two selection paths. `--paths <files>` maps the given source or test files to tests through the
+testmon dependency database, falling back to an import-graph scan of the test tree when the database cannot answer;
+plain `changed` runs `pytest --testmon`, and with neither paths nor testmon data it refuses with a hint), `testmon`
+(builds the testmon data once), `fast`, `live_db`, `full` (also rebuilds the testmon data every night with
+`--testmon-noselect`, so `changed` stays current), `path`, `vitest`, `gates` (framework `commands`: each configured
+command is one case, exit 0 pass / 1 fail / 2 error; used for the non-test static gates),
 `fuzz` (schemathesis, GET only, fixed seed, `not_a_server_error`, against `http://ada-backend:8003`),
 `e2e` (playwright smoke over a page list). Legion runs in a throwaway container from its own image.
 

@@ -20,6 +20,7 @@ from .profile import PLATFORM_ROOT, ProfileError, legion_url, load_project
 
 DEFAULT_PORT = 8790
 PRUNE_INTERVAL_S = 6 * 3600
+DRAIN_INTERVAL_S = 300
 START_WAIT_S = 20.0
 LOG_DIR = PLATFORM_ROOT / "logs"
 
@@ -54,7 +55,7 @@ class RunnerService:
             return 400, {"accepted": False, "error": f"trigger must be one of {runner.TRIGGERS}"}
         try:
             project = load_project(name)
-            runner.resolve_target(project, body.get("target"))
+            runner.preflight(project, body.get("target"), body.get("paths") or None)
         except (ProfileError, runner.RunError) as exc:
             return 404, {"accepted": False, "error": str(exc)}
         lock = ProjectLock(name, self.lock_dir)
@@ -72,7 +73,8 @@ class RunnerService:
 
         def work() -> None:
             try:
-                runner.start_and_run(project, body.get("target"), trigger, self.legion, lock, on_started)
+                runner.start_and_run(project, body.get("target"), trigger, self.legion, lock, on_started,
+                                     changed_paths=body.get("paths") or None)
             finally:
                 started.set()
                 lock.release()
@@ -135,9 +137,19 @@ def _prune_loop() -> None:
         time.sleep(PRUNE_INTERVAL_S)
 
 
+def _drain_loop(legion: LegionClient) -> None:
+    while True:
+        time.sleep(DRAIN_INTERVAL_S)
+        try:
+            runner.drain_pending(legion)
+        except Exception as exc:
+            sys.stderr.write(f"pending drain failed: {type(exc).__name__}: {exc}\n")
+
+
 def serve(host: str = "0.0.0.0", port: int = DEFAULT_PORT) -> None:
     service = RunnerService()
     threading.Thread(target=_prune_loop, daemon=True).start()
+    threading.Thread(target=_drain_loop, args=(service.legion,), daemon=True).start()
     httpd = ThreadingHTTPServer((host, port), make_handler(service))
     httpd.daemon_threads = True
     sys.stderr.write(f"testctl serve listening on {host}:{port}\n")

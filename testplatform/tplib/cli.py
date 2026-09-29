@@ -33,7 +33,9 @@ def _fmt_ts(value: Any) -> str:
     return str(value or "")[:16].replace("T", " ")
 
 
-def _finish_run(outcome: runner.Outcome, detail: bool) -> int:
+def _finish_run(outcome: runner.Outcome, detail: bool, quiet: bool = False) -> int:
+    if quiet and outcome.status == "passed":
+        return 0
     lines = outcome.text.splitlines() or [f"run {outcome.run_id}: {outcome.status}"]
     if outcome.attached:
         lines.insert(0, f"attached to in-flight run {outcome.run_id}")
@@ -46,7 +48,7 @@ def _finish_run(outcome: runner.Outcome, detail: bool) -> int:
 def cmd_run(args: argparse.Namespace) -> int:
     name, target = parse_target_spec(args.spec)
     project = load_project(name)
-    runner.resolve_target(project, target)
+    runner.preflight(project, target, args.paths)
     trigger = args.trigger
     client = _client()
     lock = ProjectLock(name)
@@ -54,12 +56,12 @@ def cmd_run(args: argparse.Namespace) -> int:
         return _run_detached(args, name, lock)
     ok, held = lock.acquire()
     if not ok:
-        return _finish_run(runner.attach_and_wait(client, lock), args.detail)
+        return _finish_run(runner.attach_and_wait(client, lock), args.detail, args.quiet)
     try:
-        outcome = runner.start_and_run(project, target, trigger, client, lock)
+        outcome = runner.start_and_run(project, target, trigger, client, lock, changed_paths=args.paths)
     finally:
         lock.release()
-    return _finish_run(outcome, args.detail)
+    return _finish_run(outcome, args.detail, args.quiet)
 
 
 def _run_detached(args: argparse.Namespace, name: str, lock: ProjectLock) -> int:
@@ -67,8 +69,9 @@ def _run_detached(args: argparse.Namespace, name: str, lock: ProjectLock) -> int
     log_dir.mkdir(parents=True, exist_ok=True)
     out = open(log_dir / f"detached-{int(time.time())}.log", "ab")
     flags = 0x00000008 | 0x08000000 | 0x00000200 if sys.platform == "win32" else 0
+    extra = ["--paths", *args.paths] if args.paths else []
     subprocess.Popen([sys.executable, str(PLATFORM_ROOT / "testctl.py"), "run", args.spec, "--wait",
-                      "--trigger", args.trigger], stdout=out, stderr=out, stdin=subprocess.DEVNULL,
+                      "--trigger", args.trigger, *extra], stdout=out, stderr=out, stdin=subprocess.DEVNULL,
                      creationflags=flags, close_fds=True)
     held = lock.wait_for_run_id(20.0)
     if held is not None and held.run_id is not None:
@@ -228,6 +231,9 @@ def build_parser() -> argparse.ArgumentParser:
     grp.add_argument("--no-wait", dest="wait", action="store_false")
     r.add_argument("--trigger", default=os.environ.get("TESTCTL_TRIGGER", "claude"),
                    choices=list(runner.TRIGGERS))
+    r.add_argument("--paths", nargs="+", metavar="FILE", default=None,
+                   help="changed tier only: run the tests that depend on these source/test files")
+    r.add_argument("--quiet", action="store_true", help="print nothing on pass; the exit code gates")
     f = add("failure", cmd_failure)
     f.add_argument("failure_id", type=int)
     rf = add("run-failures", cmd_run_failures)

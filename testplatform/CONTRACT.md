@@ -106,6 +106,9 @@ A flaky event is either:
 - **Host service:** `testctl serve` listens on 127.0.0.1:8790 and 0.0.0.0 for the Docker bridge. It keeps one run per project (a lock), and a second request attaches to the run already in flight.
 - **Artifacts:** stored under `testplatform/artifacts/<project>/<date>/<uuid>/` (report.json, output.log). Retention is 14 days.
 - **CLI:**
-  - `testctl run <project>[:<target>] [--wait|--no-wait] [--detail]`. `--wait` is the default and prints `text` verbatim. The exit code is 0 only on pass.
+  - `testctl run <project>[:<target>] [--wait|--no-wait] [--detail] [--paths FILE...] [--quiet]`. `--wait` is the default and prints `text` verbatim. The exit code is 0 only on pass.
+  - `--paths` (changed tier only) selects the tests that depend on the given files: testmon dependency data first, an import-graph scan otherwise. The runner service accepts the same list as `"paths"` in `POST /run`.
+  - `changed` with no `--paths` and no testmon data is refused (exit 2, one line) before any Legion run row exists. It never falls back to a git-diff guess.
+  - `--quiet` prints nothing on a pass; failures print the normal verdict. Exit code gates.
   - `testctl failure <id>`, `testctl run-failures <run_id>`, `testctl history <project> <node_id>`, `testctl flaky <project>`, `testctl status [run_id]`, `testctl schedule list`.
 - **Budget:** no CLI command prints more than 15 lines without `--detail`, and `--detail` caps at 60.
