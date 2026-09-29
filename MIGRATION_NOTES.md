@@ -4,7 +4,7 @@ The shared-infra stack now owns a single LiteLLM proxy at `host.docker.internal:
 
 ## Why
 
-Before: Zero hardcoded `:18800`, Legion ran its own `legion-litellm:4000`, ADA bypassed LiteLLM and hit Ollama direct. A port change broke one project silently.
+Before: Zero hardcoded `:18800`, Legion ran its own `legion-litellm:4000`, ADA bypassed LiteLLM and hit the legacy local runtime direct. A port change broke one project silently.
 
 After: one `config.yaml` in `shared-infra/litellm/`, one master key, one URL, one router. Backends move freely.
 
@@ -32,13 +32,13 @@ After: one `config.yaml` in `shared-infra/litellm/`, one master key, one URL, on
 
 ## ADA — migration diff (not applied)
 
-ADA currently has LiteLLM disabled (commented in `docker-compose.yml` lines 182-183). It calls Ollama direct via `OLLAMA_HOST: http://host.docker.internal:11434`. The migration is additive — ADA can keep calling Ollama for fallback:
+ADA currently has LiteLLM disabled (commented in `docker-compose.yml` lines 182-183). It calls the legacy local runtime direct via `LEGACY_LLM_HOST: http://host.docker.internal:11434`. The migration is additive — ADA can keep calling the legacy local runtime for fallback:
 
 ```diff
   services:
     ada-backend:
       environment:
-        OLLAMA_HOST: http://host.docker.internal:11434
+        LEGACY_LLM_HOST: http://host.docker.internal:11434
 +       LITELLM_URL: http://host.docker.internal:4444
 +       LITELLM_API_KEY: ${LITELLM_MASTER_KEY}
 -       # LITELLM_URL: http://litellm-proxy:4000  # No litellm-proxy container
@@ -47,7 +47,7 @@ ADA currently has LiteLLM disabled (commented in `docker-compose.yml` lines 182-
 
 Then in ADA's `.env`, set `LITELLM_MASTER_KEY` to the same value used by Zero/Legion/shared-infra (already in `c:\code\shared-infra\.env`).
 
-ADA's backend must also be updated to prefer LiteLLM over Ollama for models that LiteLLM handles (Claude, Kimi, Gemini, vLLM). That's an ADA code change outside this migration and should happen next time ADA is in active dev.
+ADA's backend must also be updated to prefer LiteLLM over the legacy local runtime for models that LiteLLM handles (Claude, Kimi, Gemini, vLLM). That's an ADA code change outside this migration and should happen next time ADA is in active dev.
 
 ## Verification
 
@@ -64,7 +64,7 @@ Legion    (legion-backend) ─┘                                               
                                                                                  ├─► Moonshot (Kimi)
                                                                                  ├─► Anthropic (Claude)
                                                                                  ├─► Google (Gemini)
-                                                                                 └─► Ollama on host (:11434)
+                                                                                 └─► the legacy local runtime on host (:11434)
 ```
 
 ## Future cleanup

@@ -1,7 +1,7 @@
 # shared-freellmapi — self-hosted OpenAI-compatible proxy that aggregates
 # free-tier keys from ~14 LLM providers (Google Gemini, Groq, Cerebras,
 # SambaNova, Mistral, OpenRouter, GitHub Models, Cloudflare, Cohere,
-# Z.ai/Zhipu, NVIDIA, Ollama Cloud) behind a single /v1/chat/completions
+# Z.ai/Zhipu, NVIDIA) behind a single /v1/chat/completions
 # endpoint with priority-ordered fallback chain + per-key RPM/RPD/TPM/TPD
 # rate-limit tracking.
 #
@@ -30,6 +30,12 @@ WORKDIR /build
 # Pinned shallow clone — Dockerfile rebuild is deterministic for a given SHA.
 RUN git clone https://github.com/tashfeenahmed/freellmapi.git . \
  && git checkout "${FREELLMAPI_COMMIT}"
+
+# Owner order 2026-09-29: one upstream provider lane is retired from this estate.
+# strip_retired_lane.py deletes the upstream platform, its model seeds and UI rows,
+# and fails the build if any reference survives.
+COPY strip_retired_lane.py /tmp/strip_retired_lane.py
+RUN python3 /tmp/strip_retired_lane.py /build
 
 # Workspace install (root package.json declares shared/server/client workspaces).
 # better-sqlite3 compiles natively here; prebuilt binaries are picked up when

@@ -3,7 +3,7 @@
 Self-hosted OpenAI-compatible proxy that aggregates the **free tiers of ~14
 LLM providers** (Google Gemini, Groq, Cerebras, SambaNova, Mistral,
 OpenRouter, GitHub Models, Cloudflare Workers AI, Cohere, Z.ai/Zhipu,
-NVIDIA, Ollama Cloud) behind a single `/v1/chat/completions` endpoint, with
+NVIDIA) behind a single `/v1/chat/completions` endpoint, with
 priority-ordered fallback chain, per-key RPM/RPD/TPM/TPD rate-limit tracking,
 and a built-in admin dashboard.
 

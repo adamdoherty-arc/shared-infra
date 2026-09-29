@@ -62,7 +62,7 @@ and 11 allowlisted `openrouter` `:free` names had gone stale upstream (every cal
   disabled the `llm7` platform (5 models, upstream 502 "fetch failed") and
   `nvidia/nemotron-3-nano-30b-a3b` (upstream 410 Gone), and reordered its
   fallback chain to `google → sambanova → zhipu → cohere → groq → cerebras →
-  nvidia → openrouter → ollama → github → pollinations → cloudflare → mistral
+  nvidia → openrouter → github → pollinations → cloudflare → mistral
   → kilo → llm7(disabled)` via `PUT /api/fallback`.
 - 9router (`docker-compose.9router.yml`, `shared-9router` container) —
   **REMOVED** (`docker compose down -v` + file deleted + `NINEROUTER_*` env

@@ -1,21 +1,21 @@
 groups:
   - name: legion_alerts
     rules:
-      - alert: OllamaQueueDepthHigh
-        expr: legion_ollama_queue_depth > 15
+      - alert: LocalLLMQueueDepthHigh
+        expr: legion_local_llm_queue_depth > 15
         for: 2m
         labels:
           severity: warning
         annotations:
-          summary: "Ollama queue depth is high ({{ $value }})"
+          summary: "vLLM queue depth is high ({{ $value }})"
 
-      - alert: OllamaCircuitBreakerOpen
-        expr: legion_circuit_breaker_state{provider="ollama"} == 1
+      - alert: LocalLLMCircuitBreakerOpen
+        expr: legion_circuit_breaker_state{provider="vllm"} == 1
         for: 1m
         labels:
           severity: critical
         annotations:
-          summary: "Ollama circuit breaker is open — LLM requests falling back to Gemini"
+          summary: "vLLM circuit breaker is open — LLM requests falling back to Gemini"
 
       - alert: HighMemoryUsage
         expr: legion_system_memory_percent > 85
@@ -49,13 +49,13 @@ groups:
         annotations:
           summary: "LLM error rate exceeds 30%"
 
-      - alert: OllamaQueueSaturated
-        expr: legion_ollama_queue_depth > 6
+      - alert: LocalLLMQueueSaturated
+        expr: legion_local_llm_queue_depth > 6
         for: 2m
         labels:
           severity: warning
         annotations:
-          summary: "Ollama queue saturated ({{ $value }} requests queued) — requests may timeout"
+          summary: "vLLM queue saturated ({{ $value }} requests queued) — requests may timeout"
 
       - alert: ContainerCPURunaway
         expr: rate(container_cpu_usage_seconds_total{name!="",name!~"qwen38-chat|vllm-.*|shared-tempo"}[1m]) * 100 > 90
@@ -65,13 +65,13 @@ groups:
         annotations:
           summary: "Container {{ $labels.name }} CPU usage above 90% for 5 minutes"
 
-      - alert: OllamaCircuitOpen
-        expr: legion_circuit_breaker_state{provider="ollama"} == 1
+      - alert: LocalLLMCircuitOpen
+        expr: legion_circuit_breaker_state{provider="vllm"} == 1
         for: 30s
         labels:
           severity: critical
         annotations:
-          summary: "Ollama circuit breaker tripped — all LLM requests falling back to cloud"
+          summary: "vLLM circuit breaker tripped — all LLM requests falling back to cloud"
 
       # ── Audit-16: daemon restart loop detection (2026-05-18) ───
       - alert: DaemonRestartLoop
@@ -127,8 +127,8 @@ groups:
         annotations:
           summary: "7-day improvement effectiveness below 40% — auto-evolution is producing more regressions than wins"
 
-      # ── Learn-18: per-source provider override (Ollama re-introduction) alerts ────
-      - alert: OllamaProviderOverrideQualityRegression
+      # ── Learn-18: per-source provider override (vLLM override) alerts ────
+      - alert: LocalLLMProviderOverrideQualityRegression
         expr: increase(legion_provider_override_rolled_back_total[15m]) > 0
         for: 1m
         labels:
@@ -137,14 +137,14 @@ groups:
           summary: "Provider override rolled back due to quality regression (source={{ $labels.source }} target={{ $labels.target_provider }})"
           description: "Learn-17 feedback_loop_verifier auto-rolled-back a Learn-18 provider override row in the last 15 minutes. Investigate the source's review_score delta before enabling more canaries."
 
-      - alert: OllamaCallLatencyHigh
-        expr: histogram_quantile(0.95, sum by (le, provider) (rate(legion_llm_latency_seconds_bucket{provider="ollama"}[10m]))) > 600
+      - alert: LocalLLMCallLatencyHigh
+        expr: histogram_quantile(0.95, sum by (le, provider) (rate(legion_llm_latency_seconds_bucket{provider="vllm"}[10m]))) > 600
         for: 10m
         labels:
           severity: warning
         annotations:
-          summary: "Ollama p95 latency above 600s for 10m — model swap thrash or VRAM saturation likely"
-          description: "Learn-18 routes Tier 1 sources to Ollama. Persistent p95 > 10 min suggests GPU Manager should switch ollama to CPU mode or stop low-priority containers."
+          summary: "vLLM p95 latency above 600s for 10m — model swap thrash or VRAM saturation likely"
+          description: "Learn-18 routes Tier 1 sources to vLLM. Persistent p95 > 10 min suggests GPU Manager should stop low-priority containers."
 
       # ── Mesh-71: stale mesh daemon detection ────────────────────────────
       - alert: MeshDaemonStale

@@ -112,10 +112,10 @@ providers.
 | BLOCKER | `.env:83-84,92`                  | Strip `VLLM_CHAT_BASE_URL=localhost:18800/v1`, `VLLM_EMBED_BASE_URL=localhost:8001/v1`, and `LITELLM_MASTER_KEY` (or repoint to `:4445`). |
 | BLOCKER | persisted runtime: `zero-api:/app/workspace/llm/router_config.json` | Rewrite `default_model` and each task's `providers[]` to use bifrost-prefixed names (`bifrost/vllm-local/qwen3-chat`, `bifrost/moonshot/kimi-k2.6`, `bifrost/embed-local/...`). **Editing code alone won't take effect until this file is rewritten.** |
 | BLOCKER | `backend/app/infrastructure/llm_router.py:153-157` | `_DEFAULT_FALLBACKS` lists `minimax/MiniMax-M2.7`, `kimi/kimi-k2.6`, `vllm/qwen3-chat` — collapse to `bifrost/moonshot/kimi-k2.6`, `bifrost/vllm-local/qwen3-chat`. |
-| BLOCKER | `backend/app/infrastructure/llm_providers/__init__.py:36-46` | Drop direct providers (`gemini`, `openrouter`, `huggingface`, `kimi`, `minimax`, `ollama`) from registration. Keep only `bifrost` + `vllm` (where `vllm` should also point at bifrost). |
+| BLOCKER | `backend/app/infrastructure/llm_providers/__init__.py:36-46` | Drop direct providers (`gemini`, `openrouter`, `huggingface`, `kimi`, `minimax`, `legacy-llm`) from registration. Keep only `bifrost` + `vllm` (where `vllm` should also point at bifrost). |
 | BLOCKER | `backend/app/infrastructure/llm_providers/gemini_provider.py:140-152` | `genai.Client(api_key=...)` has no `base_url` override — cannot redirect through bifrost. Must be **deleted**, not redirected. |
 | BLOCKER | `backend/app/infrastructure/llm_providers/kimi_provider.py:70` | Replace direct `https://api.moonshot.ai/v1` with bifrost: `base_url=ZERO_BIFROST_URL`, model `moonshot/kimi-k2.6`. |
-| IMPORTANT | `backend/app/infrastructure/ollama_client.py` | Retire (currently hits `:11434/api/chat` direct). Already aliased to vllm provider in `llm_providers/__init__.py` per comment, but the file is still imported. |
+| IMPORTANT | `backend/app/infrastructure/legacy_llm_client.py` | Retire (currently hits `:11434/api/chat` direct). Already aliased to vllm provider in `llm_providers/__init__.py` per comment, but the file is still imported. |
 | IMPORTANT | `docker-compose.sprint.yml:105-109` | Remove `ZERO_GEMINI_API_KEY`, `ZERO_OPENROUTER_API_KEY`, `ZERO_KIMI_API_KEY`, `ZERO_HUGGINGFACE_API_KEY` env passthroughs. |
 | NICE-TO-HAVE | `backend/app/infrastructure/config.py:30-44` | Drop settings fields for `gemini_api_key`, `openrouter_api_key`, etc. |
 
@@ -134,7 +134,7 @@ out? Recommend: `bifrost-qwen` (vllm-local) for full local-only.
 **Why complex**: ADA has the correct `llm_router.py` pointing at
 bifrost (good), but a **second parallel routing system** initializes
 at startup (`src/services/llm_service.py` +
-`src/services/intelligent_llm_router.py`) which registers ollama / vllm
+`src/services/intelligent_llm_router.py`) which registers legacy-llm / vllm
 / huggingface / grok as independent providers. Logs confirm:
 `"Initialized intelligent router with 4 providers"`. ADA's KimiClient,
 OpenRouterClient, MiniMaxClient all live alongside.
@@ -147,19 +147,19 @@ OpenRouterClient, MiniMaxClient all live alongside.
 | BLOCKER | `backend/infrastructure/ai_client.py:1378-1420` | `KimiClient` opens `AsyncOpenAI` direct to Moonshot. Change `base_url` → `BIFROST_GATEWAY_URL`, model name → `moonshot/kimi-k2.6`. |
 | BLOCKER | `backend/infrastructure/ai_client.py:1137-1175` | `OpenRouterClient` direct to openrouter.ai — delete the class and any callers (OpenRouter is intentionally out per the new policy). |
 | BLOCKER | `backend/infrastructure/llm_router.py:211-216` | Comment + design explicitly says Kimi callers "bypass this router." Reverse: route Kimi through the same router with model prefix `moonshot/kimi-k2.6`. |
-| BLOCKER | `backend/services/provider_registry.py:102-141` | Parallel registry registering Kimi/OpenRouter/Groq/Ollama as standalone providers. Collapse to a single bifrost provider. |
+| BLOCKER | `backend/services/provider_registry.py:102-141` | Parallel registry registering Kimi/OpenRouter/Groq/the legacy local runtime as standalone providers. Collapse to a single bifrost provider. |
 | BLOCKER | `backend/services/chart_vision_analyzer.py:545` | `POST https://api.anthropic.com/v1/messages` direct. Anthropic is fully off; rewrite to Kimi vision via bifrost `moonshot/kimi-k2.6` OR delete the analyzer if Anthropic was its only path. |
 | BLOCKER | `backend/services/intelligent_qa_agent.py:1117` | Same — direct `https://api.anthropic.com/v1/messages`. |
 | BLOCKER | `src/services/llm_service.py` + `src/services/intelligent_llm_router.py` | Competing router. Either delete (preferred) or rewrite its `_initialize_providers` to register only `bifrost`. |
-| BLOCKER | `src/services/config.py:82,145,175` | Hardcoded `base_url="http://ollama:11434"`, `https://api.anthropic.com`, `https://api.moonshot.cn/v1` (wrong region — `.cn` instead of `.ai`). |
+| BLOCKER | `src/services/config.py:82,145,175` | Hardcoded `base_url="http://legacy-llm:11434"`, `https://api.anthropic.com`, `https://api.moonshot.cn/v1` (wrong region — `.cn` instead of `.ai`). |
 | BLOCKER | `src/ada/langgraph/providers/{minimax,kimi}.py` | Direct cloud URLs (lines 79/135 minimax, 88/156 kimi). Replace with bifrost. |
-| BLOCKER | `src/ada/core/config.py:59,78` + `src/ada/core/llm_engine.py:106,149` + `src/ada/core/structured_output.py:78` | `ollama_host` defaults to `http://ollama:11434` — hardcoded literal docker hostname. Mitigated in current docker by `OLLAMA_HOST=http://shared-bifrost:8080` but fragile. |
+| BLOCKER | `src/ada/core/config.py:59,78` + `src/ada/core/llm_engine.py:106,149` + `src/ada/core/structured_output.py:78` | `legacy_llm_host` defaults to `http://legacy-llm:11434` — hardcoded literal docker hostname. Mitigated in current docker by `LEGACY_LLM_HOST=http://shared-bifrost:8080` but fragile. |
 | IMPORTANT | `docker-compose.yml:287,294,295` | `DEEPSEEK_API_KEY`, `GROQ_API_KEY`, `OPENROUTER_API_KEY` env passthroughs in `ada-backend` — strip. |
 | IMPORTANT | `backend/routers/integration_test.py:353` | Reads `GEMINI_API_KEY` — dead. Clean up. |
 | IMPORTANT | Verify `LOCAL_EMBEDDINGS_MODEL` actually flows: startup log says `nomic-embed-text:latest` while env says `embed-local/Qwen/Qwen3-Embedding-0.6B`. Possible stale log string OR a code path using `nomic-embed-text`. Confirm with a request trace. |
-| NICE-TO-HAVE | `backend/infrastructure/ai_client.py:60-62` | `AIProvider` enum still includes `OLLAMA`, `OPENROUTER`, `KIMI`. Collapse to `BIFROST` + per-model tags. |
+| NICE-TO-HAVE | `backend/infrastructure/ai_client.py:60-62` | `AIProvider` enum still includes `LEGACY_LLM`, `OPENROUTER`, `KIMI`. Collapse to `BIFROST` + per-model tags. |
 | NICE-TO-HAVE | `backend/infrastructure/llm_router.py:1-20` | Module docstring still references "LiteLLM proxy / MiniMax Cloud API" as fallback. |
-| NICE-TO-HAVE | `backend/tests/test_llm_router.py:115,237,244` | Test fixtures use `ollama_host="http://localhost:11434"` — update after migration. |
+| NICE-TO-HAVE | `backend/tests/test_llm_router.py:115,237,244` | Test fixtures use `legacy_llm_host="http://localhost:11434"` — update after migration. |
 
 ---
 
@@ -182,7 +182,7 @@ flag today; Gemini/Claude/Kimi/MiniMax clients still bypass.
 | BLOCKER | `backend/app/services/unified_llm_service.py:443-480` | Only Kimi has a disable gate (`KIMI_DISABLED`). Either gate all four with `*_DISABLED` env vars or delete the four cloud client paths entirely. |
 | IMPORTANT | `docker-compose.yml:147-152` | Strip `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `GOOGLE_API_KEY`, `KIMI_API_KEY`, `MINIMAX_API_KEY` env injections. Bifrost owns the keys; the container shouldn't see them. |
 | IMPORTANT | `.env` vs `backend/.env` model-name drift | Root says `VLLM_CHAT_MODEL=qwen3-chat`; backend says `Qwen3.6-35B-A3B`. Pick one (Bifrost aliases both). Recommended: `qwen3-chat`. |
-| IMPORTANT | `.env:33-34,81` | `OLLAMA_BASE_URL`/`OLLAMA_NATIVE_URL` still set, `OLLAMA_DISABLED=false` — flip to disabled. User wants no Ollama path. |
+| IMPORTANT | `.env:33-34,81` | `LEGACY_LLM_BASE_URL`/`LEGACY_LLM_NATIVE_URL` still set, `LEGACY_LLM_DISABLED=false` — flip to disabled. User wants no the legacy local runtime path. |
 | NICE-TO-HAVE | `docker-compose.yml:82-116` | `legion-litellm` service block (gated `profiles: [disabled]`) — delete the block and the `docker/litellm/config.yaml` file it mounts. |
 | NICE-TO-HAVE | `docker-compose.yml:177-180` | `LEGION_USE_LITELLM=false`, `LITELLM_URL`, `LITELLM_MASTER_KEY` — strip; no longer used. |
 | NICE-TO-HAVE | `docker-compose.observability.yml:75,98,110` | References nonexistent `legion-db` — rename to `legion-postgres`. |
