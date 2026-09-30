@@ -156,8 +156,67 @@ def _tail(path: Path, n: int = OUTPUT_TAIL_LINES) -> str:
     return "\n".join(ln for ln in lines[-n:] if ln.strip())
 
 
+_PROGRESS_LINE = re.compile(r"^([.FEsxXR]+)\s*(?:\[\s*(\d+)%\]\s*)?(?:\[gw\d+\].*)?$")
+_ITEMS_HEADER = re.compile(r"\[(\d+) items\]")
+
+
+def partial_progress(out_log: Path) -> dict[str, int] | None:
+    """Counts pytest's progress characters from a run killed before it wrote a report; None if nothing ran."""
+    try:
+        text = out_log.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    counts = {"passed": 0, "failed": 0, "errors": 0, "skipped": 0, "total": 0, "percent": 0}
+    header = _ITEMS_HEADER.search(text)
+    if header:
+        counts["total"] = int(header.group(1))
+    for line in text.splitlines():
+        match = _PROGRESS_LINE.match(line.strip())
+        if not match:
+            continue
+        chars = match.group(1)
+        counts["passed"] += chars.count(".") + chars.count("X")
+        counts["failed"] += chars.count("F")
+        counts["errors"] += chars.count("E")
+        counts["skipped"] += chars.count("s") + chars.count("x")
+        if match.group(2):
+            counts["percent"] = int(match.group(2))
+    done = counts["passed"] + counts["failed"] + counts["errors"] + counts["skipped"]
+    if done == 0:
+        return None
+    if counts["total"] and not counts["percent"]:
+        counts["percent"] = min(99, done * 100 // counts["total"])
+    return counts
+
+
+def timeout_summary(out_log: Path, timeout_s: int) -> str:
+    progress = partial_progress(out_log)
+    tail = _summary(_tail(out_log))
+    if progress is None:
+        return f"exceeded {timeout_s}s with no test progress recorded; {tail}"[:500]
+    head = (f"exceeded {timeout_s}s at {progress['percent']}% (partial: {progress['passed']} passed, "
+            f"{progress['failed']} failed, {progress['errors']} errors, {progress['skipped']} skipped "
+            f"of {progress['total']}); ")
+    return (head + tail)[:500]
+
+
 def _summary(text: str, limit: int = 500) -> str:
     return " | ".join(ln.strip() for ln in text.splitlines() if ln.strip())[-limit:]
+
+
+def reap_orphaned_heavy_pytest(runtime: dict[str, Any], workdir_marker: str = "pytest backend/tests --rootdir") -> int:
+    """Kill whole-suite pytest processes left in the container by a runner that died. The caller holds the project's
+    single heavy-lane lock, so any whole-suite pytest still running there has no owner."""
+    container = runtime["container"]
+    pattern = f"timeout -s TERM .*{workdir_marker}"
+    rc, out = _run(["docker", "exec", container, "pgrep", "-f", pattern], 30)
+    pids = [p for p in out.split() if p.isdigit()] if rc == 0 else []
+    if not pids:
+        return 0
+    _run(["docker", "exec", container, "pkill", "-TERM", "-f", pattern], 30)
+    time.sleep(25)
+    _run(["docker", "exec", container, "pkill", "-KILL", "-f", pattern], 30)
+    return len(pids)
 
 
 def ensure_container(runtime: dict[str, Any], root: Path) -> str | None:
@@ -316,6 +375,8 @@ def run_pytest(project: Project, tier: dict[str, Any], paths: list[str] | None, 
         problem = ensure_container(runtime, project.root)
         if problem:
             return Execution("error", error_summary=problem)
+        if not paths and not changed_paths:
+            reap_orphaned_heavy_pytest(runtime)
         tmp_dir = runtime.get("tmp_dir", "/tmp/testplatform")
         report_in = f"{tmp_dir}/{report_name}"
         pytest_args = _pytest_args(project, tier, paths, trigger, report_in, quarantined, extra)
@@ -381,7 +442,7 @@ def interpret_pytest(project: Project, tier: dict[str, Any], paths: list[str] | 
                      quarantined_count: int) -> Execution:
     tail = _summary(_tail(out_log))
     if rc in (124, 137) and elapsed >= timeout_s - 5:
-        return Execution("timeout", error_summary=f"exceeded {timeout_s}s; {tail}"[:500], rc=rc,
+        return Execution("timeout", error_summary=timeout_summary(out_log, timeout_s), rc=rc,
                          quarantined_deselected=quarantined_count)
     report: dict[str, Any] | None = None
     if report_path and report_path.exists():
