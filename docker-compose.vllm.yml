@@ -1149,6 +1149,7 @@ services:
     image: ghcr.io/syv-ai/qwen38-27b-rtx3090:latest
     container_name: qwen38-chat
     command: batch
+    cpu_shares: 2048
     ipc: host
     shm_size: "4gb"
     stop_grace_period: 30s
@@ -1199,7 +1200,7 @@ services:
       KV: fp8
       MAX_LEN: "65536"
       MAX_SEQS: "32"
-      GPU_UTIL: "0.78"
+      GPU_UTIL: "0.70"
       PREFIX_CACHE: "1"
       # Platform-wide thinking-off (same contract the Nemotron block enforced):
       # JSON/LangGraph callers must not get reasoning-block leakage, and most
@@ -1569,12 +1570,13 @@ services:
       -ngl 0
       --host 0.0.0.0
       --port 8001
-      -t 8
+      -t 4
       -b 4096
       -ub 4096
-      --parallel 4
+      --parallel 2
       --cache-ram 0
       --metrics
+    cpu_shares: 8192
     ports:
       - "127.0.0.1:8001:8001"
     labels:
@@ -1604,9 +1606,13 @@ services:
         # --cache-ram against the limit first. cpus: 8 matches the tuned -t 8 above
         # -- this is genuinely CPU-bound work (it was GPU-bound before the
         # move), so the CPU cap is the real bulkhead.
+        # 2026-09-30 GPU capacity plan (Legion 15239), measured under 8 chat streams:
+        # a CFS cpus quota of 8 with -t 8/6 busy-spinning threads throttled the
+        # server (p50 1.8s vs 0.13s for the same model unconstrained at -t 4), and
+        # priority now comes from cpu_shares 8192 (vs chat 2048, Kronos 1024) instead
+        # of a quota. Do not re-add cpus here without re-running the load test.
         limits:
           memory: 6G
-          cpus: "8.0"
     volumes:
       - hf-cache:/models:ro
     restart: unless-stopped

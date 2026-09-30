@@ -91,6 +91,55 @@ groups:
         annotations:
           summary: "GPU free VRAM below 400 MiB for 30m"
           description: "Measured steady state is 0.7-1.0 GiB free (qwen38-chat + vllm-embed + rerank + Kronos + desktop apps on a 32 GiB card); below 400 MiB for 30 minutes is out of budget and risks CUDA OOM on a model restart. Budget table: docs/OPS_THRESHOLDS.md."
+      - alert: GpuSpinner
+        expr: |
+          avg_over_time(DCGM_FI_DEV_GPU_UTIL[10m]) > 95
+          and on() sum(rate(vllm:generation_tokens_total{job="vllm-chat"}[10m])) < 1
+        for: 5m
+        labels: { severity: critical, ops_direct: "true", ecosystem_project: shared }
+        annotations:
+          summary: "GPU pegged above 95% for 15m while qwen38-chat generates under 1 token/s"
+          description: "The 2026-09-21 spinner signature: the card is busy but no tokens come out. Check nvidia-smi power and memory-controller, restart vllm-embed/qwen3-rerank first, the chat engine last. Budget: docs/OPS_THRESHOLDS.md."
+      - alert: GpuVramSustainedHigh
+        expr: DCGM_FI_DEV_FB_USED / (DCGM_FI_DEV_FB_USED + DCGM_FI_DEV_FB_FREE) > 0.97
+        for: 15m
+        labels: { severity: warning, ops_direct: "true", ecosystem_project: shared }
+        annotations:
+          summary: "GPU VRAM above 97% for 15m"
+          description: "Budget after the 2026-09-30 GPU plan: qwen38-chat GPU_UTIL 0.70 (~22.8 GiB) + rerank + desktop leaves several GiB free; above 97% sustained means something new took VRAM and a chat restart ramp can OOM or destabilise the host."
+      - alert: EmbeddingLatencySloBreach
+        expr: |
+          histogram_quantile(0.95, sum by (le) (rate(bifrost_request_latency_ms_bucket{provider="embed-local"}[10m]))) > 1000
+          and sum(rate(bifrost_request_latency_ms_count{provider="embed-local"}[10m])) > 0.02
+        for: 15m
+        labels: { severity: warning, ops_direct: "true", ecosystem_project: shared }
+        annotations:
+          summary: "Embedding p95 through Bifrost above 1s for 15m"
+          description: "SLO is p95 < 1s. vllm-embed is CPU-bound (llama.cpp, no GPU); check host CPU (vmmemWSL, ada-tests, Kronos) and that cpu_shares are still applied (docker inspect vllm-embed)."
+      - alert: LocalChatLaneQueueing
+        expr: avg_over_time(vllm:num_requests_waiting{job="vllm-chat"}[10m]) > 2
+        for: 10m
+        labels: { severity: warning, ops_direct: "true", ecosystem_project: shared }
+        annotations:
+          summary: "qwen38-chat has requests waiting for a slot for 10m"
+          description: "The local lane is refusing or delaying at normal load (MAX_SEQS 32). Check who is fanning out (ada-bitcoin, ada-scheduler) via bifrost_logs by virtual key."
+      - alert: LocalChatLaneErrors
+        expr: |
+          sum(rate(bifrost_error_requests_total{provider="vllm-local",error_type!~"caller_.*"}[15m]))
+            / sum(rate(bifrost_upstream_latency_seconds_count{provider="vllm-local"}[15m])) > 0.05
+          and sum(rate(bifrost_upstream_latency_seconds_count{provider="vllm-local"}[15m])) > 0.02
+        for: 15m
+        labels: { severity: warning, ops_direct: "true", ecosystem_project: shared }
+        annotations:
+          summary: "Local chat lane genuine error rate above 5% for 15m"
+          description: "vllm-local (qwen38-chat) is refusing or timing out; caller_cancelled excluded."
+      - alert: GpuBudgetProbeFailing
+        expr: ops_embed_probe_p95_seconds > 1
+        for: 30m
+        labels: { severity: warning, ops_direct: "true", ecosystem_project: shared }
+        annotations:
+          summary: "Direct embedding probe p95 above 1s in the nightly self-check"
+          description: "ops_selfcheck measured 12 direct embeddings against vllm-embed; see its message."
       - alert: ContainerRestartLoop
         expr: changes(container_start_time_seconds{name!=""}[1h]) > 3
         for: 0m

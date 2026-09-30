@@ -13,6 +13,10 @@ Discord receiver `discord-ops`) AND, independently, by the nightly `scripts/ops_
 | C: free space | < 15 % for 10 min | VHDX growth can fill C: and stop Docker + native Postgres together | `HostDiskFreeLow`, selfcheck |
 | `docker_data.vhdx` size | > 1000 GB | internal used is ~660 GB; the rest is uncompacted slack | `DockerVhdxLarge` |
 | GPU free VRAM | < 400 MiB for 30 min | measured steady state is 0.7-1.0 GiB free on the 32 GiB card | `GpuVramNearlyFull`, selfcheck |
+| GPU pegged, no tokens (spinner) | util > 95% for 15m and qwen38-chat < 1 token/s | 2026-09-21 wedge signature | `GpuSpinner` |
+| GPU VRAM used ratio | > 97% for 15m | after the GPU plan (chat GPU_UTIL 0.70) steady state is ~90-93% | `GpuVramSustainedHigh`, selfcheck |
+| Embedding p95 via Bifrost | > 1s for 15m | after cpu_shares: typical < 0.2s, < 2s under full load | `EmbeddingLatencySloBreach`, `GpuBudgetProbeFailing`, selfcheck |
+| Local chat lane | waiting > 2 for 10m, or genuine errors > 5% for 15m | MAX_SEQS 32, KV usage measured 5-18% | `LocalChatLaneQueueing`, `LocalChatLaneErrors` |
 | Container restarts | > 3 in 1 h | crash loop, not a deploy | `ContainerRestartLoop` |
 | Container health | any unhealthy for 10 min | | `ContainersUnhealthy`, selfcheck |
 | Expected containers | any of `scripts/ops_expected_containers.json` absent 5 min | INF-01: `legion-db-backup` vanished and nothing noticed | `ExpectedContainerMissing`, selfcheck |

@@ -19,6 +19,8 @@ Checks:
   6. capacity          C: free ratio >= 15%, docker_data.vhdx size
   7. containers        expected set running; none unhealthy; none crash-looping
   8. GPU               free VRAM >= 400 MiB
+  9. GPU budget        VRAM used <= 97%; 12 direct embeddings against vllm-embed with
+                       p95 < 1s (the embed SLO); failed requests are failures
 
 This gate would pass trivially if the checks read the same state the failing job
 writes (a job that dies before writing leaves the previous "ok" file): every
@@ -272,6 +274,44 @@ def check_gpu(fails: list[str], m: dict) -> None:
             fails.append(f"GPU free VRAM {free} MiB (<400)")
 
 
+EMBED_URL = "http://127.0.0.1:8001/v1/embeddings"
+EMBED_P95_SLO_S = 1.0
+
+
+def check_gpu_budget(fails: list[str], m: dict) -> None:
+    """Would pass trivially if the embed probe swallowed request errors as fast responses; a failed
+    request here is counted as a failure, never as a latency sample."""
+    p = sh(["nvidia-smi", "--query-gpu=memory.used,memory.total,utilization.gpu", "--format=csv,noheader,nounits"])
+    if p.returncode != 0:
+        raise RuntimeError("nvidia-smi failed: " + p.stderr[-120:])
+    used, total, util = (int(x) for x in p.stdout.strip().split(","))
+    m["ops_gpu_vram_used_ratio"] = round(used / total, 4)
+    m["ops_gpu_util_percent"] = util
+    if used / total > 0.97:
+        fails.append(f"GPU VRAM {used}/{total} MiB ({used / total * 100:.1f}% > 97%)")
+    body = json.dumps({"model": "Qwen/Qwen3-Embedding-0.6B", "input": "ops self-check embedding latency probe " * 4}).encode()
+    lat: list[float] = []
+    errors = 0
+    for _ in range(12):
+        t0 = time.time()
+        try:
+            req = urllib.request.Request(EMBED_URL, data=body, headers={"Content-Type": "application/json"})
+            vec = json.loads(urllib.request.urlopen(req, timeout=30).read())["data"][0]["embedding"]  # noqa: S310
+            if len(vec) != 1024:
+                raise ValueError(f"embedding dim {len(vec)} != 1024")
+            lat.append(time.time() - t0)
+        except Exception:  # noqa: BLE001
+            errors += 1
+    if errors:
+        fails.append(f"vllm-embed probe: {errors}/12 requests failed")
+        return
+    lat.sort()
+    p95 = lat[int(len(lat) * 0.95) - 1] if len(lat) > 1 else lat[0]
+    m["ops_embed_probe_p95_seconds"] = round(p95, 3)
+    if p95 > EMBED_P95_SLO_S:
+        fails.append(f"embedding probe p95 {p95:.2f}s > {EMBED_P95_SLO_S:.0f}s SLO")
+
+
 def push(m: dict, ok: bool, job: str = "ops_selfcheck") -> None:
     now = int(time.time())
     lines = [f"ops_selfcheck_last_run_timestamp_seconds {now}", f"ops_selfcheck_ok {1 if ok else 0}"]
@@ -317,7 +357,7 @@ def main() -> int:
     metrics: dict = {}
     checks = ((check_host_memory,) if args.host_memory_only else
               (check_backups, check_offvolume, check_drills, check_hostcron, check_exposure,
-               check_default_pg_password, check_capacity, check_host_memory, check_containers, check_gpu))
+               check_default_pg_password, check_capacity, check_host_memory, check_containers, check_gpu, check_gpu_budget))
     for fn in checks:
         try:
             if fn in (check_offvolume,):
