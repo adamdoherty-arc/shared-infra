@@ -162,6 +162,19 @@ def ensure_container(runtime: dict[str, Any], root: Path) -> str | None:
     return f"container {container} is not running and could not be started"
 
 
+DEFAULT_PARALLEL_MIN_FILES = 150
+
+
+def effective_workers(workers: int, paths: list[str] | None, parallel_min_files: int) -> int:
+    """xdist only pays for itself on a large file set: each worker re-imports the whole backend (~1 GB, tens of
+    seconds), and under lane contention the per-test thread timeout kills starved workers in a replace loop.
+    A named-file selection below `parallel_min_files` therefore runs in-process (-n0)."""
+    if workers <= 0 or parallel_min_files <= 0 or not paths:
+        return workers
+    files = {p.split("::", 1)[0] for p in paths if p.split("::", 1)[0].endswith(".py")}
+    return workers if len(files) >= parallel_min_files else 0
+
+
 def _pytest_args(project: Project, tier: dict[str, Any], paths: list[str] | None, trigger: str,
                  report_file: str, deselect: list[str], extra: list[str]) -> list[str]:
     cfg = project.profile.get("pytest", {})
@@ -175,6 +188,7 @@ def _pytest_args(project: Project, tier: dict[str, Any], paths: list[str] | None
     deselect = [strip(d) for d in deselect]
     args += list(cfg.get("common_args", []))
     workers = int(tier.get("workers", cfg.get("workers", 0)))
+    workers = effective_workers(workers, paths, int(tier.get("parallel_min_files", DEFAULT_PARALLEL_MIN_FILES)))
     args += ["-n", str(workers), "--dist", "loadfile"] if workers > 0 else ["-n0"]
     node_id_run = bool(tier.get("marker_unless_node_id")) and any("::" in p for p in (paths or []))
     if tier.get("marker") and not node_id_run:

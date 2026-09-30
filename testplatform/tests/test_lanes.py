@@ -382,3 +382,15 @@ def test_report_files_are_unique_per_run(tmp_path, monkeypatch):
     b = _capture_pytest_cmd(project, "tests/test_a.py", None, tmp_path, monkeypatch)
     pick = lambda cmd: next(x for x in cmd if x.startswith("--json-report-file="))  # noqa: E731
     assert pick(a) != pick(b)
+
+
+def test_small_named_selection_runs_in_process_not_xdist():
+    """A handful of files must not spawn xdist workers (each re-imports the backend; contention kills them in a loop)."""
+    from tplib import runner
+    few = [f"backend/tests/test_{i}.py" for i in range(10)]
+    many = [f"backend/tests/test_{i}.py" for i in range(200)]
+    assert runner.effective_workers(2, few, runner.DEFAULT_PARALLEL_MIN_FILES) == 0
+    assert runner.effective_workers(2, many, runner.DEFAULT_PARALLEL_MIN_FILES) == 2
+    assert runner.effective_workers(4, None, runner.DEFAULT_PARALLEL_MIN_FILES) == 4
+    assert runner.effective_workers(4, few, 0) == 4
+    assert runner.effective_workers(0, many, 150) == 0
