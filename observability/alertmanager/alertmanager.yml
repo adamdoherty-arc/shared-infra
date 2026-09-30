@@ -8,6 +8,22 @@ route:
   repeat_interval: 4h
   receiver: 'default'
   routes:
+    # 2026-09-30 (INF-13, Dependability W2): a direct Discord sink that does not
+    # depend on legion-backend or ada-backend being up. Every critical alert and
+    # every alert labelled ops_direct=true is posted here FIRST (continue: true)
+    # and then still flows on to the existing routes below. Before this, an alert
+    # about a restarting backend was POSTed to the restarting backend and dropped.
+    - matchers:
+        - severity="critical"
+      receiver: 'discord-ops'
+      repeat_interval: 2h
+      continue: true
+    - matchers:
+        - ops_direct="true"
+      receiver: 'discord-ops'
+      repeat_interval: 6h
+      continue: true
+
     # 2026-07-31 (Legion daily-review Run 34): service-down alerts must NOT
     # be delivered through legion-backend alone.
     #
@@ -61,7 +77,17 @@ route:
       repeat_interval: 6h
 
 receivers:
+  # Direct Discord webhook (URL read from a gitignored file mounted at
+  # /etc/alertmanager/secrets; populated from DISCORD_INFRA_WEBHOOK in .env).
+  - name: 'discord-ops'
+    discord_configs:
+      - webhook_url_file: /etc/alertmanager/secrets/discord_webhook_url
+        send_resolved: false
+        title: '[{{ .Status | toUpper }}] {{ .CommonLabels.alertname }} ({{ .CommonLabels.severity }})'
+        message: '{{ range .Alerts }}{{ .Annotations.summary }} - {{ .Annotations.description }}{{ "\n" }}{{ end }}'
+
   - name: 'default'
+
     # Default receiver - logs only (no external notification)
 
   # S11 (2026-05-18): route alerts through Legion's webhook endpoint so we

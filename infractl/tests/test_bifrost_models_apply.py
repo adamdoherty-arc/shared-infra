@@ -134,6 +134,19 @@ def test_apply_model_changes_rejects_bad_requests(changes, fragment):
     assert fragment in str(exc_info.value)
 
 
+def test_cascade_aliases_retires_dead_model_and_its_alias():
+    """The dead-model sync passes cascade_aliases: the alias to a removed model goes too,
+    and the alias name leaves `models`. Control: without the flag the same request is
+    refused (test_apply_model_changes_rejects_bad_requests), so the guard is not vacuous."""
+    new_cfg, diff = bifrost_config.apply_model_changes(
+        BASE_CFG, {"vllm-local": {"remove": ["qwen3.8-27b"], "cascade_aliases": True}})
+    key = new_cfg["providers"]["vllm-local"]["keys"][0]
+    assert "qwen3.8-27b" not in key["models"] and "qwen3-chat" not in key["models"]
+    assert "aliases" not in key
+    assert diff["vllm-local"]["aliases_removed"] == ["qwen3-chat"]
+    assert BASE_CFG["providers"]["vllm-local"]["keys"][0]["aliases"] == {"qwen3-chat": "qwen3.8-27b"}  # pure
+
+
 def test_operator_violations_delegates_to_the_real_sync_script(bifrost_dir):
     cfg = json.loads(json.dumps(BASE_CFG))
     cfg["providers"]["groq"]["keys"][0]["models"].append("moonshotai/Kimi-K3")

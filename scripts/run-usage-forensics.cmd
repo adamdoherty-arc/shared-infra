@@ -9,6 +9,9 @@ REM Transcripts are per machine, so every machine runs its own copy of this task
 REM then commits exactly those paths so the page is versioned. state\ is gitignored,
 REM so the run log lives there. No push: publishing stays a deliberate `git push`.
 setlocal
+REM hostcron runs as LocalSystem: git refuses this repo (dubious ownership) and silently falls back to
+REM `diff --no-index`, which is what failed rc=129 on 2026-09-27; and PATH `python` is the wrong interpreter.
+set "GITX=git -c safe.directory=C:/code/shared-infra -c user.name=hostcron -c user.email=hostcron@localhost"
 
 set "REPO=C:\code\shared-infra"
 set "OUT=%REPO%\docs\claude-usage\hosts\%COMPUTERNAME%"
@@ -18,20 +21,20 @@ if not exist "%REPO%\state\claude-usage" mkdir "%REPO%\state\claude-usage"
 
 cd /d "%REPO%"
 echo [%date% %time%] === claude usage forensics start === >> "%LOG%"
-python "%REPO%\scripts\claude_usage_forensics.py" --days 7 --json "%OUT%\latest.json" --history-dir "%OUT%\history" --markdown "%OUT%\README.md" --discord >> "%LOG%" 2>&1
+C:\Python314\python.exe "%REPO%\scripts\claude_usage_forensics.py" --days 7 --json "%OUT%\latest.json" --history-dir "%OUT%\history" --markdown "%OUT%\README.md" --discord >> "%LOG%" 2>&1
 set "RC=%ERRORLEVEL%"
 echo [%date% %time%] forensics exited errorlevel %RC% >> "%LOG%"
 if not "%RC%"=="0" goto :done
-python "%REPO%\scripts\claude_usage_index.py" >> "%LOG%" 2>&1
+C:\Python314\python.exe "%REPO%\scripts\claude_usage_index.py" >> "%LOG%" 2>&1
 
 REM Path-scoped commit only -- never `git add -A`; other sessions keep dirty files here.
-git add -- docs/claude-usage >> "%LOG%" 2>&1
-git diff --cached --quiet -- docs/claude-usage
+%GITX% add -- docs/claude-usage >> "%LOG%" 2>&1
+%GITX% diff --cached --quiet -- docs/claude-usage
 if "%ERRORLEVEL%"=="0" (
   echo [%date% %time%] nothing new to commit >> "%LOG%"
   goto :done
 )
-git commit -m "claude-usage: weekly forensics %date%" -- docs/claude-usage >> "%LOG%" 2>&1
+%GITX% commit -m "claude-usage: weekly forensics %date%" -- docs/claude-usage >> "%LOG%" 2>&1
 set "RC=%ERRORLEVEL%"
 echo [%date% %time%] commit exited errorlevel %RC% ^(files are on disk regardless^) >> "%LOG%"
 

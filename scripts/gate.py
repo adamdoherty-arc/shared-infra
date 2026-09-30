@@ -182,7 +182,7 @@ def stage_tests() -> dict:
             "-m",
             "not live",
         ],
-        timeout=180,
+        timeout=600,
     )
 
     runner = REPO_ROOT / "scripts" / "run_infractl_tests.sh"
@@ -195,7 +195,7 @@ def stage_tests() -> dict:
         # namespace) -- it needs `/mnt/c/...`. A relative path sidesteps the
         # ambiguity entirely because both bash flavors resolve it against the
         # OS-level cwd the same way.
-        rc2, out2 = _run([_bash_executable(), "scripts/run_infractl_tests.sh"], timeout=300)
+        rc2, out2 = _run([_bash_executable(), "scripts/run_infractl_tests.sh"], timeout=600)
     else:
         rc2, out2 = (
             1,

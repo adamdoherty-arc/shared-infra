@@ -1,0 +1,254 @@
+{
+  "_comment": "Containers that must be running at all times. ops_selfcheck.py fails when any is absent (the INF-01 gap: legion-db-backup vanished after a stack recreate and nothing noticed).",
+  "must_run": [
+    "ada-backend",
+    "ada-scheduler",
+    "ada-agent",
+    "ada-arq-worker",
+    "ada-bitcoin",
+    "ada-redis",
+    "ada-qdrant",
+    "ada-db-backup",
+    "ada-qdrant-backup",
+    "ada-postgres-exporter",
+    "legion-backend",
+    "legion-v2-worker",
+    "legion-postgres",
+    "legion-redis",
+    "legion-qdrant",
+    "legion-db-backup",
+    "shared-bifrost",
+    "shared-prometheus",
+    "shared-alertmanager",
+    "shared-pushgateway",
+    "shared-grafana",
+    "shared-infra-control",
+    "cadvisor",
+    "dcgm-exporter",
+    "qwen38-chat",
+    "vllm-embed"
+  ],
+  "compose": {
+    "ada-backend": {
+      "project": "ada",
+      "files": [
+        "C:\\code\\ADA\\docker-compose.yml"
+      ],
+      "service": "backend",
+      "workdir": "C:\\code\\ADA"
+    },
+    "ada-scheduler": {
+      "project": "ada",
+      "files": [
+        "C:\\code\\ADA\\docker-compose.yml"
+      ],
+      "service": "scheduler",
+      "workdir": "C:\\code\\ADA"
+    },
+    "ada-agent": {
+      "project": "ada",
+      "files": [
+        "C:\\code\\ADA\\docker-compose.yml"
+      ],
+      "service": "agent",
+      "workdir": "C:\\code\\ADA"
+    },
+    "ada-arq-worker": {
+      "project": "ada",
+      "files": [
+        "C:\\code\\ADA\\docker-compose.yml"
+      ],
+      "service": "arq-worker",
+      "workdir": "C:\\code\\ADA"
+    },
+    "ada-bitcoin": {
+      "project": "ada",
+      "files": [
+        "C:\\code\\ADA\\docker-compose.yml"
+      ],
+      "service": "bitcoin",
+      "workdir": "C:\\code\\ADA"
+    },
+    "ada-redis": {
+      "project": "ada",
+      "files": [
+        "C:\\code\\ADA\\docker-compose.yml"
+      ],
+      "service": "redis",
+      "workdir": "C:\\code\\ADA"
+    },
+    "ada-qdrant": {
+      "project": "ada",
+      "files": [
+        "C:\\code\\ADA\\docker-compose.yml"
+      ],
+      "service": "qdrant",
+      "workdir": "C:\\code\\ADA"
+    },
+    "ada-db-backup": {
+      "project": "ada",
+      "files": [
+        "C:\\code\\ADA\\docker-compose.yml"
+      ],
+      "service": "ada-db-backup",
+      "workdir": "C:\\code\\ADA"
+    },
+    "ada-qdrant-backup": {
+      "project": "ada",
+      "files": [
+        "C:\\code\\ADA\\docker-compose.yml"
+      ],
+      "service": "qdrant-backup",
+      "workdir": "C:\\code\\ADA"
+    },
+    "ada-postgres-exporter": {
+      "project": "ada",
+      "files": [
+        "C:\\code\\ADA\\docker-compose.yml"
+      ],
+      "service": "postgres-exporter",
+      "workdir": "C:\\code\\ADA"
+    },
+    "legion-backend": {
+      "project": "legion",
+      "files": [
+        "C:\\code\\legion\\docker-compose.yml"
+      ],
+      "service": "legion-backend",
+      "workdir": "C:\\code\\legion"
+    },
+    "legion-v2-worker": {
+      "project": "legion",
+      "files": [
+        "C:\\code\\legion\\docker-compose.yml"
+      ],
+      "service": "legion-v2-worker",
+      "workdir": "C:\\code\\legion"
+    },
+    "legion-postgres": {
+      "project": "legion",
+      "files": [
+        "C:\\code\\legion\\docker-compose.yml"
+      ],
+      "service": "legion-postgres",
+      "workdir": "C:\\code\\legion"
+    },
+    "legion-redis": {
+      "project": "legion",
+      "files": [
+        "C:\\code\\legion\\docker-compose.yml"
+      ],
+      "service": "legion-redis",
+      "workdir": "C:\\code\\legion"
+    },
+    "legion-qdrant": {
+      "project": "legion",
+      "files": [
+        "C:\\code\\legion\\docker-compose.yml"
+      ],
+      "service": "legion-qdrant",
+      "workdir": "C:\\code\\legion"
+    },
+    "legion-db-backup": {
+      "project": "legion",
+      "files": [
+        "C:\\code\\legion\\docker-compose.yml"
+      ],
+      "service": "legion-db-backup",
+      "workdir": "C:\\code\\legion"
+    },
+    "shared-bifrost": {
+      "project": "shared-infra",
+      "files": [
+        "C:\\code\\shared-infra\\docker-compose.vllm.yml",
+        "C:\\code\\shared-infra\\docker-compose.bifrost.yml",
+        "C:\\code\\shared-infra\\docker-compose.searxng.yml",
+        "C:\\code\\shared-infra\\docker-compose.observability.yml",
+        "C:\\code\\shared-infra\\docker-compose.otelcol.yml",
+        "C:\\code\\shared-infra\\docker-compose.freellmapi.yml",
+        "C:\\code\\shared-infra\\docker-compose.control.yml"
+      ],
+      "service": "bifrost",
+      "workdir": "C:\\code\\shared-infra"
+    },
+    "shared-prometheus": {
+      "project": "shared-infra",
+      "files": [
+        "C:\\code\\shared-infra\\docker-compose.observability.yml"
+      ],
+      "service": "shared-prometheus",
+      "workdir": "C:\\code\\shared-infra"
+    },
+    "shared-alertmanager": {
+      "project": "shared-infra",
+      "files": [
+        "C:\\code\\shared-infra\\docker-compose.observability.yml"
+      ],
+      "service": "shared-alertmanager",
+      "workdir": "C:\\code\\shared-infra"
+    },
+    "shared-pushgateway": {
+      "project": "shared-infra",
+      "files": [
+        "C:\\code\\shared-infra\\docker-compose.observability.yml"
+      ],
+      "service": "shared-pushgateway",
+      "workdir": "C:\\code\\shared-infra"
+    },
+    "shared-grafana": {
+      "project": "shared-infra",
+      "files": [
+        "C:\\code\\shared-infra\\docker-compose.vllm.yml",
+        "C:\\code\\shared-infra\\docker-compose.bifrost.yml",
+        "C:\\code\\shared-infra\\docker-compose.searxng.yml",
+        "C:\\code\\shared-infra\\docker-compose.observability.yml",
+        "C:\\code\\shared-infra\\docker-compose.otelcol.yml",
+        "C:\\code\\shared-infra\\docker-compose.freellmapi.yml",
+        "C:\\code\\shared-infra\\docker-compose.control.yml"
+      ],
+      "service": "shared-grafana",
+      "workdir": "C:\\code\\shared-infra"
+    },
+    "shared-infra-control": {
+      "project": "shared-infra",
+      "files": [
+        "C:\\code\\shared-infra\\docker-compose.control.yml"
+      ],
+      "service": "shared-infra-control",
+      "workdir": "C:\\code\\shared-infra"
+    },
+    "cadvisor": {
+      "project": "shared-infra",
+      "files": [
+        "C:\\code\\shared-infra\\docker-compose.observability.yml"
+      ],
+      "service": "cadvisor",
+      "workdir": "C:\\code\\shared-infra"
+    },
+    "dcgm-exporter": {
+      "project": "shared-infra",
+      "files": [
+        "C:\\code\\shared-infra\\docker-compose.observability.yml"
+      ],
+      "service": "dcgm-exporter",
+      "workdir": "C:\\code\\shared-infra"
+    },
+    "qwen38-chat": {
+      "project": "shared-infra",
+      "files": [
+        "C:\\code\\shared-infra\\docker-compose.vllm.yml"
+      ],
+      "service": "qwen38-chat",
+      "workdir": "C:\\code\\shared-infra"
+    },
+    "vllm-embed": {
+      "project": "shared-infra",
+      "files": [
+        "C:\\code\\shared-infra\\docker-compose.vllm.yml"
+      ],
+      "service": "vllm-embed",
+      "workdir": "C:\\code\\shared-infra"
+    }
+  },
+  "_comment_compose": "Derived from live compose labels 2026-09-30 so scripts/ops_reconcile.py can bring a container back even when it no longer exists (the INF-01 case)."
+}

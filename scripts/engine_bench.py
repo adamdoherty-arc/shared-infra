@@ -42,7 +42,7 @@ except ImportError:
     asyncpg = None
 
 
-DB_DSN_DEFAULT = "postgresql://postgres:postgres123@127.0.0.1:5432/adam"
+DB_DSN_DEFAULT = ""  # supply via --db-dsn or ADA_DB_DSN; no credential lives in this repo
 
 TOP_CALL_SITES_SQL = """
 SELECT call_site, prompt_slug, count(*) c
@@ -353,9 +353,12 @@ async def main() -> int:
     ap.add_argument("--concurrency", nargs="+", type=int, default=[1, 8])
     ap.add_argument("--n", type=int, default=6)
     ap.add_argument("--max-tokens", type=int, default=256)
-    ap.add_argument("--db-dsn", default=os.environ.get("ADA_DB_DSN", DB_DSN_DEFAULT))
+    ap.add_argument("--db-dsn", default=os.environ.get("ADA_DB_DSN", DB_DSN_DEFAULT),
+                    help="asyncpg DSN for the adam DB (required; or set ADA_DB_DSN)")
     ap.add_argument("--out", default=None)
     args = ap.parse_args()
+    if not args.db_dsn:
+        ap.error("--db-dsn or ADA_DB_DSN is required (no default credential is embedded)")
 
     cases = await _load_prompt_mix(args.db_dsn)
 

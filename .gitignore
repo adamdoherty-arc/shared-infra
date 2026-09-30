@@ -82,3 +82,6 @@ nssm-stderr.log
 scripts/hostcron/logs/
 .claude/state/
 *.bak-proof
+
+# Alertmanager secrets (Discord webhook file) -- never commit
+observability/alertmanager/secrets/

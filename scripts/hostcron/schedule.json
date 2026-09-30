@@ -82,6 +82,44 @@
       "enabled": true
     },
     {
+      "name": "ada-post-land-verify",
+      "owner": "ada",
+      "_note": "Sprint 15213: verifies a CLEAN checkout of master (imports, alembic single head + offline render of new migrations, tsc -b, ada:fast on changed paths) and posts ops-alerts on red. Only does work when HEAD moved since the last verified sha (.claude/state/post_land_verify.json). Chosen over a Legion test_schedule because it needs a worktree + a throwaway docker run on the host; the Legion `fast` schedule stays the working-tree test run (INF-08: one scheduler per job).",
+      "cmd": [
+        "cmd.exe",
+        "/c",
+        "C:\\code\\ADA\\scripts\\setup\\run-post-land-verify.cmd"
+      ],
+      "cwd": "C:\\code\\ADA",
+      "schedule": {
+        "minute": [
+          2,
+          17,
+          32,
+          47
+        ]
+      },
+      "timeout_s": 3000,
+      "enabled": true
+    },
+    {
+      "name": "ada-stale-uncommitted",
+      "owner": "ada",
+      "_note": "Sprint 15213: alerts when tracked-modified or untracked files sit uncommitted in the shared ADA tree for more than 24h (one Discord message per distinct set per day).",
+      "cmd": [
+        "cmd.exe",
+        "/c",
+        "C:\\code\\ADA\\scripts\\setup\\run-stale-uncommitted.cmd"
+      ],
+      "cwd": "C:\\code\\ADA",
+      "schedule": {
+        "minute": 10,
+        "hour": 8
+      },
+      "timeout_s": 300,
+      "enabled": true
+    },
+    {
       "name": "ada-master-pulse",
       "owner": "ada",
       "_note": "36 LLM-free probes; writes probe_cache/heartbeat/escalation.flag. Already native and 0-token - only its scheduler changes.",
@@ -140,22 +178,6 @@
       "enabled": true
     },
     {
-      "name": "ada-ci-replacement-gate",
-      "owner": "ada",
-      "cmd": [
-        "cmd.exe",
-        "/c",
-        "C:\\code\\ADA\\scripts\\setup\\run-ci-replacement-gate.cmd"
-      ],
-      "cwd": "C:\\code\\ADA",
-      "schedule": {
-        "minute": 0,
-        "hour": 4
-      },
-      "timeout_s": 10800,
-      "enabled": true
-    },
-    {
       "name": "ada-comment-burndown",
       "owner": "ada",
       "cmd": [
@@ -199,7 +221,10 @@
         "hour": 7
       },
       "timeout_s": 900,
-      "enabled": true
+      "enabled": true,
+      "env": {
+        "PYTHONPATH": "C:\\Users\\hadam\\AppData\\Roaming\\Python\\Python314\\site-packages"
+      }
     },
     {
       "name": "ada-security-sweep-weekly",
@@ -267,8 +292,9 @@
         "hour": 9,
         "dow": 0
       },
-      "timeout_s": 3600,
-      "enabled": true
+      "timeout_s": 10800,
+      "enabled": true,
+      "_note": "Restores the newest ADA AND Legion dumps into throwaway containers and row-diffs them against live; exit code is non-zero if either fails. ADA budget scales with dump size (min 1h); 3h outer bound."
     },
     {
       "name": "ada-llm-weekly-report",
@@ -343,7 +369,7 @@
         "minute": 30,
         "hour": 2
       },
-      "timeout_s": 900,
+      "timeout_s": 1800,
       "enabled": true,
       "_comment": "Nightly quality gate (compose config, loopback ports, tests, ruff ratchet, stubs, PROVIDERS.md). Result: .claude/state/test-results/latest.json."
     },
@@ -458,6 +484,61 @@
       "schedule": {
         "hour": 5,
         "minute": 40
+      },
+      "timeout_s": 900,
+      "enabled": true
+    },
+    {
+      "name": "backup-offvolume-daily",
+      "owner": "shared-infra",
+      "_note": "Copies the newest ADA + Legion dumps out of the Docker VHDX to C:\\ProgramData\\ops-backups (sha256-verified, 2 ADA + 3 Legion generations) after the 07:30 UTC (03:30 ET) dump has landed. Same physical disk; a true offsite target needs an owner-provided drive or cloud credential (BACKUP_OFFSITE_DIR).",
+      "cmd": [
+        "C:\\Python314\\python.exe",
+        "C:\\code\\shared-infra\\scripts\\backup_offvolume.py"
+      ],
+      "cwd": "C:\\code\\shared-infra",
+      "schedule": {
+        "minute": 30,
+        "hour": 10
+      },
+      "timeout_s": 3600,
+      "enabled": true
+    },
+    {
+      "name": "ops-selfcheck",
+      "owner": "shared-infra",
+      "_note": "Nightly independent check that backups, the off-VHDX copy, the DR drill, hostcron jobs, port exposure, disk, containers and VRAM are healthy. Posts its own detail to the infra Discord webhook, so hostcron notification is off to avoid a duplicate.",
+      "cmd": [
+        "C:\\Python314\\python.exe",
+        "C:\\code\\shared-infra\\scripts\\ops_selfcheck.py"
+      ],
+      "cwd": "C:\\code\\shared-infra",
+      "schedule": {
+        "minute": 45,
+        "hour": 11
+      },
+      "timeout_s": 300,
+      "notify_on_failure": false,
+      "enabled": true
+    },
+    {
+      "name": "ops-reconcile",
+      "_note": "Every 10 min: brings an absent/exited must_run container back with compose up -d --no-deps <service> (scripts/ops_expected_containers.json). Pause switch: scripts/ops_reconcile.pause.",
+      "owner": "shared-infra",
+      "cmd": [
+        "C:\\Python314\\python.exe",
+        "C:\\code\\shared-infra\\scripts\\ops_reconcile.py"
+      ],
+      "cwd": "C:\\code\\shared-infra",
+      "schedule": {
+        "minute": [
+          3,
+          13,
+          23,
+          33,
+          43,
+          53
+        ]
       },
       "timeout_s": 900,
       "enabled": true

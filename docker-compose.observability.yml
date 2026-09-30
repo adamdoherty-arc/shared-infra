@@ -58,6 +58,7 @@ services:
       - "127.0.0.1:9095:9093"   # Legion's freed alertmanager port
     volumes:
       - ./observability/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - ./observability/alertmanager/secrets:/etc/alertmanager/secrets:ro
     networks:
       - shared-infra
     deploy:
@@ -65,6 +66,27 @@ services:
         limits: { memory: 256M }
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:9093/-/healthy"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  shared-pushgateway:
+    # Push target for short-lived jobs (INF-01/03/12, 2026-09-30): the backup
+    # containers and scripts/ops_selfcheck.py push last-success timestamps here so
+    # a silently dead cron shows up as an alert. Loopback only; containers reach
+    # it via host.docker.internal:9091 or shared-infra DNS.
+    image: prom/pushgateway:v1.10.0
+    container_name: shared-pushgateway
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:9091:9091"
+    networks:
+      - shared-infra
+    deploy:
+      resources:
+        limits: { memory: 128M }
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:9091/-/healthy"]
       interval: 15s
       timeout: 5s
       retries: 3

@@ -200,8 +200,12 @@ def apply_model_changes(cfg: dict, changes: dict) -> tuple[dict, dict]:
     for provider, change in changes.items():
         if provider not in providers:
             raise ConfigError(f"provider '{provider}' is not active in config.json")
-        if not isinstance(change, dict) or set(change) - {"add", "remove"}:
-            raise ConfigError(f"{provider}: change must be an object with only 'add'/'remove' lists")
+        if not isinstance(change, dict) or set(change) - {"add", "remove", "cascade_aliases"}:
+            raise ConfigError(
+                f"{provider}: change must be an object with only 'add'/'remove' lists "
+                "and an optional boolean 'cascade_aliases'"
+            )
+        cascade = bool(change.get("cascade_aliases", False))
         add = change.get("add") or []
         remove = change.get("remove") or []
         for name, lst in (("add", add), ("remove", remove)):
@@ -223,6 +227,17 @@ def apply_model_changes(cfg: dict, changes: dict) -> tuple[dict, dict]:
             "not_present": [m for m in dict.fromkeys(remove) if m not in present],
         }
         orphaned = [m for m in entry["removed"] if m in alias_targets]
+        if orphaned and cascade:
+            dead_aliases = sorted(alias_targets[m] for m in orphaned)
+            for key in keys:
+                live = key.get("aliases") or {}
+                for a in [a for a, t in live.items() if t in orphaned]:
+                    live.pop(a)
+                if "aliases" in key and not key["aliases"]:
+                    key.pop("aliases")
+                key["models"] = [m for m in key.get("models", []) if m not in dead_aliases]
+            entry["aliases_removed"] = dead_aliases
+            orphaned = []
         if orphaned:
             raise ConfigError(
                 f"{provider}: cannot remove {orphaned}: aliased by "

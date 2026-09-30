@@ -281,7 +281,7 @@ class ModelsApplyBody(BaseModel):
     """`changes` is {provider: {"add": [...], "remove": [...]}}; each list
     applies to every key of that provider. `dry_run=true` returns the diff
     (structured + unified) and writes nothing."""
-    changes: dict[str, dict[str, list[str]]]
+    changes: dict[str, dict[str, list[str] | bool]]
     reason: str
     requested_by: str = "api"
     legion_ref: str | None = None

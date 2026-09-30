@@ -221,7 +221,7 @@ def _drain_loop(legion: LegionClient) -> None:
             sys.stderr.write(f"pending drain failed: {type(exc).__name__}: {exc}\n")
 
 
-def serve(host: str = "0.0.0.0", port: int = DEFAULT_PORT) -> None:
+def serve(host: str = "127.0.0.1", port: int = DEFAULT_PORT) -> None:
     service = RunnerService()
     threading.Thread(target=_prune_loop, daemon=True).start()
     threading.Thread(target=_drain_loop, args=(service.legion,), daemon=True).start()

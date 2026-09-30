@@ -1,0 +1,124 @@
+# Dependability W2 (Legion sprint 15209, 2026-09-30): the failure modes the
+# 2026-09-29 infra audit found had NO alert (INF-01/03/04/06/12/16/20).
+#
+# Metric sources:
+#   - ada_backup_* / legion_backup_*  pushed by the backup containers to
+#     shared-pushgateway (host.docker.internal:9091)
+#   - ops_*                           pushed by scripts/ops_selfcheck.py (hostcron)
+#   - container_* / DCGM_*            cadvisor / dcgm-exporter (already scraped)
+#
+# This file would pass trivially if every rule keyed on a metric nobody pushes:
+# BackupMetricAbsent / ExpectedContainerMissing / OpsSelfCheckSilent key on
+# absent() or timestamp age so a dead pusher pages instead of reading healthy.
+groups:
+  - name: ops_dependability
+    interval: 60s
+    rules:
+      - alert: BackupStale
+        expr: time() - ada_backup_last_success_timestamp_seconds > 30 * 3600
+        for: 0m
+        labels: { severity: critical, ops_direct: "true", ecosystem_project: ada }
+        annotations:
+          summary: "Backup {{ $labels.store }} has not succeeded for >30h"
+          description: "ada_backup_last_success_timestamp_seconds is older than 30 hours."
+      - alert: LegionBackupStale
+        expr: time() - legion_backup_last_success_timestamp_seconds > 30 * 3600
+        for: 0m
+        labels: { severity: critical, ops_direct: "true", ecosystem_project: legion }
+        annotations:
+          summary: "Legion DB backup has not succeeded for >30h"
+          description: "legion-db-backup last success is older than 30 hours (or the container is gone)."
+      - alert: BackupMetricAbsent
+        expr: absent(ada_backup_last_success_timestamp_seconds{store="postgres"}) or absent(legion_backup_last_success_timestamp_seconds)
+        for: 3h
+        labels: { severity: warning, ops_direct: "true" }
+        annotations:
+          summary: "A backup freshness metric is missing from the pushgateway"
+          description: "ada-db-backup or legion-db-backup has not pushed a success timestamp; check the container and PUSHGATEWAY_URL."
+      - alert: ExpectedContainerMissing
+        expr: absent(container_last_seen{name="legion-db-backup"}) or absent(container_last_seen{name="ada-db-backup"}) or absent(container_last_seen{name="ada-qdrant-backup"}) or absent(container_last_seen{name="shared-bifrost"}) or absent(container_last_seen{name="legion-postgres"}) or absent(container_last_seen{name="ada-backend"})
+        for: 5m
+        labels: { severity: critical, ops_direct: "true" }
+        annotations:
+          summary: "A critical container is not running"
+          description: "One of legion-db-backup/ada-db-backup/ada-qdrant-backup/shared-bifrost/legion-postgres/ada-backend has no cadvisor series."
+      - alert: OffVolumeBackupStale
+        expr: time() - ops_offvolume_backup_last_success_timestamp_seconds > 36 * 3600
+        for: 0m
+        labels: { severity: warning, ops_direct: "true" }
+        annotations:
+          summary: "The off-VHDX backup copy is older than 36h"
+          description: "scripts/backup_offvolume.py has not copied a fresh dump outside the Docker VHDX."
+      - alert: DrDrillStale
+        expr: time() - ops_dr_drill_last_ok_timestamp_seconds{target="ada"} > 10 * 86400
+        for: 0m
+        labels: { severity: warning, ops_direct: "true" }
+        annotations:
+          summary: "No successful ADA DR restore drill in 10 days"
+          description: "The weekly restore drill failed or did not run; a backup that has not been restored is not a backup."
+      - alert: HostDiskFreeLow
+        expr: ops_host_disk_free_ratio{drive="C"} < 0.15
+        for: 10m
+        labels: { severity: critical, ops_direct: "true" }
+        annotations:
+          summary: "C: free space is below 15%"
+          description: "Docker VHDX growth can fill C: and take down Docker, native Postgres and every stack."
+      - alert: DockerVhdxLarge
+        expr: ops_docker_vhdx_bytes > 1000 * 1024 * 1024 * 1024
+        for: 30m
+        labels: { severity: warning, ops_direct: "true" }
+        annotations:
+          summary: "docker_data.vhdx is above 1000 GB"
+          description: "Reclaim (image/builder prune) and compact via scripts/compact-docker-disk.ps1 (elevated)."
+      - alert: GpuVramNearlyFull
+        expr: DCGM_FI_DEV_FB_FREE < 400
+        for: 30m
+        labels: { severity: warning, ops_direct: "true", ecosystem_project: shared }
+        annotations:
+          summary: "GPU free VRAM below 400 MiB for 30m"
+          description: "Measured steady state is 0.7-1.0 GiB free (qwen38-chat + vllm-embed + rerank + Kronos + desktop apps on a 32 GiB card); below 400 MiB for 30 minutes is out of budget and risks CUDA OOM on a model restart. Budget table: docs/OPS_THRESHOLDS.md."
+      - alert: ContainerRestartLoop
+        expr: changes(container_start_time_seconds{name!=""}[1h]) > 3
+        for: 0m
+        labels: { severity: warning, ops_direct: "true" }
+        annotations:
+          summary: "{{ $labels.name }} restarted more than 3 times in the last hour"
+          description: "More than 3 restarts per hour is a crash loop, not a deploy."
+      - alert: ContainersUnhealthy
+        expr: ops_containers_unhealthy > 0
+        for: 10m
+        labels: { severity: warning, ops_direct: "true" }
+        annotations:
+          summary: "{{ $value }} Docker container(s) report unhealthy"
+          description: "See the ops self-check message for names."
+      - alert: HostcronJobFailing
+        expr: ops_hostcron_consecutive_failures > 1
+        for: 0m
+        labels: { severity: warning, ops_direct: "true" }
+        annotations:
+          summary: "hostcron job {{ $labels.job }} failed {{ $value }} runs in a row"
+          description: "See scripts/hostcron/logs/{{ $labels.job }}.log."
+      - alert: UnexpectedExposedPort
+        expr: ops_unexpected_exposed_ports > 0
+        for: 0m
+        labels: { severity: critical, ops_direct: "true" }
+        annotations:
+          summary: "{{ $value }} service port(s) listen on a non-loopback address outside the allowlist"
+          description: "See the ops self-check message; bind to 127.0.0.1 or add an allowlist entry with a reason."
+      - alert: OpsSelfCheckSilent
+        expr: time() - ops_selfcheck_last_run_timestamp_seconds > 36 * 3600
+        for: 0m
+        labels: { severity: warning, ops_direct: "true" }
+        annotations:
+          summary: "The nightly ops self-check has not reported in 36h"
+          description: "hostcron job ops-selfcheck failed to run or push."
+      - alert: ProviderUpstreamErrorRateHigh
+        expr: |
+          (sum by (provider) (increase(bifrost_error_requests_total{error_type!~"caller_.*"}[15m]))
+            / sum by (provider) (increase(bifrost_upstream_latency_seconds_count[15m]))) > 0.5
+          and sum by (provider) (increase(bifrost_upstream_latency_seconds_count[15m])) > 200
+        for: 30m
+        labels: { severity: warning, ecosystem_project: shared }
+        annotations:
+          summary: "Bifrost provider {{ $labels.provider }} genuine upstream error rate above 50% for 30m"
+          description: "caller_cancelled/caller_* errors are excluded (hedged requests cancelled by design inflated the naive figure to 46% for nvidia-nim on 2026-09-29; genuine errors were rate-limit/overload at ~4%). Fallbacks absorb it but waste latency and quota. Check dead/rate-limited models (the daily ada-bifrost-model-sync retires probe-confirmed dead ones) and consider infractl park."

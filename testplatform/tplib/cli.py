@@ -263,7 +263,7 @@ def build_parser() -> argparse.ArgumentParser:
     sc = add("schedule", cmd_schedule)
     sc.add_argument("action", choices=["list"])
     sv = add("serve", cmd_serve)
-    sv.add_argument("--host", default="0.0.0.0")
+    sv.add_argument("--host", default="127.0.0.1")
     sv.add_argument("--port", type=int, default=server.DEFAULT_PORT)
     sv.add_argument("--restart", action="store_true", help="ask the running service to exit; the supervisor restarts it")
     sv.add_argument("--ensure", action="store_true", help="start the service detached if it is not answering")

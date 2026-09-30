@@ -1,0 +1,12 @@
+{
+  "_comment": "Ports allowed to listen on a non-loopback address. Everything else (Qdrant, Redis, exporters, testctl, Postgres) must bind 127.0.0.1 or the Docker subnet. Adding a port here needs a reason; ops_selfcheck.py fails on any 0.0.0.0/:: listener not listed. Owner decision pending: whether the UI/API ports below should also go loopback-only (they are reachable from the LAN and Tailscale today; binding them shut would cut phone/laptop access).",
+  "ports": {
+    "8006": "ada-backend API/UI (owner LAN/Tailscale access; app-level auth)",
+    "5420": "ada-frontend dev UI (owner LAN/Tailscale access)",
+    "5421": "ada-nginx production frontend (owner LAN/Tailscale access)",
+    "8005": "legion-backend API (owner LAN/Tailscale access)",
+    "3005": "legion-frontend UI (owner LAN/Tailscale access)",
+    "3050": "shared-grafana (own login)",
+    "8080": "erpnext-frontend (A finance app UI, own login)"
+  }
+}
