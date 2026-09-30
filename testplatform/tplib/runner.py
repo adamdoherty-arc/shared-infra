@@ -261,7 +261,7 @@ def expand_env(env: dict[str, str], root: Path) -> dict[str, str]:
 
     def sub(m: re.Match[str]) -> str:
         name = m.group(1)
-        found = os.environ.get(name) or dotenv.get(name)
+        found = dotenv.get(name) or os.environ.get(name)
         if found is None:
             raise RunError(f"runtime env references ${{{name}}} but it is set in neither the environment nor {root / '.env'}")
         return found

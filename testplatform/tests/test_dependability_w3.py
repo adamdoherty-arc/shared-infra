@@ -21,6 +21,12 @@ def test_expand_env_reads_dotenv_and_process_env(tmp_path, monkeypatch):
     assert out == {"A": "pg://u:s3cret@h/proc", "B": "plain", "C": "q v"}
 
 
+def test_project_dotenv_wins_over_a_stale_shell_variable(tmp_path, monkeypatch):
+    (tmp_path / ".env").write_text("DB_PASSWORD=fresh\n", encoding="utf-8")
+    monkeypatch.setenv("DB_PASSWORD", "stale-from-another-project")
+    assert runner.expand_env({"A": "${DB_PASSWORD}"}, tmp_path) == {"A": "fresh"}
+
+
 def test_expand_env_missing_reference_is_a_run_error(tmp_path, monkeypatch):
     monkeypatch.delenv("NOPE_NOT_SET", raising=False)
     with pytest.raises(runner.RunError):

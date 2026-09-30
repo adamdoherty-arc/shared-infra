@@ -224,12 +224,36 @@ def _drain_loop(legion: LegionClient) -> None:
 
 def serve(host: str = "127.0.0.1", port: int = DEFAULT_PORT) -> None:
     service = RunnerService()
+    restored = service.restore_queue()
+    if restored:
+        sys.stderr.write(f"restored {restored} queued run(s) from {QUEUE_DIR}\n")
     threading.Thread(target=_prune_loop, daemon=True).start()
     threading.Thread(target=_drain_loop, args=(service.legion,), daemon=True).start()
     httpd = ThreadingHTTPServer((host, port), make_handler(service))
     httpd.daemon_threads = True
     sys.stderr.write(f"testctl serve listening on {host}:{port}\n")
     httpd.serve_forever()
+
+
+def code_hash() -> str:
+    h = hashlib.sha1()
+    for path in sorted(PLATFORM_ROOT.glob("tplib/*.py")) + [PLATFORM_ROOT / "testctl.py"]:
+        try:
+            h.update(path.name.encode() + path.read_bytes())
+        except OSError:
+            continue
+    return h.hexdigest()[:12]
+
+
+LOADED_CODE_HASH = code_hash()
+
+
+def running_code_hash(port: int = DEFAULT_PORT) -> str | None:
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=3) as resp:
+            return json.loads(resp.read()).get("code_hash")
+    except (urllib.error.URLError, OSError, ValueError):
+        return None
 
 
 def is_up(port: int = DEFAULT_PORT) -> bool:
