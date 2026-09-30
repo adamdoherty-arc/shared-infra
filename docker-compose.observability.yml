@@ -114,14 +114,20 @@ services:
     deploy:
       resources:
         limits: { memory: 1G }
-    # No HEALTHCHECK — grafana/tempo ships without wget/curl (like otelcol/loki).
-    # Liveness: curl http://localhost:3200/ready from host returns "ready" when up.
+    # grafana/tempo ships a static busybox at /busybox (no curl); /ready returns 200 only when ingesters are up.
+    healthcheck:
+      test: ["CMD", "/busybox/wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3200/ready"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
 
   shared-grafana:
     image: grafana/grafana:latest
     container_name: shared-grafana
     restart: unless-stopped
     environment:
+      LEGION_PG_PASSWORD: ${LEGION_PG_PASSWORD:?set LEGION_PG_PASSWORD in .env (Legion DB datasource)}
       GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?set GRAFANA_ADMIN_PASSWORD in .env}
       GF_USERS_ALLOW_SIGN_UP: "false"
@@ -170,12 +176,14 @@ services:
             - driver: nvidia
               count: 1
               capabilities: [gpu]
-    # No HEALTHCHECK — the nvidia/dcgm-exporter image has no wget/curl/nc/sh
-    # tool to exec a probe with (verified: `docker exec dcgm-exporter which
-    # wget` -> "executable file not found in $PATH"; same class of image as
-    # grafana/tempo/otelcol/loki above, which already document this pattern
-    # in this file). Liveness = Prometheus's own `up{job="dcgm-exporter"}`
-    # scrape-health signal, not a container-level probe.
+    # The image has bash but no curl/wget/head; bash /dev/tcp issues a real GET /metrics and
+    # requires an HTTP 200 status line (a bare TCP connect would pass on a wedged exporter).
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/9400; printf 'GET /metrics HTTP/1.0\r\n\r\n' >&3; read -r -t 5 l <&3; [[ $$l == HTTP/*200* ]]"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
 
   # ─────────────────────────────────────────────────────────────────────────
   # cadvisor (Phase 3 item 2, 2026-08-04): per-container CPU/memory/IO for

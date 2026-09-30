@@ -625,6 +625,10 @@ def run_once(dry: bool) -> int:
         return 0
 
 
+def _heartbeat() -> None:
+    open("/tmp/heartbeat", "w").close()
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Bifrost auth-autoheal sidecar")
     ap.add_argument("--once", action="store_true", help="single detection pass then exit")
@@ -649,6 +653,7 @@ def main() -> None:
         log(f"--once done: {n} provider(s) {'would be ' if dry else ''}parked")
         return
     while True:
+        _heartbeat()
         run_once(dry)
         time.sleep(INTERVAL_S)
 

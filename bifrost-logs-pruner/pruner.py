@@ -446,6 +446,10 @@ def _mid_day_checkpoint() -> None:
         conn.close()
 
 
+def _heartbeat() -> None:
+    open("/tmp/heartbeat", "w").close()
+
+
 def main() -> None:
     if RUN_ONCE:
         print("[pruner] RUN_ONCE=1 — running prune immediately", flush=True)
@@ -461,6 +465,7 @@ def main() -> None:
         flush=True,
     )
     while True:
+        _heartbeat()
         wait_s = _seconds_until_next_prune()
         print(
             f"[pruner] sleeping up to {wait_s / 3600:.2f}h until next prune "
@@ -475,6 +480,7 @@ def main() -> None:
             slice_s = min(_MID_DAY_CHECKPOINT_INTERVAL_S, max(0, end_at - time.monotonic()))
             if slice_s <= 0:
                 break
+            _heartbeat()
             time.sleep(slice_s)
             if time.monotonic() >= end_at:
                 break

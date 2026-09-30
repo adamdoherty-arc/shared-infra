@@ -121,5 +121,6 @@ Owner LAN/Tailscale access; enumerated in `scripts/ops_exposure_allowlist.json`.
 becomes reachable from outside the LAN. Watched by: `UnexpectedExposedPort`, ops self-check.
 
 **GPU free VRAM 0.7-1.0 GiB (card ~96% full by design).** Alert at 400 MiB for 30 min. Watched by
-`GpuVramNearlyFull`. Legion's own container DB password is still the historical default; that
-Postgres binds 127.0.0.1 only.
+`GpuVramNearlyFull`. Legion's container DB password was rotated off the historical default on 2026-09-30
+(no longer a tolerated failure mode); the ops self-check probes both Postgres instances for the
+default (`ops_legion_pg_default_password_accepted`).

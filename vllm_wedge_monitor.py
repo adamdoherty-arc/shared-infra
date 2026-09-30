@@ -419,6 +419,10 @@ def capture_pyspy_dump(name: str) -> None:
     log("py-spy EngineCore dump END <<<<<")
 
 
+def _heartbeat() -> None:
+    open("/tmp/heartbeat", "w").close()
+
+
 def main() -> None:
     log(f"start: metrics={METRICS_URL} target={TARGET} poll={POLL_S}s "
         f"wedge={WEDGE_N} samples grace={GRACE_S}s cooldown={RESTART_COOLDOWN_S}s "
@@ -435,6 +439,7 @@ def main() -> None:
     epoch = time.time()  # (re)start grace anchor
 
     while True:
+        _heartbeat()
         try:
             running, gen, prompt = parse(fetch_metrics())
             if counters_reset(last_gen, last_prompt, gen, prompt):

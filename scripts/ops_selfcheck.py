@@ -175,20 +175,27 @@ def check_exposure(fails: list[str], m: dict) -> None:
 
 
 def check_default_pg_password(fails: list[str], m: dict) -> None:
-    """INF-05: the host Postgres superuser must NOT accept the historical default password.
-    Passes only on an authentication failure; a connection that cannot be attempted at all
-    (container down) is a failure too, never a pass."""
-    p = sh(["docker", "exec", "ada-db-backup", "sh", "-c",
-            "PGPASSWORD=postgres123 PGCONNECT_TIMEOUT=8 psql -h host.docker.internal -U postgres "
-            "-d postgres -tAc 'select 1' 2>&1"], 30)
-    out = (p.stdout + p.stderr).strip()
-    accepted = p.returncode == 0 and out.startswith("1")
-    refused = "password authentication failed" in out or "no pg_hba.conf entry" in out
-    m["ops_pg_default_password_accepted"] = 1 if accepted else 0
-    if accepted:
-        fails.append("Postgres superuser still accepts the default password (INF-05)")
-    elif not refused:
-        fails.append(f"default-password probe inconclusive: {out[:120]!r}")
+    """INF-05: neither Postgres (host superuser, Legion's container) may accept the historical
+    default password. Passes only on an authentication failure; a connection that cannot be
+    attempted at all (container down) is a failure too, never a pass."""
+    targets = [
+        ("ops_pg_default_password_accepted", "Postgres superuser", "ada-db-backup",
+         "host.docker.internal", "postgres", "postgres"),
+        ("ops_legion_pg_default_password_accepted", "Legion Postgres role", "legion-db-backup",
+         "legion-postgres", "legion", "legion"),
+    ]
+    for metric, label, via, host, user, db in targets:
+        p = sh(["docker", "exec", via, "sh", "-c",
+                f"PGPASSWORD=postgres123 PGCONNECT_TIMEOUT=8 psql -h {host} -U {user} "
+                f"-d {db} -tAc 'select 1' 2>&1"], 30)
+        out = (p.stdout + p.stderr).strip()
+        accepted = p.returncode == 0 and out.startswith("1")
+        refused = "password authentication failed" in out or "no pg_hba.conf entry" in out
+        m[metric] = 1 if accepted else 0
+        if accepted:
+            fails.append(f"{label} still accepts the default password (INF-05)")
+        elif not refused:
+            fails.append(f"default-password probe for {label} inconclusive: {out[:120]!r}")
 
 
 def check_capacity(fails: list[str], m: dict) -> None:

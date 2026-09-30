@@ -3,10 +3,10 @@ datasources:
   - name: LegionPG
     type: postgres
     access: proxy
-    url: legion-postgres:5432
+    url: host.docker.internal:5433
     user: legion
     secureJsonData:
-      password: ${LEGION_DB_PASSWORD}
+      password: ${LEGION_PG_PASSWORD}
     jsonData:
       database: legion
       sslmode: disable
