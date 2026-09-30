@@ -1,0 +1,32 @@
+project: shared-infra
+framework: pytest
+default_target: fast
+path_tier: path
+
+runtime:
+  kind: run
+  image: legion-legion-backend
+  workdir: /work/testplatform
+  setup: pip install -q pytest-json-report pytest-rerunfailures
+  mounts:
+    - {host: testplatform, container: /work/testplatform, mode: ro}
+
+pytest:
+  command: [python, -m, pytest]
+  path_prefix: testplatform/
+  common_args:
+    - -p
+    - no:cacheprovider
+    - -q
+    - --tb=short
+
+tiers:
+  fast:
+    paths: [tests]
+    workers: 0
+    timeout_s: 600
+    min_executed: 1
+  path:
+    workers: 0
+    timeout_s: 600
+    min_executed: 1

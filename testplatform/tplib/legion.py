@@ -28,6 +28,7 @@ class LegionClient:
         self.base = base_url.rstrip("/")
         self.timeout = timeout
         self.backoff = backoff
+        self._hashes_cache: dict[int, tuple[str, dict[str, str]]] = {}
 
     def _retry(self, fn):
         last: LegionError | None = None
@@ -96,7 +97,24 @@ class LegionClient:
         return self._call("GET", "/cases/history", query={"project_id": project_id, "node_id": node_id})
 
     def hashes(self, project_id: int) -> dict[str, str]:
-        return self._call("GET", "/cases/hashes", query={"project_id": project_id}) or {}
+        cached = self._hashes_cache.get(project_id)
+        url = f"{self.base}{PREFIX}/cases/hashes?project_id={project_id}"
+        headers = {"Accept": "application/json"}
+        if cached:
+            headers["If-None-Match"] = cached[0]
+        try:
+            with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=self.timeout) as resp:
+                data = json.loads(resp.read() or b"{}")
+                etag = resp.headers.get("ETag")
+        except urllib.error.HTTPError as exc:
+            if exc.code == 304 and cached:
+                return cached[1]
+            raise LegionError(f"GET /cases/hashes -> HTTP {exc.code}", exc.code) from exc
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            raise LegionError(f"GET /cases/hashes unreachable: {exc}") from exc
+        if etag:
+            self._hashes_cache[project_id] = (etag, data)
+        return data
 
     def flaky(self, project_id: int) -> Any:
         return self._call("GET", "/flaky", query={"project_id": project_id})

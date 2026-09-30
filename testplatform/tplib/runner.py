@@ -234,6 +234,29 @@ def map_changed_to_tests(root: Path, files: list[str], test_globs: list[str]) ->
     return sorted(tests)
 
 
+_ENV_REF = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+
+
+def expand_env(env: dict[str, str], root: Path) -> dict[str, str]:
+    dotenv: dict[str, str] = {}
+    try:
+        for line in (root / ".env").read_text(encoding="utf-8").splitlines():
+            key, sep, val = line.strip().partition("=")
+            if sep and key and not key.startswith("#"):
+                dotenv[key.strip()] = val.strip().strip("\"'")
+    except OSError:
+        pass
+
+    def sub(m: re.Match[str]) -> str:
+        name = m.group(1)
+        found = os.environ.get(name) or dotenv.get(name)
+        if found is None:
+            raise RunError(f"runtime env references ${{{name}}} but it is set in neither the environment nor {root / '.env'}")
+        return found
+
+    return {k: _ENV_REF.sub(sub, str(v)) for k, v in env.items()}
+
+
 def run_pytest(project: Project, tier: dict[str, Any], paths: list[str] | None, trigger: str, art: Path,
                legion: LegionClient, target: str, changed_paths: list[str] | None = None) -> Execution:
     runtime = project.profile["runtime"]
@@ -246,7 +269,7 @@ def run_pytest(project: Project, tier: dict[str, Any], paths: list[str] | None, 
             quarantined = []
     extra: list[str] = []
     selection: dict[str, Any] = {"mode": "tier"}
-    env: dict[str, str] = dict(runtime.get("env", {}))
+    env: dict[str, str] = expand_env(dict(runtime.get("env", {})), project.root)
     if tier.get("mode") == "changed":
         data_file = tier.get("testmon_datafile", "/tmp/testplatform/.testmondata")
         env["TESTMON_DATAFILE"] = data_file
@@ -675,7 +698,8 @@ def _iso(ts: float | None = None) -> str:
 
 def start_and_run(project: Project, target: str | None, trigger: str, legion: LegionClient,
                   lock: ProjectLock, on_started: Callable[[int | None, Path], None] | None = None,
-                  artifacts_root: Path = ARTIFACTS_ROOT, changed_paths: list[str] | None = None) -> Outcome:
+                  artifacts_root: Path = ARTIFACTS_ROOT, changed_paths: list[str] | None = None,
+                  schedule_id: int | None = None) -> Outcome:
     tier_name, tier, paths = resolve_target(project, target)
     target_label = target or project.default_target
     try:
@@ -689,10 +713,13 @@ def start_and_run(project: Project, target: str | None, trigger: str, legion: Le
     run_id: int | None = None
     create_error: LegionError | None = None
     try:
-        run_id = legion.create_run({
+        create_body = {
             "project_id": project.legion_project_id, "target": target_label[:MAX_TARGET_LEN], "tier": tier_name, "trigger": trigger,
             "git_sha": sha, "framework": framework, "runner_host": socket.gethostname(),
-            "artifact_path": art.as_posix()})
+            "artifact_path": art.as_posix()}
+        if schedule_id is not None:
+            create_body["schedule_id"] = schedule_id
+        run_id = legion.create_run(create_body)
         lock.set_run_id(run_id)
     except LegionError as exc:
         create_error = exc

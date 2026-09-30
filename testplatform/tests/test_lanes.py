@@ -63,6 +63,9 @@ def test_light_concurrency_config_precedence_and_validation(tmp_path):
 
 
 def test_shipped_ada_profile_gets_six_light_slots():
+    ada_root = Path(str(profile.load_registry(profile.PROJECTS_FILE)["projects"]["ada"]["root"]))
+    if not (ada_root / profile.PROFILE_NAME).exists():
+        pytest.skip(f"ADA checkout not present at {ada_root} (containerised run)")
     project = profile.load_project("ada")
     assert project.light_concurrency == 6
 
@@ -266,7 +269,7 @@ def test_service_starts_a_light_request_while_heavy_holds_and_queues_a_second_he
     monkeypatch.setattr(runner, "preflight", lambda *a, **k: None)
     started: list[str] = []
 
-    def fake_run(proj, target, trigger, legion, lock, on_started=None, changed_paths=None):
+    def fake_run(proj, target, trigger, legion, lock, on_started=None, changed_paths=None, schedule_id=None):
         started.append(target)
         if on_started:
             on_started(11, tmp_path)

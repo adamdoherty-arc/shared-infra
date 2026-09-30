@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -24,6 +25,7 @@ QUEUE_TIMEOUT_S = 4 * 3600
 DRAIN_INTERVAL_S = 300
 START_WAIT_S = 20.0
 LOG_DIR = PLATFORM_ROOT / "logs"
+QUEUE_DIR = PLATFORM_ROOT / "state" / "queue"
 
 
 def active_runs(lock_dir: Path = LOCK_DIR) -> list[dict[str, Any]]:
@@ -44,23 +46,62 @@ def active_runs(lock_dir: Path = LOCK_DIR) -> list[dict[str, Any]]:
 
 
 class RunnerService:
-    def __init__(self, legion: LegionClient | None = None, lock_dir: Path = LOCK_DIR):
+    def __init__(self, legion: LegionClient | None = None, lock_dir: Path = LOCK_DIR,
+                 queue_dir: Path | None = None):
         self.legion = legion or LegionClient(legion_url())
         self.lock_dir = lock_dir
+        self.queue_dir = queue_dir or (QUEUE_DIR if lock_dir == LOCK_DIR else lock_dir / "queue")
         self._queued: set[str] = set()
         self._queue_lock = threading.Lock()
+
+    def _queue_file(self, queue_id: str) -> Path:
+        return self.queue_dir / (re.sub(r"[^A-Za-z0-9_.-]", "_", queue_id) + ".json")
+
+    def _persist_queued(self, queue_id: str, body: dict[str, Any], trigger: str) -> None:
+        try:
+            self.queue_dir.mkdir(parents=True, exist_ok=True)
+            self._queue_file(queue_id).write_text(
+                json.dumps({"queue_id": queue_id, "body": body, "trigger": trigger}), encoding="utf-8")
+        except OSError as exc:
+            sys.stderr.write(f"could not persist queued run {queue_id}: {exc}\n")
+
+    def restore_queue(self) -> int:
+        restored = 0
+        if not self.queue_dir.exists():
+            return restored
+        for path in sorted(self.queue_dir.glob("*.json")):
+            try:
+                entry = json.loads(path.read_text(encoding="utf-8"))
+                body, trigger, queue_id = entry["body"], entry["trigger"], entry["queue_id"]
+                project = load_project(body["project"])
+                key = runner.request_key(body.get("target") or project.default_target, body.get("paths") or None)
+            except (OSError, ValueError, KeyError, ProfileError):
+                path.unlink(missing_ok=True)
+                continue
+            with self._queue_lock:
+                if queue_id in self._queued:
+                    continue
+                self._queued.add(queue_id)
+            threading.Thread(target=self._run_queued, args=(project, body, trigger, key, queue_id), daemon=True,
+                             name=f"queued-{body['project']}").start()
+            restored += 1
+        return restored
 
     def _run_queued(self, project, body: dict[str, Any], trigger: str, key: str, queue_id: str) -> None:
         lock = runner.lock_for(project, body.get("target"), body.get("paths") or None, self.lock_dir)
         acquired = lock.wait_acquire(key, QUEUE_TIMEOUT_S)
         with self._queue_lock:
             self._queued.discard(queue_id)
+        try:
+            self._queue_file(queue_id).unlink(missing_ok=True)
+        except OSError:
+            pass
         if not acquired:
             sys.stderr.write(f"queued run for {project.name} gave up after {QUEUE_TIMEOUT_S}s\n")
             return
         try:
             runner.start_and_run(project, body.get("target"), trigger, self.legion, lock,
-                                 changed_paths=body.get("paths") or None)
+                                 changed_paths=body.get("paths") or None, schedule_id=body.get("schedule_id"))
         except Exception as exc:
             sys.stderr.write(f"queued run failed: {type(exc).__name__}: {exc}\n")
         finally:
@@ -69,6 +110,9 @@ class RunnerService:
     def submit(self, body: dict[str, Any]) -> tuple[int, dict[str, Any]]:
         name = body.get("project")
         trigger = body.get("trigger", "manual")
+        schedule_id = body.get("schedule_id")
+        if schedule_id is not None and (isinstance(schedule_id, bool) or not isinstance(schedule_id, int)):
+            return 400, {"accepted": False, "error": "schedule_id must be an integer"}
         if not name:
             return 400, {"accepted": False, "error": "project is required"}
         if trigger not in runner.TRIGGERS:
@@ -87,6 +131,7 @@ class RunnerService:
                 already = queue_id in self._queued
                 self._queued.add(queue_id)
             if not already:
+                self._persist_queued(queue_id, body, trigger)
                 threading.Thread(target=self._run_queued, args=(project, body, trigger, key, queue_id), daemon=True,
                                  name=f"queued-{name}").start()
             return 202, {"accepted": True, "run_id": None, "queued": True, "duplicate": already}
@@ -104,7 +149,7 @@ class RunnerService:
         def work() -> None:
             try:
                 runner.start_and_run(project, body.get("target"), trigger, self.legion, lock, on_started,
-                                     changed_paths=body.get("paths") or None)
+                                     changed_paths=body.get("paths") or None, schedule_id=schedule_id)
             finally:
                 started.set()
                 lock.release()

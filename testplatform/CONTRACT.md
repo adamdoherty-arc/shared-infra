@@ -19,9 +19,10 @@ Request body:
 {"project_id":5,"target":"changed|fast|full|live_db|e2e|fuzz|<path or node id>",
  "tier":"fast","trigger":"claude|schedule|hook|manual","git_sha":"abc123",
  "framework":"pytest|vitest|playwright|schemathesis","runner_host":"DESKTOP-X",
- "artifact_path":"C:/code/shared-infra/testplatform/artifacts/ada/2026-09-29/<uuid>"}
+ "artifact_path":"C:/code/shared-infra/testplatform/artifacts/ada/2026-09-29/<uuid>",
+ "schedule_id":7}
 ```
-Response: `201 {"run_id": 123}`.
+`schedule_id` is optional and additive (2026-09-29). When present Legion stores it on the run and sets that schedule's `last_run_id`, so a scheduled fire that was queued behind another run still links to the run it eventually starts. Response: `201 {"run_id": 123}`.
 
 ### `POST /runs/{run_id}/results` completes the run with per-test rows
 The response carries the verdict. Request body:
@@ -72,7 +73,7 @@ The rendered text lists at most 8 new failures, then `+N more (testctl run-failu
 | `GET /runs/{id}/failures` | Compact list `[{failure_id,node_id,one_line}]` |
 | `GET /failures/{failure_id}` | `{node_id,type,message,trace_tail,first_seen_run,occurrences,issue_ref}` |
 | `GET /cases/history?project_id=&node_id=` | Last 20 results plus revisions |
-| `GET /cases/hashes?project_id=` | `{node_id: body_hash}`. A test whose last non-skipped status is failed or error maps to `""`, so it never matches a real hash and the runner always resends it. That is how a fix that leaves the test body unchanged is still reported as fixed. |
+| `GET /cases/hashes?project_id=` | `{node_id: body_hash}`. A test whose last non-skipped status is failed or error maps to `""`, so it never matches a real hash and the runner always resends it. That is how a fix that leaves the test body unchanged is still reported as fixed. Conditional (2026-09-29): the response carries `ETag`; send `If-None-Match` and an unchanged set answers `304` with no body (the runner client does this). Optional `prefix=` narrows to node ids starting with it (never cached). |
 | `GET /flaky?project_id=` | `[{node_id,flake_score,runs_30d,flaky_events_30d,quarantined}]` |
 | `GET /quarantine?project_id=` | `["node ids"]`; the runner deselects these on `trigger=claude\|hook` runs only |
 | `GET/POST/PATCH /schedules` | `{id,project_id,target,tier,cron,timezone,enabled,last_fired_at,last_run_id}` |
@@ -98,7 +99,7 @@ A flaky event is either:
 ## Scheduling
 - Legion's APScheduler fires each enabled schedule by calling `POST {TESTPLATFORM_RUNNER_URL}/run` with `{"project":"ada","target":"full","trigger":"schedule","schedule_id":7}`.
 - The default runner URL is `http://host.docker.internal:8790`.
-- The runner answers `202 {"accepted":true,"run_id":123}`, or `409 {"attached_run_id":...}` when the same request (same target and paths) is already in flight. A different request is `202 {"queued":true}` and starts when its lane has room.
+- The runner answers `202 {"accepted":true,"run_id":123}`, or `409 {"attached_run_id":...}` when the same request (same target and paths) is already in flight. A different request is `202 {"queued":true,"run_id":null}`; the runner persists the queued request under `state/queue/` (re-queued on `testctl serve` restart), starts it when its lane has room, and the run it creates carries the request's `schedule_id`, which is how the schedule row learns the `run_id`.
 - A fire that fails is recorded on the schedule (`last_error`) and appears in Legion's scheduler catch-up ledger.
 
 ## Runner (testctl)

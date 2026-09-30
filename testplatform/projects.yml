@@ -7,3 +7,6 @@ projects:
   legion:
     root: C:/code/legion
     legion_project_id: 1
+  shared-infra:
+    root: C:/code/shared-infra
+    legion_project_id: 28
