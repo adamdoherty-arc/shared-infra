@@ -66,6 +66,10 @@ if ($ApplyWslConfig) {
     for ($i = 0; $i -lt 60; $i++) { docker info *> $null; if ($LASTEXITCODE -eq 0) { break }; Start-Sleep 5 }
     docker compose -p shared-infra -f C:\code\shared-infra\docker-compose.vllm.yml up -d --force-recreate qwen38-chat
     python C:\code\shared-infra\scripts\ops_reconcile.py
+    # Restart-policy containers can come back with dead HOST port publishes; the port probe only
+    # trusts containers up > 90s, so settle and run ops_reconcile again.
+    Start-Sleep 95
+    python C:\code\shared-infra\scripts\ops_reconcile.py
 }
 
 if ($EnableCrashDumps) {

@@ -28,6 +28,7 @@
     "qwen38-chat",
     "vllm-embed"
   ],
+  "port_probe_extra": ["ada-frontend", "ada-nginx", "legion-frontend", "erpnext-frontend-1"],
   "compose": {
     "ada-backend": {
       "project": "ada",
