@@ -39,7 +39,8 @@ def _failure_type(message: str, longrepr: str) -> str:
 
 
 def make_failure(ftype: str, message: str, tail: str) -> dict[str, Any]:
-    message = (message or "").strip()
+    message = (message or "").replace(chr(0), "\\x00").strip()
+    tail = (tail or "").replace(chr(0), "\\x00")
     if ftype and message.startswith(ftype + ":"):
         message = message[len(ftype) + 1:].strip()
     return {
@@ -63,11 +64,72 @@ def _phase_failure(test: dict[str, Any]) -> tuple[str, str, str]:
     return "", "", "call"
 
 
+_REQ_KEY_RE = re.compile(r"\[((?:FR|SC)-\d+(?:\s*,\s*(?:FR|SC)-\d+)*)\]")
+_SLUG_TAG_RE = re.compile(r"\[(product_feature:[A-Za-z0-9_.-]+)\]")
+_FEATURE_HEADER_RE = re.compile(r"^\s*(?://|#)\s*feature:\s*([A-Za-z0-9_.:-]+)", re.MULTILINE)
+_HEADER_SCAN_BYTES = 2048
+
+
+def normalise_feature_slug(raw: Any) -> str | None:
+    """`bitcoin-lab` -> `product_feature:bitcoin-lab`; a full slug passes; anything else is None."""
+    if not isinstance(raw, str):
+        return None
+    slug = raw.strip()
+    if not slug:
+        return None
+    return slug if ":" in slug else f"product_feature:{slug}"
+
+
+def normalise_requirement_ids(raw: Any) -> list[str]:
+    if not isinstance(raw, (list, tuple)):
+        return []
+    seen: list[str] = []
+    for item in raw:
+        if isinstance(item, str) and item.strip() and item.strip() not in seen:
+            seen.append(item.strip())
+    return seen
+
+
+def requirement_ids_from_title(title: str) -> list[str]:
+    """`[FR-012]` / `[FR-012, SC-001]` tags in a test title."""
+    keys: list[str] = []
+    for group in _REQ_KEY_RE.findall(title or ""):
+        for key in re.split(r"\s*,\s*", group):
+            if key not in keys:
+                keys.append(key)
+    return keys
+
+
+def feature_slug_from_title(title: str) -> str | None:
+    m = _SLUG_TAG_RE.search(title or "")
+    return m.group(1) if m else None
+
+
+def feature_slug_from_file_header(repo_root: Path, rel: str) -> str | None:
+    """First `// feature: <slug>` (or `# feature:`) line in the file head; unreadable -> None."""
+    try:
+        with open(repo_root / rel, "rb") as fh:
+            head = fh.read(_HEADER_SCAN_BYTES).decode("utf-8", errors="ignore")
+    except OSError:
+        return None
+    m = _FEATURE_HEADER_RE.search(head)
+    return normalise_feature_slug(m.group(1)) if m else None
+
+
+def pytest_trace(test: dict[str, Any]) -> tuple[str | None, list[str]]:
+    """(feature_slug, requirement_ids) from a pytest-json-report entry's `metadata` (set by the ADA `req` marker)."""
+    meta = test.get("metadata")
+    if not isinstance(meta, dict):
+        return None, []
+    return normalise_feature_slug(meta.get("feature_slug")), normalise_requirement_ids(meta.get("requirement_ids"))
+
+
 def parse_pytest_json(report: dict[str, Any], repo_root: Path, reruns: int = 0,
                       path_prefix: str = "") -> list[dict[str, Any]]:
     cases: list[dict[str, Any]] = []
     for test in report.get("tests", []):
         node_id = test["nodeid"]
+        trace_slug, trace_reqs = pytest_trace(test)
         if path_prefix and not node_id.startswith(path_prefix):
             node_id = path_prefix + node_id
         outcome = test.get("outcome")
@@ -98,8 +160,8 @@ def parse_pytest_json(report: dict[str, Any], repo_root: Path, reruns: int = 0,
             "duration_ms": duration_ms,
             "attempts": attempts,
             "body_hash": body_hash(repo_root, node_id),
-            "feature_slug": None,
-            "requirement_ids": [],
+            "feature_slug": trace_slug,
+            "requirement_ids": trace_reqs,
         }
         if failure:
             case["failure"] = failure
@@ -151,11 +213,14 @@ def parse_vitest_json(report: dict[str, Any], repo_root: Path, container_root: s
         for assertion in suite.get("assertionResults", []):
             status_raw = assertion.get("status")
             status = {"passed": "passed", "failed": "failed"}.get(status_raw, "skipped")
-            node_id = f"{rel}::{assertion.get('fullName') or assertion.get('title')}"
+            full_name = str(assertion.get('fullName') or assertion.get('title') or "")
+            node_id = f"{rel}::{full_name}"
+            reqs = requirement_ids_from_title(full_name)
+            slug = feature_slug_from_title(full_name) or (feature_slug_from_file_header(repo_root, rel) if reqs else None)
             case = {
                 "node_id": node_id, "file": rel, "status": status,
                 "duration_ms": int(assertion.get("duration") or 0), "attempts": 1,
-                "body_hash": _file_hash(repo_root, rel), "feature_slug": None, "requirement_ids": [],
+                "body_hash": _file_hash(repo_root, rel), "feature_slug": slug, "requirement_ids": reqs,
             }
             if status == "failed":
                 messages = assertion.get("failureMessages") or [""]
@@ -261,6 +326,8 @@ def select_rows(cases: list[dict[str, Any]], known_hashes: dict[str, str], spars
     kept = []
     for case in cases:
         if case["status"] in ("failed", "error", "rerun_passed"):
+            kept.append(case)
+        elif case.get("requirement_ids"):
             kept.append(case)
         elif known_hashes.get(case["node_id"]) != case.get("body_hash"):
             kept.append(case)
