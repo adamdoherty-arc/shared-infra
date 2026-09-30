@@ -171,24 +171,19 @@
             "deepseek/deepseek-v4-flash-0731",
             "dots-note-preview",
             "dots-studio/dots-3-note-preview:free",
-            "glm-5.2-or-free",
             "glm-5.2-paid",
             "glm-5.3-flash",
             "google/gemini-3.7-flash",
             "google/gemma-4-26b-a4b-it:free",
             "google/gemma-4-31b-it:free",
             "inclusionai/ling-3.0-flash",
-            "inclusionai/ling-3.0-flash-fin:free",
             "inclusionai/ling-3.0-flash-sante:free",
-            "ling-flash-fin",
             "ling-flash-sante",
             "minimax-m3",
             "minimax/minimax-m3",
             "nemotron-lightning-free",
             "nemotron-super-free",
             "nemotron-ultra-free",
-            "nex-agi/nex-n2.5-mini:free",
-            "nex-agi/nex-n2.5-pro:free",
             "north-code-free",
             "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
             "nvidia/nemotron-3-super-120b-a12b:free",
@@ -203,16 +198,13 @@
             "qwen/qwen3.8-27b",
             "qwen3.8-27b",
             "z-ai/glm-5.2",
-            "z-ai/glm-5.2:free",
             "z-ai/glm-5.3-flash"
           ],
           "aliases": {
             "deepseek-v4-flash-or": "deepseek/deepseek-v4-flash",
             "dots-note-preview": "dots-studio/dots-3-note-preview:free",
-            "glm-5.2-or-free": "z-ai/glm-5.2:free",
             "glm-5.2-paid": "z-ai/glm-5.2",
             "glm-5.3-flash": "z-ai/glm-5.3-flash",
-            "ling-flash-fin": "inclusionai/ling-3.0-flash-fin:free",
             "ling-flash-sante": "inclusionai/ling-3.0-flash-sante:free",
             "minimax-m3": "minimax/minimax-m3",
             "nemotron-lightning-free": "nvidia/nemotron-3.5-lightning:free",
@@ -409,7 +401,7 @@
         {
           "provider": "openrouter",
           "allow_all_keys": true,
-          "allowed_models": 40
+          "allowed_models": 34
         },
         {
           "provider": "sealion",
@@ -456,7 +448,7 @@
         {
           "provider": "openrouter",
           "allow_all_keys": true,
-          "allowed_models": 40
+          "allowed_models": 34
         },
         {
           "provider": "sealion",
@@ -499,6 +491,53 @@
           "provider": "nvidia-nim",
           "allow_all_keys": true,
           "allowed_models": 19
+        },
+        {
+          "provider": "sealion",
+          "allow_all_keys": true,
+          "allowed_models": 5
+        },
+        {
+          "provider": "vllm-local",
+          "allow_all_keys": true,
+          "allowed_models": 9
+        }
+      ]
+    },
+    {
+      "name": "customer-ops-zero",
+      "id": "2d4b925b-ee2f-4f1a-8e21-d2b42640cf3f",
+      "is_active": true,
+      "providers": [
+        {
+          "provider": "embed-local",
+          "allow_all_keys": true,
+          "allowed_models": 1
+        },
+        {
+          "provider": "freellmapi",
+          "allow_all_keys": true,
+          "allowed_models": 16
+        },
+        {
+          "provider": "groq",
+          "allow_all_keys": true,
+          "allowed_models": 7
+        },
+        {
+          "provider": "hf-router",
+          "allow_all_keys": true,
+          "allowed_models": 16
+        },
+        {
+          "provider": "nvidia-nim",
+          "allow_all_keys": true,
+          "allowed_models": 19
+        },
+        {
+          "provider": "openrouter",
+          "allow_all_keys": true,
+          "allowed_models": 34
         },
         {
           "provider": "sealion",
@@ -641,7 +680,7 @@
     {
       "name": "zero-prod",
       "id": "b2adfad7-16df-4a89-a2c1-958657cd742a",
-      "is_active": true,
+      "is_active": false,
       "providers": [
         {
           "provider": "embed-local",
