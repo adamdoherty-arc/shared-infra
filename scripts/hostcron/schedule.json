@@ -441,6 +441,26 @@
       },
       "timeout_s": 900,
       "enabled": true
+    },
+    {
+      "name": "ada-refresh-ava-test",
+      "owner": "ada",
+      "_note": "Rebuilds the hermetic ava_test DB from adam's schema when its alembic head is stale, so pytest never logs relation/column-does-not-exist errors into the shared Postgres log.",
+      "cmd": [
+        "C:\\code\\ADA\\.venv\\Scripts\\python.exe",
+        "C:\\code\\ADA\\scripts\\refresh_ava_test.py",
+        "--if-stale"
+      ],
+      "cwd": "C:\\code\\ADA",
+      "env": {
+        "DB_HOST": "localhost"
+      },
+      "schedule": {
+        "hour": 5,
+        "minute": 40
+      },
+      "timeout_s": 900,
+      "enabled": true
     }
   ]
 }
