@@ -106,3 +106,20 @@ noise (`virtual key is required` spam) are all live bugs per the
 `docs/DECISIONS.md` for their fix status. Do not add them here as a way
 to close them without fixing them; that is exactly the stub/deferral
 pattern `~/.claude/CLAUDE.md` bans.
+
+## Tolerated by design, registered 2026-09-30 (Dependability W2)
+
+**Backups share the one physical disk with the data.** The host has a single NVMe. Dumps are
+copied out of the Docker VHDX (`scripts/backup_offvolume.py`, C:\ProgramData\ops-backups,
+sha256-verified) which survives VHDX/Docker loss but not loss of the disk. Stops being tolerable
+the moment an owner-provided external drive or cloud target exists: set `BACKUP_OFFSITE_DIR`.
+Watched by: `OffVolumeBackupStale`, ops self-check.
+
+**UI/API ports on 0.0.0.0 (ada 8006/5420/5421, legion 8005/3005, grafana 3050, erpnext 8080).**
+Owner LAN/Tailscale access; enumerated in `scripts/ops_exposure_allowlist.json`. Data services
+(Qdrant, Redis, exporters, testctl, Postgres) are loopback-only. Stops being tolerable if any
+becomes reachable from outside the LAN. Watched by: `UnexpectedExposedPort`, ops self-check.
+
+**GPU free VRAM 0.7-1.0 GiB (card ~96% full by design).** Alert at 400 MiB for 30 min. Watched by
+`GpuVramNearlyFull`. Legion's own container DB password is still the historical default; that
+Postgres binds 127.0.0.1 only.

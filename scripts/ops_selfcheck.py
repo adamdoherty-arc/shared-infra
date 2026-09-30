@@ -130,13 +130,21 @@ def check_hostcron(fails: list[str], m: dict) -> None:
     except OSError as exc:
         fails.append(f"hostcron ledger unreadable: {exc}")
         return
+    try:
+        live = {j["name"] for j in json.loads((HERE / "hostcron" / "schedule.json").read_text(encoding="utf8"))["jobs"]
+                if j.get("enabled", True)}
+    except (OSError, ValueError, KeyError) as exc:
+        fails.append(f"hostcron schedule unreadable: {exc}")
+        live = set(per_job)
     for job, sts in per_job.items():
+        if job not in live:
+            continue
         streak = 0
         for s in reversed(sts):
             if s == "ok":
                 break
             streak += 1
-        m[f'ops_hostcron_consecutive_failures{{job="{job}"}}'] = streak
+        m[f'ops_hostcron_consecutive_failures{{hostcron_job="{job}"}}'] = streak
         if streak >= 2:
             fails.append(f"hostcron job {job}: {streak} consecutive failures (last: {sts[-1]})")
 
@@ -164,6 +172,23 @@ def check_exposure(fails: list[str], m: dict) -> None:
     m["ops_unexpected_exposed_ports"] = len(bad)
     if bad:
         fails.append("non-loopback listeners outside scripts/ops_exposure_allowlist.json: " + ", ".join(bad[:15]))
+
+
+def check_default_pg_password(fails: list[str], m: dict) -> None:
+    """INF-05: the host Postgres superuser must NOT accept the historical default password.
+    Passes only on an authentication failure; a connection that cannot be attempted at all
+    (container down) is a failure too, never a pass."""
+    p = sh(["docker", "exec", "ada-db-backup", "sh", "-c",
+            "PGPASSWORD=postgres123 PGCONNECT_TIMEOUT=8 psql -h host.docker.internal -U postgres "
+            "-d postgres -tAc 'select 1' 2>&1"], 30)
+    out = (p.stdout + p.stderr).strip()
+    accepted = p.returncode == 0 and out.startswith("1")
+    refused = "password authentication failed" in out or "no pg_hba.conf entry" in out
+    m["ops_pg_default_password_accepted"] = 1 if accepted else 0
+    if accepted:
+        fails.append("Postgres superuser still accepts the default password (INF-05)")
+    elif not refused:
+        fails.append(f"default-password probe inconclusive: {out[:120]!r}")
 
 
 def check_capacity(fails: list[str], m: dict) -> None:
@@ -254,7 +279,7 @@ def main() -> int:
     args = ap.parse_args()
     fails: list[str] = []
     metrics: dict = {}
-    for fn in (check_backups, check_offvolume, check_drills, check_hostcron, check_exposure,
+    for fn in (check_backups, check_offvolume, check_drills, check_hostcron, check_exposure, check_default_pg_password,
                check_capacity, check_containers, check_gpu):
         try:
             if fn in (check_offvolume,):

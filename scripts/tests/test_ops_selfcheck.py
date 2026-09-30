@@ -35,6 +35,9 @@ def test_hostcron_two_consecutive_failures_fail_and_recovery_passes(tmp_path, mo
     hb.write_text(json.dumps({"ts": time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime())}))
     monkeypatch.setattr(selfcheck, "RUNS", runs)
     monkeypatch.setattr(selfcheck, "HEARTBEAT", hb)
+    (tmp_path / "hostcron").mkdir()
+    (tmp_path / "hostcron" / "schedule.json").write_text(json.dumps({"jobs": [{"name": "j"}]}))
+    monkeypatch.setattr(selfcheck, "HERE", tmp_path)
 
     def rows(*statuses):
         runs.write_text("\n".join(json.dumps({"job": "j", "status": s}) for s in statuses))
@@ -44,7 +47,7 @@ def test_hostcron_two_consecutive_failures_fail_and_recovery_passes(tmp_path, mo
     metrics: dict = {}
     selfcheck.check_hostcron(fails, metrics)
     assert any("2 consecutive failures" in f for f in fails)
-    assert metrics['ops_hostcron_consecutive_failures{job="j"}'] == 2
+    assert metrics['ops_hostcron_consecutive_failures{hostcron_job="j"}'] == 2
 
     rows("failed", "failed", "ok")  # control: a job that recovered must NOT be flagged
     fails, metrics = [], {}
@@ -138,3 +141,38 @@ def test_reconcile_pause_switch_blocks_healing(monkeypatch, tmp_path):
     monkeypatch.setattr(sys, "argv", ["ops_reconcile.py"])
     reconcile.main()
     assert not any("compose" in c for c in calls)
+
+
+def test_default_pg_password_accepted_is_a_failure_and_refused_is_a_pass(monkeypatch):
+    monkeypatch.setattr(selfcheck, "sh", lambda cmd, timeout=60: _cp("1\n", 0))
+    fails: list[str] = []
+    metrics: dict = {}
+    selfcheck.check_default_pg_password(fails, metrics)  # sabotage: default password works
+    assert metrics["ops_pg_default_password_accepted"] == 1 and fails
+
+    monkeypatch.setattr(selfcheck, "sh", lambda cmd, timeout=60: _cp(
+        'psql: error: connection to server failed: FATAL:  password authentication failed for user "postgres"', 2))
+    fails, metrics = [], {}
+    selfcheck.check_default_pg_password(fails, metrics)  # control: refused -> clean
+    assert metrics["ops_pg_default_password_accepted"] == 0 and not fails
+
+    monkeypatch.setattr(selfcheck, "sh", lambda cmd, timeout=60: _cp("Error: No such container", 1))
+    fails, metrics = [], {}
+    selfcheck.check_default_pg_password(fails, metrics)  # unreachable is inconclusive, never a silent pass
+    assert fails and "inconclusive" in fails[0]
+
+
+def test_retired_job_failures_are_ignored(tmp_path, monkeypatch):
+    """A job removed from schedule.json must not keep the self-check red forever."""
+    runs = tmp_path / "runs.jsonl"
+    runs.write_text("\n".join(json.dumps({"job": "gone", "status": "timeout"}) for _ in range(6)))
+    hb = tmp_path / "hb.json"
+    hb.write_text(json.dumps({"ts": time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime())}))
+    (tmp_path / "hostcron").mkdir()
+    (tmp_path / "hostcron" / "schedule.json").write_text(json.dumps({"jobs": [{"name": "other"}]}))
+    monkeypatch.setattr(selfcheck, "RUNS", runs)
+    monkeypatch.setattr(selfcheck, "HEARTBEAT", hb)
+    monkeypatch.setattr(selfcheck, "HERE", tmp_path)
+    fails: list[str] = []
+    selfcheck.check_hostcron(fails, {})
+    assert not [f for f in fails if "gone" in f]

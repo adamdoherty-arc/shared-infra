@@ -96,8 +96,8 @@ groups:
         for: 0m
         labels: { severity: warning, ops_direct: "true" }
         annotations:
-          summary: "hostcron job {{ $labels.job }} failed {{ $value }} runs in a row"
-          description: "See scripts/hostcron/logs/{{ $labels.job }}.log."
+          summary: "hostcron job {{ $labels.hostcron_job }} failed {{ $value }} runs in a row"
+          description: "See scripts/hostcron/logs/{{ $labels.hostcron_job }}.log."
       - alert: UnexpectedExposedPort
         expr: ops_unexpected_exposed_ports > 0
         for: 0m
