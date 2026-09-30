@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -173,7 +174,7 @@ def make_handler(service: RunnerService):
             if self.path.startswith("/runs/active"):
                 self._send(200, active_runs(service.lock_dir))
             elif self.path.startswith("/health"):
-                self._send(200, {"ok": True, "pid": os.getpid()})
+                self._send(200, {"ok": True, "pid": os.getpid(), "code_hash": LOADED_CODE_HASH})
             else:
                 self._send(404, {"error": "not found"})
 
@@ -249,8 +250,18 @@ def request_exit(port: int = DEFAULT_PORT) -> bool:
 
 
 def ensure_running(port: int = DEFAULT_PORT) -> str:
+    restarted = False
     if is_up(port):
-        return "already running"
+        if running_code_hash(port) == code_hash():
+            return "already running"
+        request_exit(port)
+        for _ in range(20):
+            time.sleep(0.5)
+            if not is_up(port):
+                break
+        else:
+            return "running stale code and did not exit"
+        restarted = True
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     out = open(LOG_DIR / "serve.log", "ab")
     flags = 0x00000008 | 0x08000000 | 0x00000200 if sys.platform == "win32" else 0
@@ -260,5 +271,5 @@ def ensure_running(port: int = DEFAULT_PORT) -> str:
     for _ in range(20):
         time.sleep(0.5)
         if is_up(port):
-            return "started"
+            return "restarted on new code" if restarted else "started"
     return "start attempted, not answering yet"

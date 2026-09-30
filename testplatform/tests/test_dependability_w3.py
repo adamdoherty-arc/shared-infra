@@ -118,3 +118,26 @@ def test_git_sha_distinguishes_dirty_trees_and_is_stable_for_identical_ones(tmp_
     assert runner.git_sha(tmp_path) == dirty_two
     (tmp_path / "a.txt").write_text("three\n")
     assert runner.git_sha(tmp_path) != dirty_two
+
+
+def test_ensure_running_restarts_a_service_running_stale_code(monkeypatch, tmp_path):
+    monkeypatch.setattr(server, "LOG_DIR", tmp_path)
+    up = iter([True, False, False, True])
+    exited = []
+    started = []
+    monkeypatch.setattr(server, "is_up", lambda port=0: next(up))
+    monkeypatch.setattr(server, "running_code_hash", lambda port=0: "old")
+    monkeypatch.setattr(server, "code_hash", lambda: "new")
+    monkeypatch.setattr(server, "request_exit", lambda port=0: exited.append(1) or True)
+    monkeypatch.setattr(server.subprocess, "Popen", lambda *a, **k: started.append(1))
+    monkeypatch.setattr(server.time, "sleep", lambda s: None)
+    assert server.ensure_running() == "restarted on new code"
+    assert exited and started
+
+
+def test_ensure_running_is_a_noop_when_the_hash_matches(monkeypatch):
+    monkeypatch.setattr(server, "is_up", lambda port=0: True)
+    monkeypatch.setattr(server, "running_code_hash", lambda port=0: "same")
+    monkeypatch.setattr(server, "code_hash", lambda: "same")
+    monkeypatch.setattr(server, "request_exit", lambda port=0: pytest.fail("must not restart"))
+    assert server.ensure_running() == "already running"
