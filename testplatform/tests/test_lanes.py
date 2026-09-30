@@ -62,9 +62,9 @@ def test_light_concurrency_config_precedence_and_validation(tmp_path):
         _project(tmp_path, "", "lanes: {light_concurrency: 0}\n")
 
 
-def test_shipped_ada_profile_gets_three_light_slots():
+def test_shipped_ada_profile_gets_six_light_slots():
     project = profile.load_project("ada")
-    assert project.light_concurrency == 3
+    assert project.light_concurrency == 6
 
 
 def _can_start(project: profile.Project, target: str, lock_dir: Path, paths=None):
