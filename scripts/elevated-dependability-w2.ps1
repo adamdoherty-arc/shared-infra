@@ -19,7 +19,7 @@
          (defence in depth behind pg_hba.conf, which already rejects every non-loopback client).
 #>
 [CmdletBinding()]
-param([switch]$RestartPostgres, [switch]$CompactDocker)
+param([switch]$RestartPostgres, [switch]$CompactDocker, [switch]$ApplyWslConfig)
 
 $ErrorActionPreference = 'Stop'
 $id = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -50,4 +50,16 @@ if ($RestartPostgres) {
 
 if ($CompactDocker) {
     & 'C:\code\shared-infra\scripts\compact-docker-disk.ps1'
+}
+
+if ($ApplyWslConfig) {
+    # Applies ~/.wslconfig memory=32GB and the 12G qwen38-chat limit. Stops EVERY container for
+    # a few minutes; ops_reconcile (every 10 min) then brings must_run containers back.
+    Write-Host 'wsl --shutdown (applies .wslconfig memory=32GB, autoMemoryReclaim, mirrored networking)'
+    wsl --shutdown
+    Start-Sleep 10
+    Start-Process "$env:ProgramFiles\Docker\Docker\Docker Desktop.exe"
+    for ($i = 0; $i -lt 60; $i++) { docker info *> $null; if ($LASTEXITCODE -eq 0) { break }; Start-Sleep 5 }
+    docker compose -p shared-infra -f C:\code\shared-infra\docker-compose.vllm.yml up -d --force-recreate qwen38-chat
+    python C:\code\shared-infra\scripts\ops_reconcile.py
 }

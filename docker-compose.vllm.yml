@@ -1247,6 +1247,9 @@ services:
           # 32 logical CPUs at load ~12, so 4 keeps the ada-backend event-loop
           # protection the 2.0 note above was for.
           cpus: "4.0"
+          # 2026-09-30: steady RSS 4.7 GiB; 12G stops a leak from consuming the whole WSL VM
+          # (was uncapped = 39 GiB). Applies on the next recreate.
+          memory: 12G
         reservations:
           devices:
             - driver: nvidia

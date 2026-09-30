@@ -522,6 +522,28 @@
       "enabled": true
     },
     {
+      "name": "ops-hostmem",
+      "owner": "shared-infra",
+      "_note": "Every 15 min: host RAM probe (available < 4 GiB posts to the infra Discord and pushes ops_host_mem_* to the Pushgateway; Prometheus rule HostMemoryLow). hostcron notification off: the script posts its own detail.",
+      "cmd": [
+        "C:\\Python314\\python.exe",
+        "C:\\code\\shared-infra\\scripts\\ops_selfcheck.py",
+        "--host-memory-only"
+      ],
+      "cwd": "C:\\code\\shared-infra",
+      "schedule": {
+        "minute": [
+          7,
+          22,
+          37,
+          52
+        ]
+      },
+      "timeout_s": 60,
+      "notify_on_failure": false,
+      "enabled": true
+    },
+    {
       "name": "ops-reconcile",
       "_note": "Every 10 min: brings an absent/exited must_run container back with compose up -d --no-deps <service> (scripts/ops_expected_containers.json). Pause switch: scripts/ops_reconcile.pause.",
       "owner": "shared-infra",

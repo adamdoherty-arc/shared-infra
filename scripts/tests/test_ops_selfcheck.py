@@ -176,3 +176,32 @@ def test_retired_job_failures_are_ignored(tmp_path, monkeypatch):
     fails: list[str] = []
     selfcheck.check_hostcron(fails, {})
     assert not [f for f in fails if "gone" in f]
+
+
+def test_host_memory_low_is_a_failure_and_plenty_is_a_pass(monkeypatch):
+    import ctypes
+
+    def fake_status(avail_gib):
+        def _call(ref):
+            st = ref._obj
+            st.ullTotalPhys = 64 * 2**30
+            st.ullAvailPhys = int(avail_gib * 2**30)
+            return 1
+        return _call
+
+    class K32:
+        GlobalMemoryStatusEx = staticmethod(fake_status(0.2))
+
+    class Win:
+        kernel32 = K32
+
+    monkeypatch.setattr(ctypes, "windll", Win, raising=False)
+    fails: list[str] = []
+    metrics: dict = {}
+    selfcheck.check_host_memory(fails, metrics)  # sabotage: 200 MB available
+    assert fails and metrics["ops_host_mem_available_bytes"] < 2**30
+
+    K32.GlobalMemoryStatusEx = staticmethod(fake_status(20))
+    fails, metrics = [], {}
+    selfcheck.check_host_memory(fails, metrics)  # control: 20 GiB available
+    assert not fails and metrics["ops_host_mem_used_ratio"] < 0.7

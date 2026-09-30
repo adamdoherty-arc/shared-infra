@@ -56,6 +56,20 @@ groups:
         annotations:
           summary: "No successful ADA DR restore drill in 10 days"
           description: "The weekly restore drill failed or did not run; a backup that has not been restored is not a backup."
+      - alert: HostMemoryLow
+        expr: ops_host_mem_available_bytes < 4 * 1024 * 1024 * 1024
+        for: 15m
+        labels: { severity: critical, ops_direct: "true" }
+        annotations:
+          summary: "Host available memory is below 4 GiB"
+          description: "Sustained host RAM pressure slows ADA request latency (200 MB available measured 2026-09-30). Check vmmemWSL, native Postgres and docker stats."
+      - alert: HostMemoryProbeStale
+        expr: time() - push_time_seconds{job="ops_hostmem"} > 3600
+        for: 5m
+        labels: { severity: warning, ops_direct: "true" }
+        annotations:
+          summary: "The host-memory probe has not reported for an hour"
+          description: "hostcron job ops-hostmem is failing or not running."
       - alert: HostDiskFreeLow
         expr: ops_host_disk_free_ratio{drive="C"} < 0.15
         for: 10m

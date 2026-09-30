@@ -211,6 +211,34 @@ def check_capacity(fails: list[str], m: dict) -> None:
         m["ops_docker_vhdx_bytes"] = vhdx
 
 
+HOST_MEM_MIN_AVAILABLE_GIB = 4.0
+
+
+def check_host_memory(fails: list[str], m: dict) -> None:
+    """Host RAM: Windows available physical memory (free + standby). ~200 MB available was measured
+    2026-09-30 while ADA latency degraded. Would pass trivially if the ctypes call failed to
+    populate (it raises instead, which the caller records as a crashed check)."""
+    import ctypes
+
+    class MEMSTATUS(ctypes.Structure):
+        _fields_ = [("dwLength", ctypes.c_ulong), ("dwMemoryLoad", ctypes.c_ulong),
+                    ("ullTotalPhys", ctypes.c_ulonglong), ("ullAvailPhys", ctypes.c_ulonglong),
+                    ("ullTotalPageFile", ctypes.c_ulonglong), ("ullAvailPageFile", ctypes.c_ulonglong),
+                    ("ullTotalVirtual", ctypes.c_ulonglong), ("ullAvailVirtual", ctypes.c_ulonglong),
+                    ("sullAvailExtendedVirtual", ctypes.c_ulonglong)]
+
+    st = MEMSTATUS()
+    st.dwLength = ctypes.sizeof(MEMSTATUS)
+    if not ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(st)) or not st.ullTotalPhys:
+        raise RuntimeError("GlobalMemoryStatusEx returned no data")
+    m["ops_host_mem_available_bytes"] = st.ullAvailPhys
+    m["ops_host_mem_total_bytes"] = st.ullTotalPhys
+    m["ops_host_mem_used_ratio"] = round(1 - st.ullAvailPhys / st.ullTotalPhys, 4)
+    gib = st.ullAvailPhys / 2**30
+    if gib < HOST_MEM_MIN_AVAILABLE_GIB:
+        fails.append(f"host memory available {gib:.2f} GiB (<{HOST_MEM_MIN_AVAILABLE_GIB:.0f} GiB)")
+
+
 def check_containers(fails: list[str], m: dict) -> None:
     p = sh(["docker", "ps", "-a", "--format", "{{.Names}}\t{{.State}}\t{{.Status}}"])
     if p.returncode != 0:
@@ -244,12 +272,12 @@ def check_gpu(fails: list[str], m: dict) -> None:
             fails.append(f"GPU free VRAM {free} MiB (<400)")
 
 
-def push(m: dict, ok: bool) -> None:
+def push(m: dict, ok: bool, job: str = "ops_selfcheck") -> None:
     now = int(time.time())
     lines = [f"ops_selfcheck_last_run_timestamp_seconds {now}", f"ops_selfcheck_ok {1 if ok else 0}"]
     lines += [f"{k} {v}" for k, v in m.items()]
     try:
-        req = urllib.request.Request(f"{PUSHGATEWAY}/metrics/job/ops_selfcheck",
+        req = urllib.request.Request(f"{PUSHGATEWAY}/metrics/job/{job}",
                                      data=("\n".join(lines) + "\n").encode(), method="POST")
         urllib.request.urlopen(req, timeout=10).read()  # noqa: S310 - fixed loopback URL
     except Exception as exc:  # noqa: BLE001
@@ -283,11 +311,14 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--no-post", action="store_true")
     ap.add_argument("--json", action="store_true")
+    ap.add_argument("--host-memory-only", action="store_true", help="run only the 15-minute host RAM probe")
     args = ap.parse_args()
     fails: list[str] = []
     metrics: dict = {}
-    for fn in (check_backups, check_offvolume, check_drills, check_hostcron, check_exposure, check_default_pg_password,
-               check_capacity, check_containers, check_gpu):
+    checks = ((check_host_memory,) if args.host_memory_only else
+              (check_backups, check_offvolume, check_drills, check_hostcron, check_exposure,
+               check_default_pg_password, check_capacity, check_host_memory, check_containers, check_gpu))
+    for fn in checks:
         try:
             if fn in (check_offvolume,):
                 fn(fails)
@@ -297,7 +328,7 @@ def main() -> int:
             fails.append(f"{fn.__name__} crashed: {type(exc).__name__}: {exc}")
     ok = not fails
     if not args.no_post:
-        push(metrics, ok)
+        push(metrics, ok, "ops_hostmem" if args.host_memory_only else "ops_selfcheck")
         if not ok:
             post(f"**ops self-check FAILED** ({len(fails)})\n- " + "\n- ".join(fails))
     if args.json:

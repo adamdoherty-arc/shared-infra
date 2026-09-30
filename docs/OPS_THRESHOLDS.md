@@ -35,3 +35,5 @@ normal 0.7-1.0 GiB operating band does not.
 2. Rotated container logs are capped per service (`json-file` `max-size`/`max-file`).
 3. `scripts/compact-docker-disk.ps1` (elevated; stops Docker) returns the VHDX slack to NTFS
    (VHDX 1.04 TB vs ~660 GB used inside on 2026-09-30).
+
+| Host available memory | < 4 GiB for 15 min (`HostMemoryLow`, probe `ops-hostmem` every 15 min) | 200 MB available measured 2026-09-30 with ADA latency degraded; host 64 GB, WSL capped 32 GB, Postgres ~8.5 GB |
