@@ -10,6 +10,10 @@
     Add -CompactDocker to also reclaim the ~290 GB of VHDX slack (stops Docker for ~20-40 min;
     scripts\compact-docker-disk.ps1 brings every stack back and hostcron ops-reconcile heals the rest).
 
+    Add -EnableCrashDumps to set CrashControl to an automatic memory dump (CrashDumpEnabled=7),
+    keep LogEvent/AutoReboot, and Overwrite. Idempotent. NOTE: a hard power loss or CPU shutdown (Kernel-Power 41,
+    bugcheck 0) writes no dump regardless; this only captures real bugchecks.
+
     Default (no switches) does only the two harmless steps:
       1. Disables the two Task Scheduler tasks that duplicate hostcron jobs and could not be disabled
          without elevation (double execution + log collisions, INF-08):
@@ -19,7 +23,7 @@
          (defence in depth behind pg_hba.conf, which already rejects every non-loopback client).
 #>
 [CmdletBinding()]
-param([switch]$RestartPostgres, [switch]$CompactDocker, [switch]$ApplyWslConfig)
+param([switch]$RestartPostgres, [switch]$CompactDocker, [switch]$ApplyWslConfig, [switch]$EnableCrashDumps)
 
 $ErrorActionPreference = 'Stop'
 $id = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -62,4 +66,17 @@ if ($ApplyWslConfig) {
     for ($i = 0; $i -lt 60; $i++) { docker info *> $null; if ($LASTEXITCODE -eq 0) { break }; Start-Sleep 5 }
     docker compose -p shared-infra -f C:\code\shared-infra\docker-compose.vllm.yml up -d --force-recreate qwen38-chat
     python C:\code\shared-infra\scripts\ops_reconcile.py
+}
+
+if ($EnableCrashDumps) {
+    $cc = 'HKLM:\SYSTEM\CurrentControlSet\Control\CrashControl'
+    $want = @{ CrashDumpEnabled = 7; LogEvent = 1; AutoReboot = 1; Overwrite = 1 }
+    foreach ($k in $want.Keys) {
+        $cur = (Get-ItemProperty -Path $cc -Name $k -ErrorAction SilentlyContinue).$k
+        if ($cur -ne $want[$k]) {
+            Set-ItemProperty -Path $cc -Name $k -Value $want[$k] -Type DWord
+            Write-Host "crashdump: $k $cur -> $($want[$k])"
+        }
+    }
+    Write-Host 'crashdump: automatic memory dump enabled (idempotent)'
 }

@@ -136,3 +136,24 @@ groups:
         annotations:
           summary: "Bifrost provider {{ $labels.provider }} genuine upstream error rate above 50% for 30m"
           description: "caller_cancelled/caller_* errors are excluded (hedged requests cancelled by design inflated the naive figure to 46% for nvidia-nim on 2026-09-29; genuine errors were rate-limit/overload at ~4%). Fallbacks absorb it but waste latency and quota. Check dead/rate-limited models (the daily ada-bifrost-model-sync retires probe-confirmed dead ones) and consider infractl park."
+      - alert: GpuTemperatureHigh
+        expr: DCGM_FI_DEV_GPU_TEMP > 85
+        for: 5m
+        labels: { severity: warning, ops_direct: "true" }
+        annotations:
+          summary: "GPU {{ $labels.gpu }} at {{ $value }}C for 5m"
+          description: "RTX 5090 slowdown starts in the high 80s. Sustained heat precedes throttling and driver resets. Check case airflow and fan curve."
+      - alert: GpuPowerNearLimit
+        expr: DCGM_FI_DEV_POWER_USAGE > 560
+        for: 2m
+        labels: { severity: warning, ops_direct: "true" }
+        annotations:
+          summary: "GPU {{ $labels.gpu }} drawing {{ $value }}W (limit 575W) for 2m"
+          description: "At the board power limit the GPU is power-capped, and its transients stress the PSU. Peak seen 2026-09-29: 525W. DCGM here exposes no XID or clocks-event-reason counter, so power near limit is the available throttle proxy."
+      - alert: GpuPcieReplays
+        expr: increase(DCGM_FI_DEV_PCIE_REPLAY_COUNTER[10m]) > 0
+        for: 0m
+        labels: { severity: warning, ops_direct: "true" }
+        annotations:
+          summary: "GPU {{ $labels.gpu }} PCIe link retried {{ $value }} times in 10m"
+          description: "PCIe replays indicate a marginal link (seating, riser, CPU PCIe lanes, or PSU rail noise). Precursor to hangs with no bugcheck."
