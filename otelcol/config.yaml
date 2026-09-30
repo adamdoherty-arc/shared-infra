@@ -1,5 +1,5 @@
 # OpenTelemetry Collector (contrib) — shared-infra sidecar
-# Plan-490: tail-sampled fan-out to Grafana Tempo + Loki for all ADA/Legion/Zero backends.
+# Plan-490: tail-sampled fan-out to Grafana Tempo for all ADA/Legion/Zero backends.
 #
 # Architecture:
 #   backends (OTLP gRPC 4317 / HTTP 4318)
@@ -7,7 +7,6 @@
 #     -> tail_sampling (5s decision window: errors + slow spans + 10% probabilistic)
 #     -> batch
 #     -> otlp/tempo (shared-tempo:4317 OTLP gRPC)  [spans only]
-#        otlphttp/loki (loki:3100/otlp)            [logs only]
 #
 # Bring up:
 #   docker compose -p shared-infra -f docker-compose.otelcol.yml up -d
@@ -53,7 +52,7 @@ processors:
     send_batch_size: 1024
     timeout: 5s
 
-  # Add resource metadata for Loki label extraction.
+  # Add resource metadata.
   resource:
     attributes:
       - key: host.name
@@ -66,12 +65,6 @@ exporters:
   # so tail-sampling fires before Tempo writes a trace block.
   otlp/tempo:
     endpoint: shared-tempo:4317
-    tls:
-      insecure: true
-
-  # Loki — OTLP log export (Loki >= 2.9 supports /otlp endpoint).
-  otlphttp/loki:
-    endpoint: http://loki:3100/otlp
     tls:
       insecure: true
 
@@ -90,12 +83,12 @@ service:
       processors: [tail_sampling, batch]
       exporters: [otlp/tempo, debug]
 
-    # Log pipeline: receive -> resource -> batch -> Loki
+    # Log pipeline: receive -> resource -> batch -> debug
     # OTLPLogExporter in tracing.py ships structlog records here.
     logs:
       receivers: [otlp]
       processors: [resource, batch]
-      exporters: [otlphttp/loki, debug]
+      exporters: [debug]
 
   telemetry:
     logs:

@@ -1,6 +1,6 @@
-# OTel Collector + Loki sidecar — Plan-490 (shared-infra)
+# OTel Collector sidecar — Plan-490 (shared-infra)
 #
-# Adds tail-sampled span fan-out (Grafana Tempo) + structured log shipping (Loki)
+# Adds tail-sampled span fan-out (Grafana Tempo)
 # for ALL project backends (ADA / Legion / Zero) that send OTLP.
 #
 # Backends should set:
@@ -9,9 +9,6 @@
 # Bring up (idempotent):
 #   docker compose -p shared-infra -f docker-compose.otelcol.yml up -d
 #
-# Loki query via Grafana:  Settings -> Data Sources -> Add -> Loki -> http://loki:3100
-# Loki direct query:       curl -G "http://localhost:3100/loki/api/v1/query" \
-#                            --data-urlencode 'query={service_name="ada-backend"}'
 # otelcol metrics:         http://localhost:8888/metrics
 
 services:
@@ -30,13 +27,7 @@ services:
       - "127.0.0.1:13133:13133" # Health check extension
     networks:
       - shared-infra
-    # depends_on only lists loki (same compose file). shared-tempo lives in
-    # docker-compose.observability.yml — same project (shared-infra) but a
-    # different file, so it can't be named here. restart: unless-stopped above
-    # makes otelcol retry the exporter until shared-tempo:4317 is reachable.
     depends_on:
-      loki:
-        condition: service_started
       probe-tools:
         condition: service_completed_successfully
     deploy:
@@ -53,7 +44,7 @@ services:
 
   probe-tools:
     # One-shot: copies a static busybox out of the tempo image into a shared volume so the
-    # distroless otelcol and loki containers can run a wget-based HEALTHCHECK.
+    # distroless otelcol container can run a wget-based HEALTHCHECK.
     image: grafana/tempo:2.9.0
     container_name: probe-tools
     entrypoint: ["/busybox/sh", "-c", "cp /busybox/busybox /probe/busybox && chmod 755 /probe/busybox"]
@@ -64,40 +55,11 @@ services:
     networks:
       - shared-infra
 
-  loki:
-    depends_on:
-      probe-tools:
-        condition: service_completed_successfully
-    image: grafana/loki:3.7.2   # pinned (was :latest); matches the running build
-    container_name: loki
-    restart: unless-stopped
-    command: ["-config.file=/etc/loki/config.yaml"]
-    volumes:
-      - ./otelcol/loki-config.yaml:/etc/loki/config.yaml:ro
-      - loki-data:/loki
-      - probe-tools:/probe:ro
-    ports:
-      - "127.0.0.1:3100:3100"   # Loki HTTP API + OTLP ingest
-      - "127.0.0.1:9096:9096"   # Loki gRPC
-    networks:
-      - shared-infra
-    deploy:
-      resources:
-        limits: { memory: 512M }
-    # Distroless image: probe with the static busybox from the probe-tools volume.
-    healthcheck:
-      test: ["CMD", "/probe/busybox", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3100/ready"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 60s
-
 networks:
   shared-infra:
     external: true
     name: shared-infra_default
 
 volumes:
-  loki-data:
   probe-tools:
     name: shared-loki-data

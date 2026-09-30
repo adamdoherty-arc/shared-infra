@@ -99,7 +99,7 @@ REGISTRY: dict[str, ActionSpec] = {
 CONFIG_FILES = ("config.json", "disabled-providers.json")
 
 NON_GATEWAY_SIDECARS = {
-    "bifrost-metrics", "bifrost-logs-pruner", "shared-alertmanager", "otelcol", "loki",
+    "bifrost-metrics", "bifrost-logs-pruner", "shared-alertmanager", "otelcol",
     "cadvisor", "dcgm-exporter", "vllm-autoheal", "vllm-wedge-monitor",
 }
 

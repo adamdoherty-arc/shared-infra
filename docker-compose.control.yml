@@ -31,7 +31,6 @@ services:
       INFRACTL_BIFROST_METRICS_URL: http://bifrost-metrics:9100/metrics
       INFRACTL_PROMETHEUS_URL: http://shared-prometheus:9090
       INFRACTL_ALERTMANAGER_URL: http://shared-alertmanager:9093
-      INFRACTL_LOKI_URL: http://loki:3100
       INFRACTL_QWEN38_URL: http://qwen38-chat:18020
       INFRACTL_VLLM_EMBED_URL: http://vllm-embed:8001
       INFRACTL_DCGM_URL: http://dcgm-exporter:9400/metrics

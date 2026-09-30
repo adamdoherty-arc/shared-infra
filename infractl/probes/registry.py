@@ -12,7 +12,7 @@ from typing import Callable
 from infractl.core.ledger import Ledger
 from infractl.probes import (
     alertmanager, bifrost, config_parity, consumers, containers, disk, embed,
-    gpu, logsdb, loki, prometheus, vllm,
+    gpu, logsdb, prometheus, vllm,
 )
 from infractl.settings import Settings
 
@@ -27,7 +27,6 @@ PROBE_MODULES: list[Callable[[Settings], dict]] = [
     config_parity.probe,
     prometheus.probe,
     alertmanager.probe,
-    loki.probe,
     consumers.probe,
 ]
 

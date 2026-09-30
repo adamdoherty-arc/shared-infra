@@ -81,7 +81,6 @@ class Settings(BaseSettings):
     infractl_alertmanager_url: str = Field(
         default="http://shared-alertmanager:9093", alias="INFRACTL_ALERTMANAGER_URL"
     )
-    infractl_loki_url: str = Field(default="http://loki:3100", alias="INFRACTL_LOKI_URL")
     infractl_qwen38_url: str = Field(
         default="http://qwen38-chat:18020", alias="INFRACTL_QWEN38_URL"
     )
