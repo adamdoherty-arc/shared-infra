@@ -97,3 +97,24 @@ def test_hashes_uses_etag_and_serves_cache_on_304(monkeypatch):
     assert client.hashes(1) == {"a": "h1"}
     assert client.hashes(1) == {"a": "h1"}
     assert seen == [None, '"e1"']
+
+
+def test_git_sha_distinguishes_dirty_trees_and_is_stable_for_identical_ones(tmp_path):
+    import subprocess
+
+    def git(*args):
+        subprocess.run(["git", "-C", str(tmp_path), "-c", "user.email=t@t", "-c", "user.name=t", *args],
+                       check=True, capture_output=True)
+
+    git("init", "-q")
+    (tmp_path / "a.txt").write_text("one\n")
+    git("add", "a.txt")
+    git("commit", "-q", "-m", "init")
+    clean = runner.git_sha(tmp_path)
+    assert len(clean) == 40 and "+" not in clean
+    (tmp_path / "a.txt").write_text("two\n")
+    dirty_two = runner.git_sha(tmp_path)
+    assert len(dirty_two) == 40 and dirty_two[32] == "+" and dirty_two[:32] == clean[:32]
+    assert runner.git_sha(tmp_path) == dirty_two
+    (tmp_path / "a.txt").write_text("three\n")
+    assert runner.git_sha(tmp_path) != dirty_two

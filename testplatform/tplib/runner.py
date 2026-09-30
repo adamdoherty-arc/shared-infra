@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import json
 import os
 import re
@@ -57,11 +58,22 @@ class Outcome:
 
 
 def git_sha(root: Path) -> str:
+    base = ["git", "-c", "safe.directory=*", "-C", str(root)]
     try:
-        return subprocess.run(["git", "-c", "safe.directory=*", "-C", str(root), "rev-parse", "HEAD"], capture_output=True, text=True,
-                              timeout=20, creationflags=NO_WINDOW).stdout.strip() or "unknown"
+        head = subprocess.run(base + ["rev-parse", "HEAD"], capture_output=True, text=True,
+                              timeout=20, creationflags=NO_WINDOW).stdout.strip()
     except (OSError, subprocess.SubprocessError):
         return "unknown"
+    if not head:
+        return "unknown"
+    try:
+        diff = subprocess.run(base + ["diff", "HEAD", "--no-ext-diff", "--binary"], capture_output=True,
+                              timeout=30, creationflags=NO_WINDOW).stdout
+    except (OSError, subprocess.SubprocessError):
+        return head
+    if not diff:
+        return head
+    return f"{head[:32]}+{hashlib.sha1(diff).hexdigest()[:7]}"
 
 
 VITEST_SUFFIXES = frozenset({".ts", ".tsx", ".js", ".jsx", ".mts", ".cts"})
