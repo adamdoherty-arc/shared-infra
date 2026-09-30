@@ -394,3 +394,37 @@ def test_small_named_selection_runs_in_process_not_xdist():
     assert runner.effective_workers(4, None, runner.DEFAULT_PARALLEL_MIN_FILES) == 4
     assert runner.effective_workers(4, few, 0) == 4
     assert runner.effective_workers(0, many, 150) == 0
+
+
+def _fair_setup(tmp_path, holder_group):
+    lock = ProjectLock("p", tmp_path, lane=LIGHT, slots=1)
+    (tmp_path / "p.light0.json").write_text(
+        json.dumps({"pid": os.getpid(), "run_id": 1, "key": "h", "group": holder_group}), encoding="utf-8")
+    queue = tmp_path / "p.light.queue"
+    queue.mkdir()
+    older = queue / "00000000000000000001-a"
+    newer = queue / "00000000000000000002-b"
+    older.write_text(json.dumps({"pid": os.getpid(), "group": "sweep"}), encoding="utf-8")
+    newer.write_text(json.dumps({"pid": os.getpid(), "group": "other"}), encoding="utf-8")
+    return lock, queue, older, newer
+
+
+def test_group_holding_a_slot_yields_to_a_waiter_from_another_group(tmp_path):
+    lock, queue, older, newer = _fair_setup(tmp_path, holder_group="sweep")
+    assert lock._is_next(queue, newer)
+    assert not lock._is_next(queue, older)
+
+
+def test_fifo_holds_when_no_waiting_group_holds_a_slot(tmp_path):
+    lock, queue, older, newer = _fair_setup(tmp_path, holder_group="someone-else")
+    assert lock._is_next(queue, older)
+    assert not lock._is_next(queue, newer)
+
+
+def test_legacy_plain_pid_ticket_still_parses(tmp_path):
+    lock = ProjectLock("p", tmp_path, lane=LIGHT, slots=1)
+    queue = tmp_path / "p.light.queue"
+    queue.mkdir()
+    t = queue / "00000000000000000001-a"
+    t.write_text(str(os.getpid()), encoding="utf-8")
+    assert lock._is_next(queue, t)
