@@ -273,11 +273,22 @@ def request_exit(port: int = DEFAULT_PORT) -> bool:
         return False
 
 
+def running_pid(port: int = DEFAULT_PORT) -> int | None:
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=3) as resp:
+            return json.loads(resp.read()).get("pid")
+    except (urllib.error.URLError, OSError, ValueError):
+        return None
+
+
 def ensure_running(port: int = DEFAULT_PORT) -> str:
     restarted = False
     if is_up(port):
         if running_code_hash(port) == code_hash():
             return "already running"
+        in_flight = [r for r in active_runs() if r.get("pid") == running_pid(port)]
+        if in_flight:
+            return f"running stale code; restart deferred until {len(in_flight)} in-flight run(s) finish"
         request_exit(port)
         for _ in range(20):
             time.sleep(0.5)

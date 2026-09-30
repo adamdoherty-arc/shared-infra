@@ -134,11 +134,23 @@ def test_ensure_running_restarts_a_service_running_stale_code(monkeypatch, tmp_p
     monkeypatch.setattr(server, "is_up", lambda port=0: next(up))
     monkeypatch.setattr(server, "running_code_hash", lambda port=0: "old")
     monkeypatch.setattr(server, "code_hash", lambda: "new")
+    monkeypatch.setattr(server, "active_runs", lambda *a, **k: [])
+    monkeypatch.setattr(server, "running_pid", lambda port=0: 4242)
     monkeypatch.setattr(server, "request_exit", lambda port=0: exited.append(1) or True)
     monkeypatch.setattr(server.subprocess, "Popen", lambda *a, **k: started.append(1))
     monkeypatch.setattr(server.time, "sleep", lambda s: None)
     assert server.ensure_running() == "restarted on new code"
     assert exited and started
+
+
+def test_ensure_running_defers_a_stale_code_restart_while_a_run_is_in_flight(monkeypatch):
+    monkeypatch.setattr(server, "is_up", lambda port=0: True)
+    monkeypatch.setattr(server, "running_code_hash", lambda port=0: "old")
+    monkeypatch.setattr(server, "code_hash", lambda: "new")
+    monkeypatch.setattr(server, "running_pid", lambda port=0: 4242)
+    monkeypatch.setattr(server, "active_runs", lambda *a, **k: [{"pid": 4242, "run_id": 9}])
+    monkeypatch.setattr(server, "request_exit", lambda port=0: pytest.fail("must not kill an in-flight run"))
+    assert "deferred" in server.ensure_running()
 
 
 def test_ensure_running_is_a_noop_when_the_hash_matches(monkeypatch):
