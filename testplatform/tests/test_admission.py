@@ -189,3 +189,23 @@ def test_heavy_request_is_refused_when_the_recorded_peak_overcommits_memory(tmp_
     with pytest.raises(runner.RunError, match="memory budget"):
         runner.preflight(project, "full", None)
     runner.preflight(project, "tests/test_a.py", None)
+
+
+def test_a_repeat_of_a_queued_heavy_request_is_detected_but_a_different_target_is_not(tmp_path):
+    """Would pass trivially if queued_duplicate matched ANY live ticket instead of the same request key: a
+    different tier must still queue, only the identical request is a duplicate."""
+    project = _project(tmp_path)
+    holder = ProjectLock("demo", tmp_path)
+    assert holder.acquire(runner.request_key("fast", None))[0]
+    holder.set_run_id(8)
+    waiter = threading.Thread(
+        target=lambda: runner.lock_for(project, "full", None, tmp_path).wait_acquire(
+            runner.request_key("full", None), 4, poll=0.1), daemon=True)
+    waiter.start()
+    time.sleep(0.6)
+    probe = runner.lock_for(project, "full", None, tmp_path)
+    assert probe.queued_duplicate(runner.request_key("full", None)) == 1
+    assert probe.queued_duplicate(runner.request_key("changed", None)) is None
+    assert probe.queued_duplicate(None) is None
+    holder.release()
+    waiter.join(8)

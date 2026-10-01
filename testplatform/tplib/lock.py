@@ -236,6 +236,24 @@ class ProjectLock:
         finally:
             ticket.unlink(missing_ok=True)
 
+    def queued_duplicate(self, key: str | None) -> int | None:
+        """1-based queue place of a live waiter already holding `key` in this lane, else None: a repeat of a
+        queued request must not take a second place and run the same tier twice."""
+        if key is None or not self._queue_dir.exists():
+            return None
+        place = 0
+        for ticket in sorted(self._queue_dir.iterdir()):
+            try:
+                data = json.loads(ticket.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            if not isinstance(data, dict) or not pid_alive(int(data.get("pid", 0))):
+                continue
+            place += 1
+            if data.get("key") == key:
+                return place
+        return None
+
     def queue_position(self, ticket: Path) -> int:
         """1-based place in this lane's queue (1 = next to start), counting only live waiters."""
         ahead = 0

@@ -11,7 +11,7 @@ from typing import Any
 from . import runner, server
 from .artifacts import prune
 from .legion import LegionClient, LegionError
-from .lock import LIGHT, ProjectLock, queue_snapshot
+from .lock import HEAVY, LIGHT, ProjectLock, queue_snapshot
 from .printer import budget, emit
 from .profile import ARTIFACTS_ROOT, PLATFORM_ROOT, ProfileError, legion_url, load_project, parse_target_spec
 
@@ -60,6 +60,11 @@ def cmd_run(args: argparse.Namespace) -> int:
     key = runner.request_key(target or project.default_target, args.paths)
     ok, held = lock.acquire(key)
     if not ok and held is not None and held.key != key:
+        place = lock.queued_duplicate(key) if lock.lane == HEAVY else None
+        if place is not None:
+            emit([f"already queued #{place} in the {lock.lane} lane (same request); not adding a duplicate run"])
+            return 0
+
         def announce(position: int, holder: Any) -> None:
             behind = f" behind run {holder.run_id}" if holder is not None and holder.run_id else ""
             emit(f"queued #{position} in the {lock.lane} lane{behind}", stream=sys.stderr)
