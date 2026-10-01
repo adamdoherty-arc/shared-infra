@@ -19,10 +19,13 @@ set "LOG=%REPO%\.claude\logs\system-hub-daily.log"
 set "STREAM=%REPO%\.claude\logs\system-hub-daily.jsonl"
 if not exist "%REPO%\.claude\logs" mkdir "%REPO%\.claude\logs"
 cd /d "%REPO%"
+set "SNAP=%REPO%\.claude\state\system-hub-daily-snapshot.json"
+C:\Python314\python.exe "%REPO%\scripts\hub_ring_leftovers.py" snapshot "%SNAP%" >> "%LOG%" 2>&1
 echo [%date% %time%] === system-hub-daily start model=%SH_MODEL% turns=%SH_TURNS% budget=%SH_BUDGET% === >> "%LOG%"
 "%USERPROFILE%\.local\bin\claude.exe" -p --model %SH_MODEL% --effort high --max-turns %SH_TURNS% --max-budget-usd %SH_BUDGET% --output-format stream-json --verbose --dangerously-skip-permissions < "%SH_PROMPT%" > "%STREAM%" 2>> "%LOG%"
 set "RC=%ERRORLEVEL%"
 findstr /c:"\"type\":\"result\"" "%STREAM%" >> "%LOG%"
 if not "%RC%"=="0" C:\Python314\python.exe "%REPO%\scripts\audits\system_hub_score.py" --record >> "%LOG%" 2>&1
+C:\Python314\python.exe "%REPO%\scripts\hub_ring_leftovers.py" report "%SNAP%" >> "%LOG%" 2>&1
 echo [%date% %time%] === system-hub-daily exited errorlevel %RC% === >> "%LOG%"
 endlocal & exit /b %RC%
