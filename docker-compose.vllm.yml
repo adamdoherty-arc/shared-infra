@@ -1577,6 +1577,9 @@ services:
       --cache-ram 0
       --metrics
     cpu_shares: 8192
+    environment:
+      MALLOC_ARENA_MAX: "2"
+      MALLOC_TRIM_THRESHOLD_: "65536"
     ports:
       - "127.0.0.1:8001:8001"
     labels:

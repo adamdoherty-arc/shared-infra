@@ -70,6 +70,16 @@ if (-not $wslRunning) {
 
 wsl -d docker-desktop -- sh -c "sync; echo 1 > /proc/sys/vm/drop_caches" 2>&1 | Out-Null
 
+# 2026-10-01: the WSL page cache is usually only ~4GB, so drop_caches alone barely moved
+# available memory (282MB -> 2168MB at 09:05). Idle desktop-tool working sets (codegraph/MCP
+# node, claude sessions, Cursor, chrome) are trimmed too: EmptyWorkingSet only moves pages to
+# the standby/compressed lists; the owning process re-faults what it uses. Measured +3GB.
+# Postgres, vmmemWSL, Docker backend and thinkorswim are deliberately NOT trimmed.
+Add-Type -TypeDefinition 'using System;using System.Runtime.InteropServices;public class WsTrim{[DllImport("psapi.dll")]public static extern bool EmptyWorkingSet(IntPtr h);}' -ErrorAction SilentlyContinue
+foreach ($p in Get-Process -Name node,claude,Cursor,chrome,chrome-headless-shell,Discord,python -ErrorAction SilentlyContinue) {
+    try { [void][WsTrim]::EmptyWorkingSet($p.Handle) } catch {}
+}
+
 Start-Sleep -Seconds 5
 $availAfter = (Get-Counter '\Memory\Available MBytes').CounterSamples.CookedValue
 $pagesAfter = (Get-Counter '\Memory\Pages/sec').CounterSamples.CookedValue
