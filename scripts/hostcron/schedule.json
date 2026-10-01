@@ -146,7 +146,7 @@
     {
       "name": "system-hub-daily",
       "owner": "ada",
-      "_note": "Fix-1100000738: daily System Hub review ring. Headless claude.exe (opus, effort high, 150 turns, 15 USD cap) measures the Hub Score, reuses or creates today's Legion sprint 'System Hub daily <date>', fixes red items, records the score row for the /system-hub Daily review card. Prompt: C:/code/ADA/scripts/setup/system_hub_daily_prompt.md. Exit condition: 7 consecutive days at score 0 -> verify only.",
+      "_note": "Fix-1100000738: daily System Hub review ring. Headless claude.exe (opus planner delegating to Sonnet, effort high, 150 turns, 20 USD cap, stream-json log, Fix-1100000753) measures the Hub Score, reuses or creates today's Legion sprint 'System Hub daily <date>', fixes red items, records the score row for the /system-hub Daily review card. Prompt: C:/code/ADA/scripts/setup/system_hub_daily_prompt.md. Exit condition: 7 consecutive days at score 0 -> verify only.",
       "cmd": [
         "cmd.exe",
         "/c",
