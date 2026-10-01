@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from tplib import artifacts, parsers, printer, profile, runner  # noqa: E402
 from tplib.bodyhash import body_hash  # noqa: E402
 from tplib.legion import LegionClient  # noqa: E402
-from tplib.lock import ProjectLock, pid_alive  # noqa: E402
+from tplib.lock import ERROR_ACCESS_DENIED, ProjectLock, _win_pid_alive, pid_alive  # noqa: E402
 from tplib.signature import normalize_message, signature  # noqa: E402
 
 
@@ -327,6 +327,52 @@ def test_lock_is_per_project(tmp_path):
 
 def test_pid_alive_self():
     assert pid_alive(os.getpid())
+
+
+class _FakeKernel32:
+    def GetExitCodeProcess(self, handle, ref):
+        ref._obj.value = 259
+        return True
+
+    def CloseHandle(self, handle):
+        return True
+
+
+class _FakeOpenProcess:
+    restype = None
+
+    def __init__(self, handle):
+        self.handle = handle
+
+    def __call__(self, *args):
+        return self.handle
+
+
+def _fake_kernel32(handle):
+    fake = _FakeKernel32()
+    fake.OpenProcess = _FakeOpenProcess(handle)
+    return fake
+
+
+def test_win_pid_alive_access_denied_means_alive():
+    assert _win_pid_alive(_fake_kernel32(0), 4242, lambda: ERROR_ACCESS_DENIED)
+
+
+def test_win_pid_alive_invalid_parameter_means_dead():
+    assert not _win_pid_alive(_fake_kernel32(0), 4242, lambda: 87)
+
+
+def test_win_pid_alive_open_handle_reads_exit_code():
+    assert _win_pid_alive(_fake_kernel32(1234), 4242, lambda: 0)
+
+
+def test_lock_held_by_unopenable_process_is_not_taken_over(tmp_path, monkeypatch):
+    import tplib.lock as lock_mod
+    (tmp_path / "demo.json").write_text(json.dumps({"pid": 4242, "run_id": 9}), encoding="utf-8")
+    monkeypatch.setattr(lock_mod, "pid_alive", lambda pid: _win_pid_alive(_fake_kernel32(0), pid, lambda: ERROR_ACCESS_DENIED))
+    lock = ProjectLock("demo", tmp_path)
+    ok, held = lock.acquire()
+    assert not ok and held.run_id == 9 and not held.stale and lock.stale_taken is None
 
 
 def test_artifact_prune(tmp_path):

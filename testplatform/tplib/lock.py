@@ -9,6 +9,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from .profile import ARTIFACTS_ROOT
 
@@ -33,26 +34,36 @@ def caller_group() -> str:
     return os.environ.get("TESTCTL_GROUP") or os.environ.get("CLAUDE_CODE_SESSION_ID") or f"pid:{os.getpid()}"
 
 
+ERROR_ACCESS_DENIED = 5
+
+
+def _win_pid_alive(kernel32: Any, pid: int, last_error: Callable[[], int]) -> bool:
+    """A process this token cannot open still exists: OpenProcess fails with ERROR_ACCESS_DENIED for a SYSTEM-owned
+    holder (hostcron jobs, `testctl serve`) when the caller is the interactive user, and reading that as "dead"
+    let a user run take over a live scheduled run's lock and reap its pytest."""
+    import ctypes
+    from ctypes import wintypes
+    query_limited = 0x1000
+    still_active = 259
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    handle = kernel32.OpenProcess(query_limited, False, pid)
+    if not handle:
+        return last_error() == ERROR_ACCESS_DENIED
+    try:
+        code = wintypes.DWORD()
+        if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
+            return False
+        return code.value == still_active
+    finally:
+        kernel32.CloseHandle(handle)
+
+
 def pid_alive(pid: int) -> bool:
     if pid <= 0:
         return False
     if sys.platform == "win32":
         import ctypes
-        from ctypes import wintypes
-        query_limited = 0x1000
-        still_active = 259
-        kernel32 = ctypes.windll.kernel32
-        kernel32.OpenProcess.restype = wintypes.HANDLE
-        handle = kernel32.OpenProcess(query_limited, False, pid)
-        if not handle:
-            return False
-        try:
-            code = wintypes.DWORD()
-            if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
-                return False
-            return code.value == still_active
-        finally:
-            kernel32.CloseHandle(handle)
+        return _win_pid_alive(ctypes.WinDLL("kernel32", use_last_error=True), pid, ctypes.get_last_error)
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
