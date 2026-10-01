@@ -59,6 +59,26 @@ when there is no frontend container (node ids stay repo-relative); `gates` and `
 resolved through PATH (so `npm` finds `npm.cmd` on Windows) and each command may carry its own `env:` map. Plain `changed` needs testmon, which only `exec` runtimes record;
 `customer-ops:changed --paths <files>` uses the import-graph scan.
 
+### Committed-tree snapshots (`runtime.snapshot` on `run` runtimes, host vitest, host gates)
+
+An official run must test what is committed, not another session's half-edit (customer-ops failed twice that way on
+2026-10-01). `exec` runtimes (ADA) stream `git archive` into their container. For everything that reads the repo from
+the host, `runtime.snapshot: {rev: HEAD, include: [.], exclude: [...], location: console/web}` makes every WHOLE tier
+(pytest in a `run` container, host `vitest`, `commands` gates and e2e) run against `git archive <rev>` extracted to a
+fresh per-run directory (`tplib/snapshot.py`): the container mounts it where the profile mounts `.`, host vitest and host
+gates use it as cwd. `location` places it at `<repo>/<location>/.tp-snapshot/<run-id>/`, so Node finds the real
+`<location>/node_modules` by walking up the tree; with no `location` it lives under the run's artifact dir. Nothing is
+linked into the real tree (no symlink, no junction), untracked runtime files (`node_modules`, `.venv`, `.env`) are never
+copied, and tmpfs masks still apply (a mask whose path is not in the committed tree is skipped). A command gate can name
+the live root with `{repo}` in its argv or env (for the untracked `.venv` python) and sees `TP_LIVE_ROOT` and
+`TP_SNAPSHOT_ROOT`.
+
+A path target and `changed --paths` stay on the LIVE tree, so you can run the test file you are editing, untracked or
+not; a tier opts out with `snapshot: false`. If the snapshot cannot be built the run is an `error`, never a silent live
+run. Cleanup (`safe_rmtree`) deletes only a marker-bearing dir strictly inside the snapshot root, never follows a link,
+and a crashed run's leftovers (older than 3h) are swept by the next run. Add `<location>/.tp-snapshot/` to the repo's
+`.gitignore` and exclude it from that tree's lint/test globs.
+
 ## Service
 
 `testctl serve` schedules runs per project in two lanes. The **heavy** lane (any whole tier: `fast`, `full`,

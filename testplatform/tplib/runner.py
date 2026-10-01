@@ -18,6 +18,7 @@ from typing import Any
 
 from . import parsers
 from . import selection as sel
+from . import snapshot as snapmod
 from .artifacts import new_artifact_dir
 from .legion import LegionClient, LegionError, retryable
 from .lock import HEAVY, LIGHT, Held, ProjectLock
@@ -479,7 +480,8 @@ def sync_snapshot(project: Project, runtime: dict[str, Any], out_log: Path) -> s
 
 
 def run_pytest(project: Project, tier: dict[str, Any], paths: list[str] | None, trigger: str, art: Path,
-               legion: LegionClient, target: str, changed_paths: list[str] | None = None) -> Execution:
+               legion: LegionClient, target: str, changed_paths: list[str] | None = None,
+               snap: snapmod.Snapshot | None = None) -> Execution:
     runtime = project.profile["runtime"]
     timeout_s = int(tier["timeout_s"])
     quarantined: list[str] = []
@@ -572,9 +574,10 @@ def run_pytest(project: Project, tier: dict[str, Any], paths: list[str] | None, 
             cmd += ["--network", runtime["network"]]
         for k, v in env.items():
             cmd += ["-e", f"{k}={v}"]
+        mount_root = snap.root if snap else project.root  # a snapshot run mounts the committed tree, never the live one
         for mount in runtime.get("mounts", []):
-            cmd += ["-v", f"{(project.root / mount['host']).resolve().as_posix()}:{mount['container']}:{mount.get('mode', 'ro')}"]
-        for masked in tmpfs_masks(project.root, runtime):
+            cmd += ["-v", f"{(mount_root / mount['host']).resolve().as_posix()}:{mount['container']}:{mount.get('mode', 'ro')}"]
+        for masked in tmpfs_masks(mount_root, runtime):
             cmd += ["--tmpfs", masked]  # an empty scratch dir over a path of a mounted tree (live data a test must never see)
         cmd += ["-v", f"{art.as_posix()}:/out", runtime["image"], "-c"]
         setup = runtime.get("setup", "true")
@@ -706,7 +709,8 @@ def split_frontend_paths(paths: list[str], repo_subdir: str) -> tuple[list[str],
     return fe, rest
 
 
-def _vitest_host_call(project: Project, tier: dict[str, Any], argv: list[str], art: Path, tag: str) -> Execution:
+def _vitest_host_call(project: Project, tier: dict[str, Any], argv: list[str], art: Path, tag: str,
+                      snap: snapmod.Snapshot | None = None) -> Execution:
     """`npx vitest ...` on the host, in `vitest.repo_subdir` (a project whose node_modules live on the host and
     which runs no frontend container). Same report parsing as the container form; node ids are repo-relative."""
     import shutil
@@ -722,7 +726,10 @@ def _vitest_host_call(project: Project, tier: dict[str, Any], argv: list[str], a
     cmd = [npx, "vitest", *argv, "--reporter=json", f"--outputFile={report_host.as_posix()}", *list(tier.get("args", []))]
     out_log = art / "output.log"
     started = time.time()
-    rc, _ = _run(cmd, timeout_s, out_log, cwd=cwd)
+    # Snapshot run: the committed tree lives under <repo>/<location>/.tp-snapshot/<id>/, so Node still resolves the
+    # real node_modules by walking up from there (the node_modules check above is on the real dir).
+    run_cwd = (snap.root / str(vt.get("repo_subdir", ""))) if snap else cwd
+    rc, _ = _run(cmd, timeout_s, out_log, cwd=run_cwd)
     tail = _summary(_tail(out_log))
     if rc == 124 and time.time() - started >= timeout_s - 5:
         return Execution("timeout", error_summary=f"exceeded {timeout_s}s; {tail}"[:500], rc=rc)
@@ -731,17 +738,19 @@ def _vitest_host_call(project: Project, tier: dict[str, Any], argv: list[str], a
             return Execution("passed", [], None, 0, rc)
         return Execution("error", error_summary=f"vitest exit {rc}, no report: {tail}"[:500], rc=rc)
     report = json.loads(report_host.read_text(encoding="utf-8"))
-    cases = parsers.parse_vitest_json(report, project.root, vt.get("container_root", project.root.as_posix()))
+    cases = parsers.parse_vitest_json(report, project.root,
+                                      vt.get("container_root", (snap.root if snap else project.root).as_posix()))
     totals = parsers.totals_of(cases)
     status = "failed" if (totals["failed"] or totals["errors"] or rc == 1) else "passed"
     return Execution(status, cases, None, 0, rc)
 
 
-def _vitest_call(project: Project, tier: dict[str, Any], argv: list[str], art: Path, tag: str) -> Execution:
+def _vitest_call(project: Project, tier: dict[str, Any], argv: list[str], art: Path, tag: str,
+                 snap: snapmod.Snapshot | None = None) -> Execution:
     """One `npx vitest ...` invocation in the vitest container; `argv` is everything after `npx vitest`."""
     vt = project.profile.get("vitest", {})
     if vt.get("kind") == "host":
-        return _vitest_host_call(project, tier, argv, art, tag)
+        return _vitest_host_call(project, tier, argv, art, tag, snap)
     runtime = project.profile["runtime"]
     container = vt.get("container", runtime["container"])
     timeout_s = int(tier["timeout_s"])
@@ -774,10 +783,10 @@ def _vitest_call(project: Project, tier: dict[str, Any], argv: list[str], art: P
 
 
 def run_vitest(project: Project, tier: dict[str, Any], paths: list[str] | None, trigger: str, art: Path,
-               legion: LegionClient, target: str) -> Execution:
+               legion: LegionClient, target: str, snap: snapmod.Snapshot | None = None) -> Execution:
     vt = project.profile.get("vitest", {})
     vt_paths = vitest_container_paths(paths, str(vt.get("repo_subdir", "")))
-    return _vitest_call(project, tier, ["run", *(vt_paths or list(tier.get("paths", [])))], art, "")
+    return _vitest_call(project, tier, ["run", *(vt_paths or list(tier.get("paths", [])))], art, "", snap)
 
 
 def merge_executions(parts: list[Execution]) -> Execution:
@@ -882,7 +891,7 @@ def run_playwright(project: Project, tier: dict[str, Any], art: Path) -> Executi
     return Execution("failed" if totals["failed"] else "passed", cases, None, 0, 0)
 
 
-def run_commands(project: Project, tier: dict[str, Any], art: Path) -> Execution:
+def run_commands(project: Project, tier: dict[str, Any], art: Path, snap: snapmod.Snapshot | None = None) -> Execution:
     """Static gates: each configured command is one case; exit 0 passes, 1 fails, 2 or a timeout errors."""
     import hashlib
     import shutil
@@ -892,9 +901,12 @@ def run_commands(project: Project, tier: dict[str, Any], art: Path) -> Execution
     deadline = time.time() + int(tier["timeout_s"])
     cases: list[dict[str, Any]] = []
     log = art / "output.log"
+    live = project.root.as_posix()
     for spec in specs:
         name = spec["name"]
-        argv = [sys.executable if a == "python" and i == 0 else a for i, a in enumerate(spec["run"])]
+        # `{repo}` is the LIVE repo root, for the untracked runtime files a snapshot does not carry (the .venv python).
+        argv = [sys.executable if a == "python" and i == 0 else a.replace("{repo}", live)
+                for i, a in enumerate(spec["run"])]
         if argv[0] != sys.executable and not os.path.isabs(argv[0]):
             argv[0] = shutil.which(argv[0]) or argv[0]  # Windows: `npm` is npm.cmd, which CreateProcess will not find bare
         left = deadline - time.time()
@@ -903,8 +915,11 @@ def run_commands(project: Project, tier: dict[str, Any], art: Path) -> Execution
         if left <= 0:
             rc, text = 124, "tier deadline reached before this gate ran"
         else:
-            rc, text = _run(argv, min(float(spec.get("timeout_s", 900)), left), cwd=project.root,
-                           env={k: str(v) for k, v in (spec.get("env") or {}).items()})
+            env = {k: str(v).replace("{repo}", live) for k, v in (spec.get("env") or {}).items()}
+            if snap:
+                env.update({"TP_LIVE_ROOT": live, "TP_SNAPSHOT_ROOT": snap.root.as_posix()})
+            rc, text = _run(argv, min(float(spec.get("timeout_s", 900)), left), cwd=snap.root if snap else project.root,
+                            env=env)
         with open(log, "a", encoding="utf-8") as fh:
             fh.write(f"== {name} rc={rc}\n{text[-6000:]}\n")
         status = "passed" if rc == 0 else ("failed" if rc == 1 else "error")
@@ -966,19 +981,45 @@ def zero_test_refusal(framework: str | None, tier: dict[str, Any], changed_paths
 
 def execute_framework(project: Project, tier: dict[str, Any], paths: list[str] | None, trigger: str, art: Path,
                       legion: LegionClient, target: str, changed_paths: list[str] | None = None) -> Execution:
+    """Run one tier. A whole tier on a host-read runtime with `runtime.snapshot` runs against a per-run extract of the
+    committed tree (see snapshot.py); path and `--paths` targets stay on the live tree."""
     framework = tier.get("framework", project.profile.get("framework"))
+    runtime = project.profile.get("runtime", {})
+    vt_kind = project.profile.get("vitest", {}).get("kind")
+    if not snapmod.wanted(runtime, tier, framework, vt_kind, paths, changed_paths):
+        return _execute_framework(project, tier, paths, trigger, art, legion, target, changed_paths, None)
+    try:
+        snap = snapmod.create(project.root, runtime["snapshot"], art)
+    except snapmod.SnapshotError as exc:
+        return Execution("error", error_summary=f"could not build the committed-tree snapshot: {exc}"[:500])
+    (art / "snapshot.log").write_text(snap.describe() + "\n", encoding="utf-8")
+    try:
+        return _execute_framework(project, tier, paths, trigger, art, legion, target, changed_paths, snap)
+    finally:
+        try:
+            snap.cleanup()
+        except (OSError, snapmod.SnapshotError) as exc:
+            with open(art / "snapshot.log", "a", encoding="utf-8") as fh:
+                fh.write(f"snapshot cleanup failed: {exc}\n")
+
+
+def _execute_framework(project: Project, tier: dict[str, Any], paths: list[str] | None, trigger: str, art: Path,
+                       legion: LegionClient, target: str, changed_paths: list[str] | None,
+                       snap: snapmod.Snapshot | None) -> Execution:
+    framework = tier.get("framework", project.profile.get("framework"))
+    kw: dict[str, Any] = {"snap": snap} if snap else {}
     if framework == "pytest" and changed_paths and tier.get("mode") == "changed":
         return run_changed_paths(project, tier, trigger, art, legion, target, changed_paths)
     if framework == "pytest":
-        return run_pytest(project, tier, paths, trigger, art, legion, target, changed_paths)
+        return run_pytest(project, tier, paths, trigger, art, legion, target, changed_paths, **kw)
     if framework == "vitest":
-        return run_vitest(project, tier, paths, trigger, art, legion, target)
+        return run_vitest(project, tier, paths, trigger, art, legion, target, **kw)
     if framework == "schemathesis":
         return run_schemathesis(project, tier, trigger, art)
     if framework == "playwright":
         return run_playwright(project, tier, art)
     if framework == "commands":
-        return run_commands(project, tier, art)
+        return run_commands(project, tier, art, **kw)
     raise RunError(f"unsupported framework {framework}")
 
 
