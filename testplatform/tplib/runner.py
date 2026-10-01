@@ -357,12 +357,12 @@ def expand_env(env: dict[str, str], root: Path) -> dict[str, str]:
 
 
 class RssSampler:
-    """Records the largest xdist worker RSS seen while a heavy run executes, so the memory gate rests on a
-    measurement and not on an estimate."""
+    """Records the peak combined xdist worker RSS seen while a heavy run executes (the sum at one instant, since
+    workers peak at different times), so the memory gate rests on a measurement and not on an estimate."""
 
     def __init__(self, container: str, project: str, interval_s: float = 20.0):
         self.container, self.project, self.interval_s = container, project, interval_s
-        self.peak_kb = 0
+        self.peak_total_kb = 0
         self.workers = 0
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._loop, daemon=True, name="rss-sampler")
@@ -373,9 +373,9 @@ class RssSampler:
         if rc != 0:
             return
         rows = [int(line.split()[0]) for line in text.splitlines() if line.strip() and line.split()[0].isdigit()]
-        if rows:
-            self.peak_kb = max(self.peak_kb, rows[0])
-            self.workers = max(self.workers, len(rows))
+        if rows and sum(rows) > self.peak_total_kb:
+            self.peak_total_kb = sum(rows)
+            self.workers = len(rows)
 
     def _loop(self) -> None:
         while not self._stop.wait(self.interval_s):
@@ -387,12 +387,13 @@ class RssSampler:
     def stop(self) -> None:
         self._stop.set()
         self._thread.join(timeout=35)
-        if self.peak_kb:
+        if self.peak_total_kb:
             target = measured_rss_file(self.project)
             try:
                 target.parent.mkdir(parents=True, exist_ok=True)
-                target.write_text(json.dumps({"worker_rss_mb": round(self.peak_kb / 1024, 1), "workers": self.workers,
-                                              "at": _iso()}), encoding="utf-8")
+                target.write_text(json.dumps({"worker_rss_mb": round(self.peak_total_kb / 1024 / self.workers, 1),
+                                              "workers_total_mb": round(self.peak_total_kb / 1024, 1),
+                                              "workers": self.workers, "at": _iso()}), encoding="utf-8")
             except OSError:
                 pass
 
@@ -499,6 +500,7 @@ def run_pytest(project: Project, tier: dict[str, Any], paths: list[str] | None, 
                 if snapshot_dir is None:
                     return Execution("error", error_summary="could not build the clean-tree snapshot for the heavy run, "
                                                             f"see {(art / 'snapshot.log').as_posix()}")
+                env["PYTHONPATH"] = snapshot_dir
                 if runtime["snapshot"].get("pycache"):
                     env["PYTHONPYCACHEPREFIX"] = runtime["snapshot"]["pycache"]
         tmp_dir = runtime.get("tmp_dir", "/tmp/testplatform")
