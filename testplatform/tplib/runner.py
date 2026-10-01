@@ -870,7 +870,8 @@ def run_commands(project: Project, tier: dict[str, Any], art: Path) -> Execution
         if left <= 0:
             rc, text = 124, "tier deadline reached before this gate ran"
         else:
-            rc, text = _run(argv, min(float(spec.get("timeout_s", 900)), left), cwd=project.root)
+            rc, text = _run(argv, min(float(spec.get("timeout_s", 900)), left), cwd=project.root,
+                           env={k: str(v) for k, v in (spec.get("env") or {}).items()})
         with open(log, "a", encoding="utf-8") as fh:
             fh.write(f"== {name} rc={rc}\n{text[-6000:]}\n")
         status = "passed" if rc == 0 else ("failed" if rc == 1 else "error")

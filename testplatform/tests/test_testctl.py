@@ -950,3 +950,16 @@ def test_host_vitest_runs_npx_in_the_repo_subdir_and_ids_are_repo_relative(tmp_p
     (web / "node_modules").rmdir()
     missing = runner._vitest_call(project, {"timeout_s": 60}, ["run"], art, "")
     assert missing.status == "error" and "node_modules" in missing.error_summary
+
+
+def test_commands_pass_a_gates_own_env_to_its_process(tmp_path):
+    from types import SimpleNamespace
+
+    from tplib import runner
+    art = tmp_path / "art"
+    art.mkdir()
+    code = "import os, sys; sys.exit(0 if os.environ.get('GATE_FLAG') == 'yes' else 1)"
+    tier = {"timeout_s": 60, "commands": [{"name": "with", "run": ["python", "-c", code], "env": {"GATE_FLAG": "yes"}},
+                                          {"name": "without", "run": ["python", "-c", code]}]}
+    exe = runner.run_commands(SimpleNamespace(root=tmp_path), tier, art)
+    assert {c["node_id"]: c["status"] for c in exe.cases} == {"gates::with": "passed", "gates::without": "failed"}
