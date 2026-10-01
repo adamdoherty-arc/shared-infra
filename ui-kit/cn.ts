@@ -5,7 +5,8 @@
  * unconfigured, `text-13` (a font-size step) and `text-on-accent` (a color) fall into the SAME unknown
  * text-* group and the later one silently drops the other: customer-ops Fix-35 found every small accent
  * button rendering with no text color at all, ink on brass at 1.65:1 in Law dark. So the vocabulary's
- * color names and the 10/11/13 steps are registered here, as each app also does in its own cn.
+ * color names and the 10/11/13 steps are registered here. An app can use this as its own cn (the console
+ * does, lib/utils.ts), so there is one merger and one cache; an app with tokens of its own extends it.
  */
 import { clsx, type ClassValue } from 'clsx';
 import { extendTailwindMerge } from 'tailwind-merge';
@@ -37,6 +38,7 @@ const twMerge = extendTailwindMerge({
         'accent-soft',
         'accent-solid',
         'on-accent',
+        'on-danger',
         'ring',
         'status-ok',
         'status-ok-soft',
@@ -47,9 +49,11 @@ const twMerge = extendTailwindMerge({
         'status-danger',
         'status-danger-soft',
         'status-danger-fg',
+        'status-danger-solid',
         'status-info',
         'status-info-soft',
         'status-info-fg',
+        'status-neutral-soft',
       ],
     },
     classGroups: {
