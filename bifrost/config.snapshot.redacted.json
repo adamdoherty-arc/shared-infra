@@ -65,6 +65,7 @@
           "name": "nvidia-nim-secondary",
           "value": "env.NV_API_KEY_2",
           "models": [
+            "google/gemma-4-31b-it",
             "meta/llama-3.2-11b-vision-instruct",
             "nemoguard-safety",
             "nemotron-lightning",
@@ -93,6 +94,7 @@
           "name": "nvidia-nim-primary",
           "value": "env.NV_API_KEY",
           "models": [
+            "google/gemma-4-31b-it",
             "llama-90b-vision",
             "meta/llama-3.2-11b-vision-instruct",
             "nemoguard-safety",
@@ -127,6 +129,7 @@
           "name": "nvidia-nim-tertiary",
           "value": "env.NV_API_KEY_3",
           "models": [
+            "google/gemma-4-31b-it",
             "meta/llama-3.2-11b-vision-instruct",
             "nemoguard-safety",
             "nemotron-lightning",
@@ -396,7 +399,7 @@
         {
           "provider": "nvidia-nim",
           "allow_all_keys": true,
-          "allowed_models": 19
+          "allowed_models": 20
         },
         {
           "provider": "openrouter",
@@ -443,7 +446,7 @@
         {
           "provider": "nvidia-nim",
           "allow_all_keys": true,
-          "allowed_models": 19
+          "allowed_models": 20
         },
         {
           "provider": "openrouter",
@@ -490,7 +493,7 @@
         {
           "provider": "nvidia-nim",
           "allow_all_keys": true,
-          "allowed_models": 19
+          "allowed_models": 20
         },
         {
           "provider": "sealion",
@@ -532,7 +535,7 @@
         {
           "provider": "nvidia-nim",
           "allow_all_keys": true,
-          "allowed_models": 19
+          "allowed_models": 20
         },
         {
           "provider": "openrouter",
@@ -579,7 +582,7 @@
         {
           "provider": "nvidia-nim",
           "allow_all_keys": true,
-          "allowed_models": 19
+          "allowed_models": 20
         },
         {
           "provider": "sealion",
@@ -621,7 +624,7 @@
         {
           "provider": "nvidia-nim",
           "allow_all_keys": true,
-          "allowed_models": 19
+          "allowed_models": 20
         },
         {
           "provider": "sealion",
@@ -663,7 +666,7 @@
         {
           "provider": "nvidia-nim",
           "allow_all_keys": true,
-          "allowed_models": 19
+          "allowed_models": 20
         },
         {
           "provider": "sealion",
@@ -705,7 +708,7 @@
         {
           "provider": "nvidia-nim",
           "allow_all_keys": true,
-          "allowed_models": 19
+          "allowed_models": 20
         },
         {
           "provider": "sealion",
