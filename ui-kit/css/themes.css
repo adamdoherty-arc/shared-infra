@@ -413,7 +413,7 @@
 
     --status-ok: #059669;
     --status-ok-soft: rgba(5, 150, 105, 0.10);
-    --status-ok-fg: #047857;                    /* AA step: 4.76:1 on soft */
+    --status-ok-fg: #046c4e;                    /* AA step: 4.76:1 on soft (source #047857); #047857 was 4.45:1 on --surface-inset, now 5.23:1 */
     --status-warn: #d97706;
     --status-warn-soft: rgba(217, 119, 6, 0.10);
     --status-warn-fg: #92400e;                  /* AA step: 6.07:1 */
@@ -515,7 +515,7 @@
 }
 :root[data-theme="mint"][data-mode="light"] {
     --accent: #0891b2;
-    --accent-fg: #0e7490;                       /* AA step: ADA #0891b2 is 3.27:1 */
+    --accent-fg: #0d6e89;                       /* AA step: ADA #0891b2 is 3.27:1; #0e7490 was 4.35:1 on --surface-inset, now 4.7:1 */
     --accent-soft: rgba(8, 145, 178, 0.10);
     --accent-solid: #0e7490;
     --ring: rgba(8, 145, 178, 0.32);
@@ -693,7 +693,7 @@
     --border-strong: rgba(6, 40, 59, 0.2);
 
     --accent: #0891b2;
-    --accent-fg: #0e7490;                       /* AA step: #0891b2 is 3.68:1 on white */
+    --accent-fg: #0d6e89;                       /* AA step: #0891b2 is 3.68:1 on white; #0e7490 was 4.34:1 on --surface-inset, now 4.7:1 */
     --accent-soft: rgba(8, 145, 178, 0.10);
     --accent-solid: #0e7490;
     --accent-solid-2: #155e75;
