@@ -152,5 +152,8 @@ def preflight_changed(runtime: dict[str, Any], tier: dict[str, Any], has_paths: 
     data_file = tier.get("testmon_datafile", "/tmp/testplatform/.testmondata")
     if testmon_data_exists(runtime, data_file):
         return None
+    if runtime.get("kind") != "exec":
+        return ("plain `changed` needs testmon data, which only an exec runtime records (this profile runs a throwaway "
+                "container): pass --paths <files you edited>")
     return ("no testmon data: pass --paths <files you edited> or build the data once with "
             "`testctl run <project>:testmon` (the nightly full tier keeps it fresh)")

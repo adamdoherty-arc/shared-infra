@@ -52,6 +52,13 @@ command is one case, exit 0 pass / 1 fail / 2 error; used for the non-test stati
 `fuzz` (schemathesis, GET only, fixed seed, `not_a_server_error`, against `http://ada-backend:8003`),
 `e2e` (playwright smoke over a page list). Legion runs in a throwaway container from its own image.
 
+`customer-ops` (`C:/code/customer-ops/.testplatform.yml`, Legion project 29) shows the other runtime shapes: pytest in a throwaway
+`run` container from the app's own image with the repo mounted read-only and `runtime.tmpfs` masking live data dirs
+(a mask is skipped when the path does not exist on the host); `vitest: {kind: host, repo_subdir: ...}` runs `npx vitest` on the host
+when there is no frontend container (node ids stay repo-relative); `gates` and `e2e` are `commands` tiers whose first token is
+resolved through PATH (so `npm` finds `npm.cmd` on Windows). Plain `changed` needs testmon, which only `exec` runtimes record;
+`customer-ops:changed --paths <files>` uses the import-graph scan.
+
 ## Service
 
 `testctl serve` schedules runs per project in two lanes. The **heavy** lane (any whole tier: `fast`, `full`,

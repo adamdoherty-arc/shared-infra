@@ -540,7 +540,9 @@ def run_pytest(project: Project, tier: dict[str, Any], paths: list[str] | None, 
         for k, v in env.items():
             cmd += ["-e", f"{k}={v}"]
         for mount in runtime.get("mounts", []):
-            cmd += ["-v", f"{(project.root / mount['host']).as_posix()}:{mount['container']}:{mount.get('mode', 'ro')}"]
+            cmd += ["-v", f"{(project.root / mount['host']).resolve().as_posix()}:{mount['container']}:{mount.get('mode', 'ro')}"]
+        for masked in tmpfs_masks(project.root, runtime):
+            cmd += ["--tmpfs", masked]  # an empty scratch dir over a path of a mounted tree (live data a test must never see)
         cmd += ["-v", f"{art.as_posix()}:/out", runtime["image"], "-c"]
         setup = runtime.get("setup", "true")
         cmd += [f'{setup} >/dev/null 2>&1; exec "$@"', "sh"] + timeout_prefix + pytest_args
@@ -552,6 +554,22 @@ def run_pytest(project: Project, tier: dict[str, Any], paths: list[str] | None, 
     elapsed = time.time() - started
     return interpret_pytest(project, tier, paths, trigger, rc, report_host if cp_rc == 0 else None, out_log,
                             elapsed, timeout_s, len(quarantined[:MAX_DESELECT]))
+
+
+def tmpfs_masks(root: Path, runtime: dict[str, Any]) -> list[str]:
+    """`runtime.tmpfs` entries that exist on the host: Docker cannot mount over a path a read-only bind mount
+    does not contain, and a data dir that is absent on this machine holds no live data to hide."""
+    mounts = [(m["container"].rstrip("/"), (root / m["host"]).resolve()) for m in runtime.get("mounts", [])]
+    out: list[str] = []
+    for masked in runtime.get("tmpfs", []):
+        covering = [(c, h) for c, h in mounts if masked == c or masked.startswith(c + "/")]
+        if not covering:
+            out.append(masked)
+            continue
+        c, h = max(covering, key=lambda m: len(m[0]))
+        if (h / masked[len(c):].lstrip("/")).exists():
+            out.append(masked)
+    return out
 
 
 def check_floors(path: Path, cases: list[dict[str, Any]]) -> str | None:
@@ -655,10 +673,43 @@ def split_frontend_paths(paths: list[str], repo_subdir: str) -> tuple[list[str],
     return fe, rest
 
 
+def _vitest_host_call(project: Project, tier: dict[str, Any], argv: list[str], art: Path, tag: str) -> Execution:
+    """`npx vitest ...` on the host, in `vitest.repo_subdir` (a project whose node_modules live on the host and
+    which runs no frontend container). Same report parsing as the container form; node ids are repo-relative."""
+    import shutil
+    vt = project.profile.get("vitest", {})
+    timeout_s = int(tier["timeout_s"])
+    npx = shutil.which("npx")
+    if not npx:
+        return Execution("error", error_summary="npx is not on PATH for the host vitest run")
+    cwd = project.root / str(vt.get("repo_subdir", ""))
+    if not (cwd / "node_modules").is_dir():
+        return Execution("error", error_summary=f"{cwd.as_posix()}/node_modules is missing: run npm ci there first")
+    report_host = art / f"report{tag}.json"
+    cmd = [npx, "vitest", *argv, "--reporter=json", f"--outputFile={report_host.as_posix()}", *list(tier.get("args", []))]
+    out_log = art / "output.log"
+    started = time.time()
+    rc, _ = _run(cmd, timeout_s, out_log, cwd=cwd)
+    tail = _summary(_tail(out_log))
+    if rc == 124 and time.time() - started >= timeout_s - 5:
+        return Execution("timeout", error_summary=f"exceeded {timeout_s}s; {tail}"[:500], rc=rc)
+    if not report_host.exists():
+        if rc == 0 and "related" in argv:
+            return Execution("passed", [], None, 0, rc)
+        return Execution("error", error_summary=f"vitest exit {rc}, no report: {tail}"[:500], rc=rc)
+    report = json.loads(report_host.read_text(encoding="utf-8"))
+    cases = parsers.parse_vitest_json(report, project.root, vt.get("container_root", project.root.as_posix()))
+    totals = parsers.totals_of(cases)
+    status = "failed" if (totals["failed"] or totals["errors"] or rc == 1) else "passed"
+    return Execution(status, cases, None, 0, rc)
+
+
 def _vitest_call(project: Project, tier: dict[str, Any], argv: list[str], art: Path, tag: str) -> Execution:
     """One `npx vitest ...` invocation in the vitest container; `argv` is everything after `npx vitest`."""
-    runtime = project.profile["runtime"]
     vt = project.profile.get("vitest", {})
+    if vt.get("kind") == "host":
+        return _vitest_host_call(project, tier, argv, art, tag)
+    runtime = project.profile["runtime"]
     container = vt.get("container", runtime["container"])
     timeout_s = int(tier["timeout_s"])
     rt = {**runtime, "container": container, "ensure_up": vt.get("ensure_up")}
@@ -801,6 +852,7 @@ def run_playwright(project: Project, tier: dict[str, Any], art: Path) -> Executi
 def run_commands(project: Project, tier: dict[str, Any], art: Path) -> Execution:
     """Static gates: each configured command is one case; exit 0 passes, 1 fails, 2 or a timeout errors."""
     import hashlib
+    import shutil
     specs = tier.get("commands") or []
     if not specs:
         return Execution("error", error_summary="commands tier has no commands")
@@ -810,6 +862,8 @@ def run_commands(project: Project, tier: dict[str, Any], art: Path) -> Execution
     for spec in specs:
         name = spec["name"]
         argv = [sys.executable if a == "python" and i == 0 else a for i, a in enumerate(spec["run"])]
+        if argv[0] != sys.executable and not os.path.isabs(argv[0]):
+            argv[0] = shutil.which(argv[0]) or argv[0]  # Windows: `npm` is npm.cmd, which CreateProcess will not find bare
         left = deadline - time.time()
         node_id = f"{tier.get('case_prefix', 'gates')}::{name}"
         started = time.time()

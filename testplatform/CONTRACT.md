@@ -6,7 +6,7 @@ Two halves built in parallel:
 
 Neither side may change this contract without updating this file in the same commit.
 
-Legion projects: Legion=1, ADA=5, Zero=26, A Finance=27, Shared Infra=28.
+Legion projects: Legion=1, ADA=5, Zero=26, A Finance=27, Shared Infra=28, Customer Ops=29.
 
 ## Why it exists
 Claude never reads raw test output. It calls `testctl` once and gets a verdict of at most 15 lines. The full output lives on disk, and the history lives in Legion.

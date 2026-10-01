@@ -10,3 +10,6 @@ projects:
   shared-infra:
     root: C:/code/shared-infra
     legion_project_id: 28
+  customer-ops:
+    root: C:/code/customer-ops
+    legion_project_id: 29

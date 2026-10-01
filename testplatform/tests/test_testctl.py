@@ -880,3 +880,73 @@ def test_vitest_container_paths_strip_the_repo_subdir():
     assert runner.vitest_container_paths(["src/Z.test.ts"], "frontend") == ["src/Z.test.ts"]
     assert runner.vitest_container_paths(["frontend/src/X.test.tsx"], "") == ["frontend/src/X.test.tsx"]
     assert runner.vitest_container_paths(None, "frontend") == []
+
+
+def test_tmpfs_masks_only_paths_that_exist_under_a_readonly_mount(tmp_path):
+    """Docker cannot mount over a path a read-only bind mount lacks; a missing live-data dir needs no mask."""
+    from tplib import runner
+    (tmp_path / "accounts" / "personal" / "data").mkdir(parents=True)
+    runtime = {"mounts": [{"host": ".", "container": "/opt/app", "mode": "ro"}],
+               "tmpfs": ["/opt/app/accounts/personal/data", "/opt/app/accounts/work/data", "/scratch"]}
+    assert runner.tmpfs_masks(tmp_path, runtime) == ["/opt/app/accounts/personal/data", "/scratch"]
+    assert runner.tmpfs_masks(tmp_path, {"mounts": []}) == []
+
+
+def test_commands_resolve_windows_cmd_shims_through_path(tmp_path, monkeypatch):
+    """`npm` is npm.cmd on Windows and CreateProcess will not find it bare, so a gate named `npm` must resolve."""
+    from types import SimpleNamespace
+
+    from tplib import runner
+    seen: list[str] = []
+
+    def fake_run(argv, timeout, out_file=None, cwd=None, env=None):
+        seen.append(argv[0])
+        return 0, "ok"
+
+    monkeypatch.setattr(runner, "_run", fake_run)
+    monkeypatch.setattr("shutil.which", lambda name: f"/resolved/{name}.cmd" if name == "npm" else None)
+    art = tmp_path / "art"
+    art.mkdir()
+    tier = {"timeout_s": 60, "commands": [{"name": "lint", "run": ["npm", "run", "lint"]},
+                                          {"name": "absent", "run": ["no-such-tool", "x"]}]}
+    exe = runner.run_commands(SimpleNamespace(root=tmp_path), tier, art)
+    assert seen == ["/resolved/npm.cmd", "no-such-tool"] and exe.status == "passed"
+
+
+def test_plain_changed_hint_names_paths_when_the_runtime_cannot_record_testmon():
+    from tplib import selection
+    run_hint = selection.preflight_changed({"kind": "run", "container": "none"}, {"mode": "changed"}, False)
+    assert "--paths" in run_hint and "testctl run <project>:testmon" not in run_hint
+
+
+def test_host_vitest_runs_npx_in_the_repo_subdir_and_ids_are_repo_relative(tmp_path, monkeypatch):
+    import json as _json
+    from types import SimpleNamespace
+
+    from tplib import runner
+    web = tmp_path / "console" / "web"
+    (web / "node_modules").mkdir(parents=True)
+    (web / "src").mkdir()
+    (web / "src" / "a.test.ts").write_text("x", encoding="utf-8")
+    art = tmp_path / "art"
+    art.mkdir()
+    calls: dict = {}
+
+    def fake_run(argv, timeout, out_file=None, cwd=None, env=None):
+        calls["argv"], calls["cwd"] = argv, cwd
+        out = next(a for a in argv if a.startswith("--outputFile=")).split("=", 1)[1]
+        Path(out).write_text(_json.dumps({"testResults": [{
+            "name": (web / "src" / "a.test.ts").as_posix(), "status": "passed",
+            "assertionResults": [{"status": "passed", "fullName": "a works", "duration": 3}]}]}), encoding="utf-8")
+        return 0, ""
+
+    monkeypatch.setattr(runner, "_run", fake_run)
+    monkeypatch.setattr("shutil.which", lambda name: "/bin/npx" if name == "npx" else None)
+    project = SimpleNamespace(root=tmp_path, profile={"vitest": {"kind": "host", "repo_subdir": "console/web"}})
+    exe = runner._vitest_call(project, {"timeout_s": 60}, ["run", "src/a.test.ts"], art, "")
+    assert exe.status == "passed" and Path(calls["cwd"]) == web
+    assert calls["argv"][:3] == ["/bin/npx", "vitest", "run"]
+    assert [c["node_id"] for c in exe.cases] == ["console/web/src/a.test.ts::a works"]
+    (web / "node_modules").rmdir()
+    missing = runner._vitest_call(project, {"timeout_s": 60}, ["run"], art, "")
+    assert missing.status == "error" and "node_modules" in missing.error_summary
