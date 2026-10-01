@@ -157,6 +157,8 @@ def plan_port_heals(inspects: dict[str, dict], probe, last: dict, now_ts: float,
             continue
         if uptime_s(ins, now) <= PORT_UPTIME_FLOOR_S:
             continue
+        if (st.get("Health") or {}).get("Status") == "starting":
+            continue
         if now_ts - last.get(f"port:{name}", 0) < COOLDOWN_S:
             continue
         dead = [p for p in published_tcp_ports(ins) if not probe(p)]

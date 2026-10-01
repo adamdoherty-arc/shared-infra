@@ -48,6 +48,15 @@ def test_cooldown_and_unpublished_and_filters():
     assert r.published_tcp_ports(ins(ports={"1/tcp": [{"HostIp": "192.168.1.5", "HostPort": "1"}]})) == []
 
 
+def test_container_inside_health_start_period_is_not_healed():
+    starting = ins(up_s=600)
+    starting["State"]["Health"]["Status"] = "starting"
+    assert plan({"qwen38-chat": starting}, lambda p: False) == []
+    unhealthy = ins(up_s=600)
+    unhealthy["State"]["Health"]["Status"] = "unhealthy"
+    assert plan({"qwen38-chat": unhealthy}, lambda p: False) == [("qwen38-chat", 8006)]
+
+
 def test_heal_commands():
     assert r.port_heal_cmd("shared-bifrost", 4445) is None
     c = r.port_heal_cmd("ada-frontend", 5420)
