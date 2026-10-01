@@ -1,0 +1,1233 @@
+/* ============================================================================
+ * ui-kit themes: every theme in Light, Mid and Dark, on the shared raw vocabulary.
+ *
+ * Two attributes on <html>, set before first paint by the kit's prepaint script and kept in sync by
+ * ThemeProvider:
+ *   data-theme = cops | law | aurora | sunset | mint | tokyo | wave
+ *   data-mode  = light | mid | dark   (the RESOLVED mode; "system" never lands here)
+ *
+ * Every block defines the same raw custom properties (README.md "Vocabulary"): surfaces, sidebar,
+ * text, borders, accent, status, shadows, ambient wash, selection, scrollbar, skeleton, fonts, radius,
+ * and the police primitives. An app maps them to its own utilities (Tailwind `@theme inline`), and
+ * keeps its app-only extras (ADA's --accent-blue/--pnl-*) in its own index.css, per theme.
+ *
+ * Law ("Parliamentary Chamber") is copied from Legion frontend/src/styles/globals.css;
+ * aurora/sunset/mint/tokyo from ADA frontend/src/index.css; COPS and Wave are the console's
+ * (customer-ops Feature-38, Feature-39/78/79). Where a source value fails WCAG AA as TEXT on its own
+ * surfaces, the text-role token (-fg) is a darker/lighter step of the same hue and the source value
+ * stays for fills, borders and rings. Each such step is marked "AA step" with the measured ratio.
+ *
+ * Wave also changes shape and motion. Its decoration hangs on data attributes an app puts on its
+ * chrome (data-surface="sidebar", data-slot="topbar|page-title|card|stat-tile|empty-state|button|
+ * nav-pill|switch|health-strip", #main, #root); an app without one of them simply goes without that
+ * piece. The global prefers-reduced-motion rule in motion.css stops all of it.
+ * ============================================================================ */
+
+/* Police styling defaults (customer-ops Feature-38): every theme has these so the siren bell, the
+   caution tape and the overdue handcuffs badge render everywhere; COPS overrides them below for the
+   strongest, most saturated look. */
+:root {
+    --siren-red: #ef4444;
+    --siren-blue: #3b82f6;
+    --tape: #facc15;
+    --tape-ink: #111318;
+}
+
+/* ============================================================================
+ * LAW — Parliamentary Chamber, Daytime (ivory + ink + brass). DEFAULT.
+ * Also the :root fallback, so a page with no attributes is still Law light.
+ * ============================================================================ */
+:root,
+:root[data-theme="law"][data-mode="light"] {
+    color-scheme: light;
+
+    --font-display: "Cormorant Garamond", "Adobe Caslon Pro", Georgia, serif;
+    --display-weight: 600;
+    --display-tracking: -0.005em;
+    --radius: 0.375rem;                         /* sharp, formal */
+
+    --surface-0: hsl(40 52% 96%);               /* ivory paper */
+    --surface-1: hsl(40 45% 91%);               /* vellum (card) */
+    --surface-2: hsl(42 38% 89%);               /* secondary */
+    --surface-3: hsl(40 46% 93%);               /* popover */
+    --surface-inset: hsl(42 34% 87%);           /* muted */
+
+    --sidebar: hsl(240 28% 14%);                /* chamber walls, navy */
+    --sidebar-fg: hsl(42 45% 83%);
+    --sidebar-muted: hsl(42 45% 83% / 0.62);
+    --sidebar-border: hsl(42 45% 83% / 0.1);
+    --sidebar-hover: hsl(42 45% 83% / 0.07);
+    --sidebar-active: hsl(38 51% 61% / 0.16);
+    --sidebar-active-fg: hsl(38 51% 61%);       /* lifted brass: 7.75:1 on navy */
+
+    --text-primary: hsl(40 13% 9%);             /* ink */
+    --text-secondary: color-mix(in oklab, hsl(40 13% 9%) 62%, hsl(34 11% 35%));
+    --text-muted: hsl(34 11% 35%);              /* 5.69:1 on vellum */
+    --text-disabled: hsl(34 11% 48%);           /* vote-abstain */
+
+    --border-subtle: hsl(40 18% 78%);           /* marble */
+    --border-strong: hsl(35 37% 46% / 0.35);
+
+    --accent: hsl(35 37% 46%);                  /* brass */
+    --accent-fg: hsl(35 40% 31%);               /* AA step: brass is 3.22:1 on vellum */
+    --accent-soft: hsl(35 37% 46% / 0.15);
+    --accent-solid: hsl(35 37% 36%);            /* AA step: ivory on it 5.43:1 (on brass 3.61:1) */
+    --on-accent: hsl(40 52% 97%);
+    --ring: hsl(35 37% 46%);
+
+    --status-ok: hsl(140 30% 32%);              /* forest */
+    --status-ok-soft: hsl(140 30% 32% / 0.12);
+    --status-ok-fg: hsl(140 30% 28%);           /* AA step: 5.32:1 on soft */
+    --status-warn: hsl(32 70% 38%);             /* amber */
+    --status-warn-soft: hsl(32 70% 38% / 0.13);
+    --status-warn-fg: hsl(32 70% 30%);          /* AA step: 4.77:1 on soft (source 3.44:1) */
+    --status-danger: hsl(354 60% 32%);          /* oxblood */
+    --status-danger-soft: hsl(354 60% 32% / 0.1);
+    --status-danger-fg: hsl(354 60% 32%);       /* 6.57:1 on soft */
+    --status-danger-solid: hsl(354 60% 32%);
+    --on-danger: hsl(40 52% 96%);               /* destructive-foreground: 8.87:1 */
+    --status-info: hsl(220 38% 34%);            /* slate-blue */
+    --status-info-soft: hsl(220 38% 34% / 0.1);
+    --status-info-fg: hsl(220 38% 34%);
+    --status-neutral-soft: hsl(42 34% 87%);
+
+    --shadow-1: 0 1px 0 hsl(40 18% 78%), 0 2px 8px -2px rgb(26 24 20 / 0.06);
+    --shadow-2: 0 2px 8px -2px rgb(26 24 20 / 0.10), 0 8px 24px -8px rgb(26 24 20 / 0.08);
+    --shadow-3: 0 4px 12px -2px rgb(26 24 20 / 0.12), 0 16px 32px -12px rgb(26 24 20 / 0.10);
+
+    --ambient-1: hsl(42 55% 48% / 0.05);
+    --ambient-2: hsl(35 37% 46% / 0.04);
+    --ambient-3: hsl(42 55% 48% / 0.03);
+    --selection-bg: hsl(35 37% 46% / 0.25);
+    --scrollbar-thumb: hsl(35 37% 46% / 0.35);
+    --skeleton-base: hsl(42 34% 87%);
+    --skeleton-shine: hsl(40 46% 93%);
+}
+
+/* LAW — Night (midnight chamber + dim vellum + lifted brass) */
+:root[data-theme="law"][data-mode="dark"],
+:root[data-theme="law"][data-mode="mid"] {
+    color-scheme: dark;
+
+    --surface-0: hsl(224 32% 9%);               /* midnight chamber */
+    --surface-1: hsl(225 30% 13%);              /* card */
+    --surface-2: hsl(228 26% 17%);              /* secondary */
+    --surface-3: hsl(225 30% 15%);              /* popover */
+    --surface-inset: hsl(224 32% 7%);
+
+    --sidebar: hsl(222 42% 6%);
+    --sidebar-fg: hsl(40 40% 76%);
+    --sidebar-muted: hsl(40 40% 76% / 0.6);
+    --sidebar-border: hsl(40 40% 76% / 0.08);
+    --sidebar-hover: hsl(40 40% 76% / 0.06);
+    --sidebar-active: hsl(38 51% 61% / 0.14);
+    --sidebar-active-fg: hsl(38 51% 61%);       /* 8.82:1 on the night sidebar */
+
+    --text-primary: hsl(42 45% 84%);            /* dim vellum */
+    --text-secondary: color-mix(in oklab, hsl(42 45% 84%) 62%, hsl(38 14% 62%));
+    --text-muted: hsl(38 14% 62%);              /* 6.70:1 on card */
+    --text-disabled: hsl(38 12% 40%);
+
+    --border-subtle: hsl(230 22% 22%);
+    --border-strong: hsl(38 51% 61% / 0.35);
+
+    --accent: hsl(38 51% 61%);                  /* brass, lifted */
+    --accent-fg: hsl(38 51% 61%);               /* 5.82:1 on its soft */
+    --accent-soft: hsl(38 51% 61% / 0.15);
+    --accent-solid: hsl(38 51% 61%);
+    --on-accent: hsl(224 32% 9%);               /* 8.37:1 on brass */
+    --ring: hsl(38 51% 61%);
+
+    --status-ok: hsl(142 38% 50%);
+    --status-ok-soft: hsl(142 38% 50% / 0.15);
+    --status-ok-fg: hsl(142 38% 54%);           /* AA step: source (50%) was 4.41:1 on its soft badge over a card, axe sweep found (Fix-35) */
+    --status-warn: hsl(32 64% 54%);
+    --status-warn-soft: hsl(32 64% 54% / 0.15);
+    --status-warn-fg: hsl(32 64% 58%);          /* AA step: source (54%) was 4.46:1 on its soft badge over a card, axe sweep found (Fix-35) */
+    --status-danger: hsl(354 58% 46%);
+    --status-danger-soft: hsl(354 58% 46% / 0.15);
+    --status-danger-fg: hsl(354 58% 68%);       /* AA step: source is 2.63:1 on card */
+    --status-danger-solid: hsl(354 58% 46%);
+    --on-danger: hsl(42 45% 90%);               /* destructive-foreground: 4.89:1 */
+    --status-info: hsl(220 42% 58%);
+    --status-info-soft: hsl(220 42% 58% / 0.15);
+    --status-info-fg: hsl(220 42% 72%);         /* AA step: source (68%) was still 4.47:1 nested in a right-rail card, axe sweep found (Fix-35) */
+    --status-neutral-soft: hsl(228 24% 18%);
+
+    --shadow-1: 0 1px 0 hsl(230 22% 22%), 0 2px 8px -2px rgb(0 0 0 / 0.4);
+    --shadow-2: 0 2px 12px -2px rgb(0 0 0 / 0.5), 0 8px 24px -8px rgb(0 0 0 / 0.4);
+    --shadow-3: 0 4px 16px -2px rgb(0 0 0 / 0.6), 0 16px 32px -12px rgb(0 0 0 / 0.5);
+
+    --ambient-1: hsl(42 65% 63% / 0.05);
+    --ambient-2: hsl(38 51% 61% / 0.04);
+    --ambient-3: hsl(42 65% 63% / 0.03);
+    --selection-bg: hsl(38 51% 61% / 0.3);
+    --scrollbar-thumb: hsl(38 51% 61% / 0.3);
+    --skeleton-base: hsl(228 24% 18%);
+    --skeleton-shine: hsl(228 26% 22%);
+}
+
+/* ============================================================================
+ * COPS — night-shift navy, red-and-blue light bar. DEFAULT THEME (Feature-38).
+ * Started from Aurora's dark tokens, then: a deeper navy surface-0/sidebar, a police-blue
+ * accent, and the siren-red/siren-blue/tape tokens turned up to their strongest here.
+ * ============================================================================ */
+:root[data-theme="cops"][data-mode="dark"],
+:root[data-theme="cops"][data-mode="mid"] {
+    color-scheme: dark;
+    --font-display: var(--font-sans);
+    --display-weight: 700;
+    --display-tracking: -0.01em;
+    --radius: 0.375rem;
+
+    --surface-0: #05070d;
+    --surface-1: #0a0e1a;
+    --surface-2: #121a2c;
+    --surface-3: #141d30;
+    --surface-inset: #03050a;
+
+    --sidebar: #04060b;
+    --sidebar-fg: #cbd5e1;
+    --sidebar-muted: #7d8aa3;
+    --sidebar-border: rgba(96, 165, 250, 0.14);
+    --sidebar-hover: rgba(96, 165, 250, 0.08);
+    --sidebar-active: rgba(59, 130, 246, 0.18);
+    --sidebar-active-fg: #60a5fa;
+
+    --text-primary: #f1f5fb;
+    --text-secondary: #c3cddc;
+    --text-muted: #90a0b8;
+    --text-disabled: #46536b;
+
+    --border-subtle: rgba(96, 165, 250, 0.16);
+    --border-strong: rgba(96, 165, 250, 0.32);
+
+    --accent: #3b82f6;
+    --accent-fg: #60a5fa;
+    --accent-soft: rgba(59, 130, 246, 0.16);
+    --accent-solid: #1d4ed8;
+    --on-accent: #f8fafc;
+    --ring: rgba(59, 130, 246, 0.45);
+
+    --status-ok: #34d399;
+    --status-ok-soft: rgba(16, 185, 129, 0.15);
+    --status-ok-fg: #34d399;
+    --status-warn: #facc15;
+    --status-warn-soft: rgba(250, 204, 21, 0.16);
+    --status-warn-fg: #fde047;
+    --status-danger: #ef4444;
+    --status-danger-soft: rgba(239, 68, 68, 0.18);
+    --status-danger-fg: #f87171;
+    --status-danger-solid: #dc2626;
+    --on-danger: #fff5f5;
+    --status-info: #38bdf8;
+    --status-info-soft: rgba(56, 189, 248, 0.16);
+    --status-info-fg: #7dd3fc;
+    --status-neutral-soft: rgba(148, 163, 184, 0.15);
+
+    --shadow-1: 0 4px 6px -1px rgba(0, 0, 0, 0.5), 0 2px 4px -2px rgba(0, 0, 0, 0.4), inset 0 1px 0 0 rgba(255, 255, 255, 0.04);
+    --shadow-2: 0 10px 30px -10px rgba(0, 0, 0, 0.65), 0 4px 6px -1px rgba(0, 0, 0, 0.4), inset 0 1px 0 0 rgba(255, 255, 255, 0.06);
+    --shadow-3: 0 25px 50px -12px rgba(0, 0, 0, 0.75), inset 0 1px 0 0 rgba(255, 255, 255, 0.07);
+
+    --ambient-1: rgba(59, 130, 246, 0.09);
+    --ambient-2: rgba(239, 68, 68, 0.05);
+    --ambient-3: rgba(59, 130, 246, 0.04);
+    --selection-bg: rgba(59, 130, 246, 0.4);
+    --scrollbar-thumb: rgba(96, 165, 184, 0.24);
+    --skeleton-base: #121a2c;
+    --skeleton-shine: #17223a;
+
+    --siren-red: #ef4444;
+    --siren-blue: #3b82f6;
+    --tape: #facc15;
+    --tape-ink: #0b0d12;
+}
+
+:root[data-theme="cops"][data-mode="light"] {
+    color-scheme: light;
+    --font-display: var(--font-sans);
+    --display-weight: 700;
+    --display-tracking: -0.01em;
+    --radius: 0.375rem;
+
+    --surface-0: #eef1f8;
+    --surface-1: #ffffff;
+    --surface-2: #e4e9f4;
+    --surface-3: #ffffff;
+    --surface-inset: #dbe1ee;
+
+    --sidebar: #101a33;
+    --sidebar-fg: #dbe4f5;
+    --sidebar-muted: rgba(219, 228, 245, 0.65);
+    --sidebar-border: rgba(219, 228, 245, 0.12);
+    --sidebar-hover: rgba(219, 228, 245, 0.08);
+    --sidebar-active: rgba(96, 165, 250, 0.2);
+    --sidebar-active-fg: #93c5fd;
+
+    --text-primary: #0b1220;
+    --text-secondary: #29364d;
+    --text-muted: #55647e;
+    --text-disabled: #aab4c6;
+
+    --border-subtle: rgba(15, 30, 60, 0.1);
+    --border-strong: rgba(15, 30, 60, 0.22);
+
+    --accent: #1d4ed8;
+    --accent-fg: #1e40af;
+    --accent-soft: rgba(29, 78, 216, 0.1);
+    --accent-solid: #1d4ed8;
+    --on-accent: #ffffff;
+    --ring: rgba(29, 78, 216, 0.32);
+
+    --status-ok: #059669;
+    --status-ok-soft: rgba(5, 150, 105, 0.10);
+    --status-ok-fg: #065f46;                    /* AA step: Aurora's #047857 was ~4.2:1 on COPS's blue-tinted soft badge, axe sweep found (Feature-38); now ~6:1 */
+    --status-warn: #ca8a04;
+    --status-warn-soft: rgba(202, 138, 4, 0.12);
+    --status-warn-fg: #854d0e;
+    --status-danger: #dc2626;
+    --status-danger-soft: rgba(220, 38, 38, 0.10);
+    --status-danger-fg: #b91c1c;
+    --status-danger-solid: #dc2626;
+    --on-danger: #ffffff;
+    --status-info: #2563eb;
+    --status-info-soft: rgba(37, 99, 235, 0.10);
+    --status-info-fg: #1d4ed8;
+    --status-neutral-soft: rgba(100, 116, 139, 0.10);
+
+    --shadow-1: 0 4px 6px -1px rgba(15, 23, 42, 0.08), 0 2px 4px -2px rgba(15, 23, 42, 0.06), inset 0 1px 0 0 rgba(255, 255, 255, 0.6);
+    --shadow-2: 0 10px 30px -10px rgba(15, 23, 42, 0.14), 0 4px 6px -1px rgba(15, 23, 42, 0.08), inset 0 1px 0 0 rgba(255, 255, 255, 0.7);
+    --shadow-3: 0 25px 50px -12px rgba(15, 23, 42, 0.22), inset 0 1px 0 0 rgba(255, 255, 255, 0.8);
+
+    --ambient-1: rgba(29, 78, 216, 0.06);
+    --ambient-2: rgba(220, 38, 38, 0.04);
+    --ambient-3: rgba(29, 78, 216, 0.03);
+    --selection-bg: rgba(29, 78, 216, 0.25);
+    --scrollbar-thumb: rgba(15, 30, 60, 0.18);
+    --skeleton-base: #dbe1ee;
+    --skeleton-shine: #e4e9f4;
+
+    --siren-red: #dc2626;
+    --siren-blue: #1d4ed8;
+    --tape: #eab308;
+    --tape-ink: #1a1200;
+}
+
+/* ============================================================================
+ * ADA surfaces — shared by aurora / sunset / mint / tokyo (ADA keeps
+ * surfaces, text, borders and shadows shared across its presets and only
+ * swaps the accent ramp). Inter throughout.
+ * ============================================================================ */
+:root[data-theme="aurora"][data-mode="dark"],
+:root[data-theme="sunset"][data-mode="dark"],
+:root[data-theme="mint"][data-mode="dark"],
+:root[data-theme="tokyo"][data-mode="dark"],
+:root[data-theme="aurora"][data-mode="mid"],
+:root[data-theme="sunset"][data-mode="mid"],
+:root[data-theme="mint"][data-mode="mid"],
+:root[data-theme="tokyo"][data-mode="mid"] {
+    color-scheme: dark;
+    --font-display: var(--font-sans);
+    --display-weight: 600;
+    --display-tracking: -0.01em;
+    --radius: 0.5rem;
+
+    --surface-0: #0a0e1a;
+    --surface-1: #0f172a;
+    --surface-2: #1e293b;
+    --surface-3: #1f2937;
+    --surface-inset: #070a12;
+
+    --sidebar: #0b1120;
+    --sidebar-fg: #cbd5e1;
+    --sidebar-muted: #94a3b8;
+    --sidebar-border: rgba(148, 163, 184, 0.14);
+    --sidebar-hover: rgba(148, 163, 184, 0.08);
+
+    --text-primary: #f8fafc;
+    --text-secondary: #cbd5e1;
+    --text-muted: #94a3b8;
+    --text-disabled: #475569;
+
+    --border-subtle: rgba(148, 163, 184, 0.18);
+    --border-strong: rgba(148, 163, 184, 0.32);
+
+    --on-accent: #ffffff;
+
+    --status-ok: #34d399;
+    --status-ok-soft: rgba(16, 185, 129, 0.15);
+    --status-ok-fg: #34d399;
+    --status-warn: #fbbf24;
+    --status-warn-soft: rgba(245, 158, 11, 0.15);
+    --status-warn-fg: #fbbf24;
+    --status-danger: #f87171;
+    --status-danger-soft: rgba(239, 68, 68, 0.15);
+    --status-danger-fg: #f87171;
+    --status-danger-solid: #dc2626;
+    --on-danger: #ffffff;
+    --status-info: #60a5fa;
+    --status-info-soft: rgba(59, 130, 246, 0.15);
+    --status-info-fg: #60a5fa;
+    --status-neutral-soft: rgba(148, 163, 184, 0.15);
+
+    --shadow-1: 0 4px 6px -1px rgba(0, 0, 0, 0.3), 0 2px 4px -2px rgba(0, 0, 0, 0.2), inset 0 1px 0 0 rgba(255, 255, 255, 0.05);
+    --shadow-2: 0 10px 30px -10px rgba(0, 0, 0, 0.5), 0 4px 6px -1px rgba(0, 0, 0, 0.3), inset 0 1px 0 0 rgba(255, 255, 255, 0.07);
+    --shadow-3: 0 25px 50px -12px rgba(0, 0, 0, 0.65), inset 0 1px 0 0 rgba(255, 255, 255, 0.08);
+
+    --scrollbar-thumb: rgba(148, 163, 184, 0.2);
+    --skeleton-base: #1e293b;
+    --skeleton-shine: #273449;
+}
+
+:root[data-theme="aurora"][data-mode="light"],
+:root[data-theme="sunset"][data-mode="light"],
+:root[data-theme="mint"][data-mode="light"],
+:root[data-theme="tokyo"][data-mode="light"] {
+    color-scheme: light;
+    --font-display: var(--font-sans);
+    --display-weight: 600;
+    --display-tracking: -0.01em;
+    --radius: 0.5rem;
+
+    --surface-0: #f5f7fb;
+    --surface-1: #ffffff;
+    --surface-2: #f1f5f9;
+    --surface-3: #ffffff;
+    --surface-inset: #e2e8f0;
+
+    --sidebar: #ffffff;
+    --sidebar-fg: #334155;
+    --sidebar-muted: #4b5a70;
+    --sidebar-border: rgba(15, 23, 42, 0.08);
+    --sidebar-hover: rgba(15, 23, 42, 0.04);
+
+    --text-primary: #0f172a;
+    --text-secondary: #334155;
+    --text-muted: #4b5a70;                      /* AA step: ADA #64748b is 4.44:1 on #f5f7fb; this is ADA's text-tertiary */
+    --text-disabled: #cbd5e1;
+
+    --border-subtle: rgba(15, 23, 42, 0.08);
+    --border-strong: rgba(15, 23, 42, 0.18);
+
+    --on-accent: #ffffff;
+
+    --status-ok: #059669;
+    --status-ok-soft: rgba(5, 150, 105, 0.10);
+    --status-ok-fg: #047857;                    /* AA step: 4.76:1 on soft */
+    --status-warn: #d97706;
+    --status-warn-soft: rgba(217, 119, 6, 0.10);
+    --status-warn-fg: #92400e;                  /* AA step: 6.07:1 */
+    --status-danger: #dc2626;
+    --status-danger-soft: rgba(220, 38, 38, 0.10);
+    --status-danger-fg: #b91c1c;                /* AA step: 5.46:1 */
+    --status-danger-solid: #dc2626;
+    --on-danger: #ffffff;
+    --status-info: #2563eb;
+    --status-info-soft: rgba(37, 99, 235, 0.10);
+    --status-info-fg: #1d4ed8;                  /* AA step: 5.74:1 */
+    --status-neutral-soft: rgba(100, 116, 139, 0.10);
+
+    --shadow-1: 0 4px 6px -1px rgba(15, 23, 42, 0.08), 0 2px 4px -2px rgba(15, 23, 42, 0.06), inset 0 1px 0 0 rgba(255, 255, 255, 0.6);
+    --shadow-2: 0 10px 30px -10px rgba(15, 23, 42, 0.14), 0 4px 6px -1px rgba(15, 23, 42, 0.08), inset 0 1px 0 0 rgba(255, 255, 255, 0.7);
+    --shadow-3: 0 25px 50px -12px rgba(15, 23, 42, 0.22), inset 0 1px 0 0 rgba(255, 255, 255, 0.8);
+
+    --scrollbar-thumb: rgba(15, 23, 42, 0.18);
+    --skeleton-base: #e2e8f0;
+    --skeleton-shine: #f1f5f9;
+}
+
+/* ---------------------------------------------------------------- Aurora */
+:root[data-theme="aurora"][data-mode="dark"],
+:root[data-theme="aurora"][data-mode="mid"] {
+    --accent: #60a5fa;
+    --accent-fg: #60a5fa;                       /* 5.82:1 on its soft */
+    --accent-soft: rgba(59, 130, 246, 0.15);
+    --accent-solid: #2563eb;
+    --ring: rgba(59, 130, 246, 0.4);
+    --sidebar-active: rgba(59, 130, 246, 0.15);
+    --sidebar-active-fg: #60a5fa;
+    --ambient-1: rgba(59, 130, 246, 0.08);
+    --ambient-2: rgba(139, 92, 246, 0.06);
+    --ambient-3: rgba(16, 185, 129, 0.04);
+    --selection-bg: rgba(59, 130, 246, 0.4);
+}
+:root[data-theme="aurora"][data-mode="light"] {
+    --accent: #2563eb;
+    --accent-fg: #1d4ed8;
+    --accent-soft: rgba(37, 99, 235, 0.10);
+    --accent-solid: #2563eb;
+    --ring: rgba(37, 99, 235, 0.32);
+    --sidebar-active: rgba(37, 99, 235, 0.10);
+    --sidebar-active-fg: #1d4ed8;
+    --ambient-1: rgba(37, 99, 235, 0.06);
+    --ambient-2: rgba(124, 58, 237, 0.04);
+    --ambient-3: rgba(5, 150, 105, 0.04);
+    --selection-bg: rgba(37, 99, 235, 0.25);
+}
+
+/* ---------------------------------------------------------------- Sunset */
+:root[data-theme="sunset"][data-mode="dark"],
+:root[data-theme="sunset"][data-mode="mid"] {
+    --accent: #f97316;
+    --accent-fg: #f97316;                       /* 5.25:1 on its soft */
+    --accent-soft: rgba(249, 115, 22, 0.15);
+    --accent-solid: #c2410c;
+    --ring: rgba(249, 115, 22, 0.4);
+    --sidebar-active: rgba(249, 115, 22, 0.15);
+    --sidebar-active-fg: #f97316;
+    --status-warn: #fbbf24;
+    --status-warn-soft: rgba(251, 191, 36, 0.18);
+    --status-warn-fg: #fbbf24;
+    --ambient-1: rgba(249, 115, 22, 0.10);
+    --ambient-2: rgba(236, 72, 153, 0.08);
+    --ambient-3: rgba(251, 191, 36, 0.05);
+    --selection-bg: rgba(249, 115, 22, 0.4);
+}
+:root[data-theme="sunset"][data-mode="light"] {
+    --accent: #ea580c;
+    --accent-fg: #9a3412;                       /* AA step: ADA #ea580c is 3.15:1 */
+    --accent-soft: rgba(234, 88, 12, 0.10);
+    --accent-solid: #c2410c;
+    --ring: rgba(234, 88, 12, 0.32);
+    --sidebar-active: rgba(234, 88, 12, 0.10);
+    --sidebar-active-fg: #9a3412;
+    --ambient-1: rgba(234, 88, 12, 0.08);
+    --ambient-2: rgba(219, 39, 119, 0.06);
+    --ambient-3: rgba(217, 119, 6, 0.04);
+    --selection-bg: rgba(234, 88, 12, 0.25);
+}
+
+/* ---------------------------------------------------------------- Mint */
+:root[data-theme="mint"][data-mode="dark"],
+:root[data-theme="mint"][data-mode="mid"] {
+    --accent: #06b6d4;
+    --accent-fg: #06b6d4;                       /* 5.75:1 on its soft */
+    --accent-soft: rgba(6, 182, 212, 0.15);
+    --accent-solid: #0e7490;
+    --ring: rgba(6, 182, 212, 0.4);
+    --sidebar-active: rgba(6, 182, 212, 0.15);
+    --sidebar-active-fg: #06b6d4;
+    --status-ok-soft: rgba(52, 211, 153, 0.15);
+    --ambient-1: rgba(6, 182, 212, 0.10);
+    --ambient-2: rgba(20, 184, 166, 0.08);
+    --ambient-3: rgba(52, 211, 153, 0.05);
+    --selection-bg: rgba(6, 182, 212, 0.4);
+}
+:root[data-theme="mint"][data-mode="light"] {
+    --accent: #0891b2;
+    --accent-fg: #0e7490;                       /* AA step: ADA #0891b2 is 3.27:1 */
+    --accent-soft: rgba(8, 145, 178, 0.10);
+    --accent-solid: #0e7490;
+    --ring: rgba(8, 145, 178, 0.32);
+    --sidebar-active: rgba(8, 145, 178, 0.10);
+    --sidebar-active-fg: #0e7490;
+    --ambient-1: rgba(8, 145, 178, 0.08);
+    --ambient-2: rgba(13, 148, 136, 0.06);
+    --ambient-3: rgba(5, 150, 105, 0.04);
+    --selection-bg: rgba(8, 145, 178, 0.25);
+}
+
+/* ---------------------------------------------------------------- Tokyo */
+:root[data-theme="tokyo"][data-mode="dark"],
+:root[data-theme="tokyo"][data-mode="mid"] {
+    --accent: #6366f1;
+    --accent-fg: #a5b4fc;                       /* AA step: ADA #6366f1 is 3.41:1 as text */
+    --accent-soft: rgba(99, 102, 241, 0.18);
+    --accent-solid: #4f46e5;
+    --ring: rgba(99, 102, 241, 0.45);
+    --sidebar-active: rgba(99, 102, 241, 0.18);
+    --sidebar-active-fg: #a5b4fc;
+    --status-danger: #f43f5e;
+    --status-danger-soft: rgba(244, 63, 94, 0.15);
+    --status-danger-fg: #fb7185;                /* AA step: #f43f5e is 4.22:1 */
+    --ambient-1: rgba(99, 102, 241, 0.12);
+    --ambient-2: rgba(217, 70, 239, 0.10);
+    --ambient-3: rgba(244, 63, 94, 0.05);
+    --selection-bg: rgba(217, 70, 239, 0.4);
+}
+:root[data-theme="tokyo"][data-mode="light"] {
+    --accent: #4f46e5;
+    --accent-fg: #4f46e5;                       /* 5.41:1 on its soft */
+    --accent-soft: rgba(79, 70, 229, 0.10);
+    --accent-solid: #4f46e5;
+    --ring: rgba(79, 70, 229, 0.35);
+    --sidebar-active: rgba(79, 70, 229, 0.10);
+    --sidebar-active-fg: #4f46e5;
+    --status-danger: #e11d48;
+    --status-danger-soft: rgba(225, 29, 72, 0.10);
+    --status-danger-fg: #be123c;                /* AA step: 5.29:1 */
+    --ambient-1: rgba(79, 70, 229, 0.08);
+    --ambient-2: rgba(192, 38, 211, 0.06);
+    --ambient-3: rgba(225, 29, 72, 0.04);
+    --selection-bg: rgba(79, 70, 229, 0.25);
+}
+
+/* ============================================================================
+ * WAVE — an ocean swell (Feature-39). Midnight tide by night (abyss navy, aqua
+ * crests, seafoam), shoreline by day (sea mist, deep-water sidebar, sand).
+ * Coral takes danger, sand takes warn and the halt tape, seafoam takes ok.
+ *
+ * Wave is the one theme that also changes SHAPE and MOTION, all of it scoped to
+ * :root[data-theme="wave"] below the tokens and all of it decorative
+ * (pointer-events: none, no content): layered swells rolling along the foot of
+ * the page (running on under the glass sidebar), drifting caustic light, a
+ * glassy primary button, and the halt tape as a
+ * riptide. Feature-40 added the second pass: a waterline under the top bar (removed 2026-09-30),
+ * plankton (dark) or bubbles (light) drifting up, tide-pool stat tiles, a lit
+ * crest on every card, a calm-sea empty state, sea-glass page titles in
+ * Outfit, content that surfaces on each page, and glowing switches and focus.
+ * The global prefers-reduced-motion rule (Base) stops every one of
+ * them. The --wave-* images are SVG data URIs, so their colors are literals
+ * here per mode, next to the tokens they echo.
+ * ============================================================================ */
+:root[data-theme="wave"][data-mode="dark"],
+:root[data-theme="wave"][data-mode="mid"] {
+    color-scheme: dark;
+    --font-display: "Outfit Variable", var(--font-sans);    /* rounded geometric, Feature-40 */
+    --display-weight: 600;
+    --display-tracking: 0;                      /* Outfit is set tight already; negative tracking fused "Run a" */
+    --radius: 0.625rem;                         /* rounder: water has no corners */
+
+    --surface-0: #041521;                       /* abyss */
+    --surface-1: #072236;                       /* deep water (card) */
+    --surface-2: #0b2e46;
+    --surface-3: #0d3149;
+    --surface-inset: #020f18;
+
+    --sidebar: #031019;
+    --sidebar-fg: #cdeef5;
+    --sidebar-muted: #7fb3c3;
+    --sidebar-border: rgba(94, 234, 212, 0.12);
+    --sidebar-hover: rgba(94, 234, 212, 0.07);
+    --sidebar-active: rgba(34, 211, 238, 0.16);
+    --sidebar-active-fg: #5eead4;
+
+    --text-primary: #e8f8fb;                    /* foam */
+    --text-secondary: #b8dce6;
+    --text-muted: #86b6c5;                      /* 7.2:1 on the card */
+    --text-disabled: #3f6678;
+
+    --border-subtle: rgba(94, 234, 212, 0.14);
+    --border-strong: rgba(94, 234, 212, 0.3);
+
+    --accent: #22d3ee;                          /* aqua */
+    --accent-fg: #67e8f9;
+    --accent-soft: rgba(34, 211, 238, 0.15);
+    --accent-solid: #0e7490;                    /* white on it 5.36:1 */
+    --accent-solid-2: #155e75;
+    --on-accent: #f0fdff;
+    --ring: rgba(34, 211, 238, 0.5);
+
+    --status-ok: #5eead4;                       /* seafoam */
+    --status-ok-soft: rgba(45, 212, 191, 0.15);
+    --status-ok-fg: #5eead4;
+    --status-warn: #fcd34d;                     /* sand */
+    --status-warn-soft: rgba(252, 211, 77, 0.15);
+    --status-warn-fg: #fde68a;
+    --status-danger: #fb7185;                   /* coral */
+    --status-danger-soft: rgba(251, 113, 133, 0.16);
+    --status-danger-fg: #fda4af;
+    --status-danger-solid: #be123c;             /* AA step: #fff5f7 on #e11d48 was 4.39:1, axe sweep found (Feature-39); now 6.0:1 */
+    --on-danger: #fff5f7;
+    --status-info: #7dd3fc;
+    --status-info-soft: rgba(125, 211, 252, 0.15);
+    --status-info-fg: #a5e4fd;
+    --status-neutral-soft: rgba(134, 182, 197, 0.14);
+
+    /* The inset top line is a lit wave crest on every card. */
+    --shadow-1: 0 4px 6px -1px rgba(0, 8, 14, 0.5), 0 2px 4px -2px rgba(0, 8, 14, 0.4), inset 0 1px 0 0 rgba(94, 234, 212, 0.10);
+    --shadow-2: 0 10px 30px -10px rgba(0, 8, 14, 0.65), 0 4px 6px -1px rgba(0, 8, 14, 0.4), inset 0 1px 0 0 rgba(94, 234, 212, 0.13);
+    --shadow-3: 0 25px 50px -12px rgba(0, 8, 14, 0.75), 0 0 0 1px rgba(34, 211, 238, 0.08), inset 0 1px 0 0 rgba(94, 234, 212, 0.16);
+
+    --ambient-1: rgba(34, 211, 238, 0.10);
+    --ambient-2: rgba(45, 212, 191, 0.08);
+    --ambient-3: rgba(14, 116, 144, 0.12);
+    --selection-bg: rgba(34, 211, 238, 0.35);
+    --scrollbar-thumb: rgba(94, 234, 212, 0.25);
+    --skeleton-base: #0b2e46;
+    --skeleton-shine: #11405e;
+
+    --siren-red: #fb7185;
+    --siren-blue: #22d3ee;
+    --tape: #f6dca6;                            /* sand */
+    --tape-ink: #062233;
+
+    --plankton: rgba(94, 234, 212, 0.55);       /* bioluminescence drifting up through the abyss */
+    --plankton-2: rgba(103, 232, 249, 0.35);
+    --title-from: #e8f8fb;                      /* page title: foam into aqua, 12:1 at its weakest */
+    --title-to: #67e8f9;
+
+    --wave-swell-1: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1440 120' preserveAspectRatio='none'%3E%3Cpath fill='%230e7490' fill-opacity='.38' d='M0 64C240 16 480 16 720 64S1200 112 1440 64V120H0Z'/%3E%3C/svg%3E");
+    --wave-swell-2: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1440 120' preserveAspectRatio='none'%3E%3Cpath fill='%2322d3ee' fill-opacity='.10' d='M0 70C160 40 320 40 480 70S800 100 960 70 1280 40 1440 70V120H0Z'/%3E%3C/svg%3E");
+    --wave-swell-3: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1440 120' preserveAspectRatio='none'%3E%3Cpath fill='%235eead4' fill-opacity='.07' d='M0 64C240 16 480 16 720 64S1200 112 1440 64V120H0Z'/%3E%3C/svg%3E");
+    --wave-swash: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 8'%3E%3Cpath fill='none' stroke='%2322d3ee' stroke-width='2' stroke-linecap='round' d='M0 4Q6 0 12 4T24 4'/%3E%3C/svg%3E");
+}
+
+:root[data-theme="wave"][data-mode="light"] {
+    color-scheme: light;
+    --font-display: "Outfit Variable", var(--font-sans);
+    --display-weight: 600;
+    --display-tracking: 0;                      /* Outfit is set tight already; negative tracking fused "Run a" */
+    --radius: 0.625rem;
+
+    --surface-0: #eef8fb;                       /* sea mist */
+    --surface-1: #ffffff;
+    --surface-2: #e2f2f7;
+    --surface-3: #ffffff;
+    --surface-inset: #d5ebf2;
+
+    --sidebar: #06283b;                         /* deep water, the one dark band by day */
+    --sidebar-fg: #d7f2f8;
+    --sidebar-muted: rgba(215, 242, 248, 0.68);
+    --sidebar-border: rgba(215, 242, 248, 0.12);
+    --sidebar-hover: rgba(215, 242, 248, 0.08);
+    --sidebar-active: rgba(94, 234, 212, 0.18);
+    --sidebar-active-fg: #5eead4;               /* 9.6:1 on the sidebar */
+
+    --text-primary: #052131;
+    --text-secondary: #1c4658;
+    --text-muted: #3d6677;                      /* 5.8:1 on sea mist, 5.4:1 on surface-2 */
+    --text-disabled: #a5c3cd;
+
+    --border-subtle: rgba(6, 40, 59, 0.10);
+    --border-strong: rgba(6, 40, 59, 0.2);
+
+    --accent: #0891b2;
+    --accent-fg: #0e7490;                       /* AA step: #0891b2 is 3.68:1 on white */
+    --accent-soft: rgba(8, 145, 178, 0.10);
+    --accent-solid: #0e7490;
+    --accent-solid-2: #155e75;
+    --on-accent: #ffffff;
+    --ring: rgba(8, 145, 178, 0.35);
+
+    --status-ok: #0d9488;
+    --status-ok-soft: rgba(13, 148, 136, 0.10);
+    --status-ok-fg: #115e59;
+    --status-warn: #d97706;
+    --status-warn-soft: rgba(217, 119, 6, 0.10);
+    --status-warn-fg: #92400e;
+    --status-danger: #e11d48;
+    --status-danger-soft: rgba(225, 29, 72, 0.10);
+    --status-danger-fg: #be123c;
+    --status-danger-solid: #e11d48;
+    --on-danger: #ffffff;
+    --status-info: #0284c7;
+    --status-info-soft: rgba(2, 132, 199, 0.10);
+    --status-info-fg: #075985;
+    --status-neutral-soft: rgba(61, 102, 119, 0.10);
+
+    --shadow-1: 0 4px 6px -1px rgba(6, 40, 59, 0.07), 0 2px 4px -2px rgba(6, 40, 59, 0.05), inset 0 1px 0 0 rgba(255, 255, 255, 0.7);
+    --shadow-2: 0 10px 30px -10px rgba(6, 40, 59, 0.16), 0 4px 6px -1px rgba(6, 40, 59, 0.08), inset 0 1px 0 0 rgba(255, 255, 255, 0.8);
+    --shadow-3: 0 25px 50px -12px rgba(6, 40, 59, 0.24), 0 0 0 1px rgba(8, 145, 178, 0.06), inset 0 1px 0 0 rgba(255, 255, 255, 0.9);
+
+    --ambient-1: rgba(8, 145, 178, 0.09);
+    --ambient-2: rgba(13, 148, 136, 0.07);
+    --ambient-3: rgba(246, 220, 166, 0.16);     /* a warm patch of sand */
+    --selection-bg: rgba(8, 145, 178, 0.22);
+    --scrollbar-thumb: rgba(8, 145, 178, 0.28);
+    --skeleton-base: #d5ebf2;
+    --skeleton-shine: #eaf6fa;
+
+    --siren-red: #e11d48;
+    --siren-blue: #0891b2;
+    --tape: #f6dca6;
+    --tape-ink: #062233;
+
+    --plankton: rgba(8, 145, 178, 0.28);        /* by day: bubbles rising through clear water */
+    --plankton-2: rgba(13, 148, 136, 0.2);
+    --title-from: #052131;                      /* deep water into teal, 5.3:1 at its weakest */
+    --title-to: #0e7490;
+
+    --wave-swell-1: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1440 120' preserveAspectRatio='none'%3E%3Cpath fill='%230e7490' fill-opacity='.12' d='M0 64C240 16 480 16 720 64S1200 112 1440 64V120H0Z'/%3E%3C/svg%3E");
+    --wave-swell-2: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1440 120' preserveAspectRatio='none'%3E%3Cpath fill='%2322d3ee' fill-opacity='.16' d='M0 70C160 40 320 40 480 70S800 100 960 70 1280 40 1440 70V120H0Z'/%3E%3C/svg%3E");
+    --wave-swell-3: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1440 120' preserveAspectRatio='none'%3E%3Cpath fill='%230891b2' fill-opacity='.08' d='M0 64C240 16 480 16 720 64S1200 112 1440 64V120H0Z'/%3E%3C/svg%3E");
+    --wave-swash: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 8'%3E%3Cpath fill='none' stroke='%230891b2' stroke-width='2' stroke-linecap='round' d='M0 4Q6 0 12 4T24 4'/%3E%3C/svg%3E");
+}
+
+/* ============================================================================
+ * MID (Feature-79) — between light and dark: slate surfaces at about L* 33 (light is ~97, dark ~3),
+ * light text. Every [data-mode="dark"] block above also matches mid, so a theme's fonts, radius,
+ * solid fills, sirens and Wave's water all carry over; these blocks re-tone only what sits on the
+ * surfaces. Each fg was lifted by measurement (scratchpad mid2.py) until it cleared 4.6:1 on every
+ * surface and on its own soft tint; the softs are 0.14 alpha, lighter than dark's, because a
+ * brighter tint over slate would have forced the status colors to near white. The accent soft is 0.10: at
+ * 0.14 muted text in a selected tile and the active nav link fell to 4.1-4.4:1 in the axe sweep, the first run.
+ * ============================================================================ */
+:root[data-theme="law"][data-mode="mid"] {
+    --surface-0: #444a5a;
+    --surface-1: #4d5366;
+    --surface-2: #565c71;
+    --surface-3: #51586c;
+    --surface-inset: #3b404e;
+
+    --sidebar: #373b49;
+    --sidebar-fg: #dde1ee;
+    --sidebar-muted: #b9c2d9;
+    --sidebar-border: rgba(255, 255, 255, 0.1);
+    --sidebar-hover: rgba(255, 255, 255, 0.07);
+    --sidebar-active-fg: #e0be84;
+
+    --text-primary: #ffffff;
+    --text-secondary: #e7eaf3;
+    --text-muted: #dfe3ee;                      /* every text token >= 4.6:1 on every surface */
+    --text-disabled: color-mix(in oklab, #dfe3ee 55%, #444a5a);
+
+    --border-subtle: rgba(255, 255, 255, 0.12);
+    --border-strong: rgba(255, 255, 255, 0.26);
+
+    --accent-fg: #f3e7d1;
+    --accent-soft: rgba(212, 166, 86, 0.10);
+
+    --status-ok-soft: rgba(16, 185, 129, 0.14);
+    --status-ok-fg: #b8f0db;
+    --status-warn-soft: rgba(245, 158, 11, 0.14);
+    --status-warn-fg: #fde5a5;
+    --status-danger-soft: rgba(239, 68, 68, 0.14);
+    --status-danger-fg: #fdd0d0;
+    --status-info-soft: rgba(56, 189, 248, 0.14);
+    --status-info-fg: #cdeffd;
+    --status-neutral-soft: rgba(255, 255, 255, 0.1);
+
+    --shadow-1: 0 2px 6px -1px rgba(0, 0, 0, 0.22), 0 1px 3px -1px rgba(0, 0, 0, 0.16), inset 0 1px 0 0 rgba(255, 255, 255, 0.07);
+    --shadow-2: 0 10px 26px -10px rgba(0, 0, 0, 0.34), 0 4px 6px -2px rgba(0, 0, 0, 0.18), inset 0 1px 0 0 rgba(255, 255, 255, 0.09);
+    --shadow-3: 0 22px 44px -14px rgba(0, 0, 0, 0.42), inset 0 1px 0 0 rgba(255, 255, 255, 0.1);
+
+    --scrollbar-thumb: rgba(255, 255, 255, 0.22);
+    --skeleton-base: #565c71;
+    --skeleton-shine: color-mix(in oklab, #565c71 80%, white);
+    --sidebar-active: rgba(212, 166, 86, 0.18);
+}
+:root[data-theme="cops"][data-mode="mid"] {
+    --surface-0: #364563;
+    --surface-1: #3d4e71;
+    --surface-2: #44577e;
+    --surface-3: #405377;
+    --surface-inset: #2e3c56;
+
+    --sidebar: #2b3750;
+    --sidebar-fg: #dde3ee;
+    --sidebar-muted: #b3bfd6;
+    --sidebar-border: rgba(255, 255, 255, 0.1);
+    --sidebar-hover: rgba(255, 255, 255, 0.07);
+    --sidebar-active-fg: #93c2fc;
+
+    --text-primary: #fbfcfd;
+    --text-secondary: #dbe1ee;
+    --text-muted: #d4dbe8;                      /* every text token >= 4.6:1 on every surface */
+    --text-disabled: color-mix(in oklab, #d4dbe8 55%, #364563);
+
+    --border-subtle: rgba(255, 255, 255, 0.12);
+    --border-strong: rgba(255, 255, 255, 0.26);
+
+    --accent-fg: #cce2fd;
+    --accent-soft: rgba(96, 165, 250, 0.10);
+
+    --status-ok-soft: rgba(16, 185, 129, 0.14);
+    --status-ok-fg: #a6ecd2;
+    --status-warn-soft: rgba(245, 158, 11, 0.14);
+    --status-warn-fg: #fddb84;
+    --status-danger-soft: rgba(239, 68, 68, 0.14);
+    --status-danger-fg: #fcc3c3;
+    --status-info-soft: rgba(56, 189, 248, 0.14);
+    --status-info-fg: #bbe9fd;
+    --status-neutral-soft: rgba(255, 255, 255, 0.1);
+
+    --shadow-1: 0 2px 6px -1px rgba(0, 0, 0, 0.22), 0 1px 3px -1px rgba(0, 0, 0, 0.16), inset 0 1px 0 0 rgba(255, 255, 255, 0.07);
+    --shadow-2: 0 10px 26px -10px rgba(0, 0, 0, 0.34), 0 4px 6px -2px rgba(0, 0, 0, 0.18), inset 0 1px 0 0 rgba(255, 255, 255, 0.09);
+    --shadow-3: 0 22px 44px -14px rgba(0, 0, 0, 0.42), inset 0 1px 0 0 rgba(255, 255, 255, 0.1);
+
+    --scrollbar-thumb: rgba(255, 255, 255, 0.22);
+    --skeleton-base: #44577e;
+    --skeleton-shine: color-mix(in oklab, #44577e 80%, white);
+    --sidebar-active: rgba(96, 165, 250, 0.2);
+}
+:root[data-theme="aurora"][data-mode="mid"],
+:root[data-theme="sunset"][data-mode="mid"],
+:root[data-theme="mint"][data-mode="mid"],
+:root[data-theme="tokyo"][data-mode="mid"] {
+    --surface-0: #394960;
+    --surface-1: #40536d;
+    --surface-2: #485d7a;
+    --surface-3: #445874;
+    --surface-inset: #313f54;
+
+    --sidebar: #2d3b4d;
+    --sidebar-fg: #dde4ee;
+    --sidebar-muted: #acbcd2;
+    --sidebar-border: rgba(255, 255, 255, 0.1);
+    --sidebar-hover: rgba(255, 255, 255, 0.07);
+    --sidebar-active-fg: #92bafa;
+
+    --text-primary: #ffffff;
+    --text-secondary: #e3e9f1;
+    --text-muted: #d4dde8;                      /* every text token >= 4.6:1 on every surface */
+    --text-disabled: color-mix(in oklab, #d4dde8 55%, #394960);
+
+    --border-subtle: rgba(255, 255, 255, 0.12);
+    --border-strong: rgba(255, 255, 255, 0.26);
+
+    --accent-fg: #cee0fd;
+    --accent-soft: rgba(59, 130, 246, 0.10);
+
+    --status-ok-soft: rgba(16, 185, 129, 0.14);
+    --status-ok-fg: #b8f0db;
+    --status-warn-soft: rgba(245, 158, 11, 0.14);
+    --status-warn-fg: #fde39f;
+    --status-danger-soft: rgba(239, 68, 68, 0.14);
+    --status-danger-fg: #fdcdcd;
+    --status-info-soft: rgba(56, 189, 248, 0.14);
+    --status-info-fg: #cbeefd;
+    --status-neutral-soft: rgba(255, 255, 255, 0.1);
+
+    --shadow-1: 0 2px 6px -1px rgba(0, 0, 0, 0.22), 0 1px 3px -1px rgba(0, 0, 0, 0.16), inset 0 1px 0 0 rgba(255, 255, 255, 0.07);
+    --shadow-2: 0 10px 26px -10px rgba(0, 0, 0, 0.34), 0 4px 6px -2px rgba(0, 0, 0, 0.18), inset 0 1px 0 0 rgba(255, 255, 255, 0.09);
+    --shadow-3: 0 22px 44px -14px rgba(0, 0, 0, 0.42), inset 0 1px 0 0 rgba(255, 255, 255, 0.1);
+
+    --scrollbar-thumb: rgba(255, 255, 255, 0.22);
+    --skeleton-base: #485d7a;
+    --skeleton-shine: color-mix(in oklab, #485d7a 80%, white);
+}
+:root[data-theme="aurora"][data-mode="mid"] { --accent-fg: #cee0fd; --sidebar-active-fg: #cee0fd; }
+:root[data-theme="sunset"][data-mode="mid"] { --accent-fg: #fdd8be; --sidebar-active-fg: #fdd8be; }
+:root[data-theme="mint"][data-mode="mid"] { --accent-fg: #beecf4; --sidebar-active-fg: #beecf4; }
+:root[data-theme="tokyo"][data-mode="mid"] { --accent-fg: #d8d9fc; --sidebar-active-fg: #d8d9fc; }
+:root[data-theme="wave"][data-mode="mid"] {
+    --surface-0: #2e4e5e;
+    --surface-1: #35596c;
+    --surface-2: #3c6579;
+    --surface-3: #385f72;
+    --surface-inset: #284350;
+
+    --sidebar: #2a4757;                         /* close to the page: the sidebar is glass over it */
+    --sidebar-fg: #dde8ee;
+    --sidebar-muted: #b9cfd9;
+    --sidebar-border: rgba(255, 255, 255, 0.1);
+    --sidebar-hover: rgba(255, 255, 255, 0.07);
+    --sidebar-active-fg: #91e9f7;               /* 4.7:1 on its pill over the glass sidebar */
+
+    --text-primary: #ffffff;
+    --text-secondary: #e9f1f4;
+    --text-muted: #e4edf1;                      /* every text token >= 4.6:1 on every surface */
+    --text-disabled: color-mix(in oklab, #e4edf1 55%, #2e4e5e);
+
+    --border-subtle: rgba(255, 255, 255, 0.12);
+    --border-strong: rgba(255, 255, 255, 0.26);
+
+    --accent-fg: #d5f7fc;
+    --accent-soft: rgba(34, 211, 238, 0.10);
+
+    --status-ok-soft: rgba(16, 185, 129, 0.14);
+    --status-ok-fg: #caf4e4;
+    --status-warn-soft: rgba(245, 158, 11, 0.14);
+    --status-warn-fg: #fee9b2;
+    --status-danger-soft: rgba(239, 68, 68, 0.14);
+    --status-danger-fg: #fdd2d2;
+    --status-info-soft: rgba(56, 189, 248, 0.14);
+    --status-info-fg: #d9f2fe;
+    --status-neutral-soft: rgba(255, 255, 255, 0.1);
+
+    --shadow-1: 0 2px 6px -1px rgba(0, 0, 0, 0.22), 0 1px 3px -1px rgba(0, 0, 0, 0.16), inset 0 1px 0 0 rgba(255, 255, 255, 0.07);
+    --shadow-2: 0 10px 26px -10px rgba(0, 0, 0, 0.34), 0 4px 6px -2px rgba(0, 0, 0, 0.18), inset 0 1px 0 0 rgba(255, 255, 255, 0.09);
+    --shadow-3: 0 22px 44px -14px rgba(0, 0, 0, 0.42), inset 0 1px 0 0 rgba(255, 255, 255, 0.1);
+
+    --scrollbar-thumb: rgba(255, 255, 255, 0.22);
+    --skeleton-base: #3c6579;
+    --skeleton-shine: color-mix(in oklab, #3c6579 80%, white);
+    --sidebar-active: rgba(34, 211, 238, 0.2);
+    --title-from: #ffffff;
+    --title-to: #a5f3fc;                        /* 7.6:1 on the mid surface */
+    --plankton: rgba(165, 243, 252, 0.5);
+    --plankton-2: rgba(255, 255, 255, 0.3);
+}
+
+
+/* The sidebar is deep water in both modes, so its crest is one set of images. */
+:root[data-theme="wave"] {
+    --wave-tape: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 24' preserveAspectRatio='none'%3E%3Cpath fill='%230e7490' fill-opacity='.42' d='M0 16Q12 8 24 16T48 16V24H0Z'/%3E%3Cpath fill='none' stroke='%230e7490' stroke-opacity='.42' stroke-width='1.5' d='M0 9Q12 1 24 9T48 9'/%3E%3C/svg%3E");
+}
+
+/* Caustics: the ambient wash drifts like light through moving water. */
+:root[data-theme="wave"] body::before {
+    inset: -8%;
+    background:
+        radial-gradient(ellipse 60% 45% at 18% 12%, var(--ambient-1) 0%, transparent 60%),
+        radial-gradient(ellipse 55% 50% at 85% 30%, var(--ambient-2) 0%, transparent 62%),
+        radial-gradient(ellipse 70% 40% at 45% 95%, var(--ambient-3) 0%, transparent 65%),
+        radial-gradient(ellipse 35% 30% at 60% 55%, var(--ambient-1) 0%, transparent 70%);
+    animation: wave-tide 38s ease-in-out infinite alternate;
+}
+
+/* The swell: three layers of different length and height rolling along the foot of the page.
+   Each layer moves exactly one tile per cycle, so the loop has no seam, and the three
+   distances differ, so they drift past each other like a real sea. */
+:root[data-theme="wave"] body::after {
+    content: "";
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: clamp(88px, 15vh, 170px);
+    pointer-events: none;
+    z-index: -1;
+    background-image: var(--wave-swell-3), var(--wave-swell-2), var(--wave-swell-1);
+    background-repeat: repeat-x;
+    background-size: 1100px 100%, 900px 78%, 1440px 60%;
+    background-position: 0 100%, 0 100%, 0 100%;
+    animation: wave-swell 42s linear infinite;
+}
+
+/* The nav floats on the sea (Feature-79). Wave has no sidebar panel at all: no background, border, shadow or
+   glass, so the nav sits straight on the page and the page's ambient light and swell run under it. A panel of
+   any kind (a dark band, then glass with a border and shadow) read as a separate slab or a bevel. The sidebar
+   tokens become the page's own text and accent tokens here, so every contrast the page already clears (text
+   on surface-0, accent-fg on accent-soft) is the nav's too, in light, mid and dark alike. */
+:root[data-theme="wave"] [data-surface="sidebar"] {
+    --sidebar: transparent;
+    --sidebar-fg: var(--text-secondary);
+    --sidebar-muted: var(--text-muted);
+    --sidebar-border: transparent;
+    --sidebar-hover: color-mix(in oklab, var(--text-primary) 7%, transparent);
+    --sidebar-active: var(--accent-soft);
+    --sidebar-active-fg: var(--accent-fg);
+    background: none;
+    border-color: transparent;
+    box-shadow: none;
+}
+
+/* The primary button is a glassy wave face: deep teal to deeper, a sheen that slides on hover.
+   Both stops keep white text past 5.3:1. */
+:root[data-theme="wave"] [data-slot="button"][data-variant="default"] {
+    background-image: linear-gradient(120deg, var(--accent-solid) 0%, var(--accent-solid-2) 55%, var(--accent-solid) 100%);
+    background-size: 220% 100%;
+    background-position: 0% 0;
+    transition: background-position 600ms ease, filter 150ms ease, box-shadow 150ms ease;
+}
+:root[data-theme="wave"] [data-slot="button"][data-variant="default"]:hover {
+    background-position: 100% 0;
+}
+
+/* Halted: the caution tape becomes a riptide warning -- sand with a teal surf line, still
+   the tape-ink label on sand (15:1), still unmistakably "stop". */
+:root[data-theme="wave"] .caution-stripes {
+    background-color: var(--tape);
+    background-image: var(--wave-tape);
+    background-repeat: repeat-x;
+    background-size: 48px 100%;
+    animation: wave-tape 2.4s linear infinite;
+}
+
+:root[data-theme="wave"] ::-webkit-scrollbar-thumb {
+    background: linear-gradient(180deg, var(--accent) 0%, var(--status-ok) 100%);
+    border: 2px solid transparent;
+    background-clip: padding-box;
+}
+
+/* The Wave swatch in the theme picker shows a rolling foam line in every theme. */
+[data-swatch="wave"]::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1440 120' preserveAspectRatio='none'%3E%3Cpath fill='%23ffffff' fill-opacity='.55' d='M0 64C240 16 480 16 720 64S1200 112 1440 64V120H0Z'/%3E%3C/svg%3E");
+    background-repeat: repeat-x;
+    background-size: 90px 55%;
+    background-position: 0 100%;
+    animation: wave-foam 4s linear infinite;
+}
+
+/* ---- Feature-40: the second pass ---------------------------------------- */
+
+/* Sea-glass page titles: foam into aqua by night, deep water into teal by day. No swash under them
+   (removed 2026-09-30 on Adam's say-so, with the one under the logo: two small moving waves were busy). */
+:root[data-theme="wave"] [data-slot="page-title"] {
+    background-image: linear-gradient(100deg, var(--title-from) 30%, var(--title-to) 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    padding-bottom: 0.08em;                     /* room for Outfit's descenders inside the clip */
+}
+
+/* The top of the page is one band of water from the window's left edge to its right (2026-09-30, Adam:
+   "blend at the top"). The bar's own background moves to ::before, which reaches left under the sidebar
+   (transparent in Wave, so the band runs behind the logo), fades downward into the page instead of ending
+   on a ruled edge (no waterline either: removed on Adam's say-so, 2026-09-30, "too much"), and keeps the glass blur for content scrolling under it. The sidebar's header is 48px
+   under an 8px inset, so the band's foot and the logo row end on the same line. */
+:root[data-theme="wave"] [data-slot="topbar"] {
+    background: none;
+    backdrop-filter: none;
+    border-bottom-color: transparent;
+}
+:root[data-theme="wave"] [data-slot="topbar"]::before {
+    content: "";
+    position: absolute;
+    /* Reaches 28px below the bar and fades to nothing there, glass and tint alike (the mask takes the
+       blur with it), so the band has no foot: a hard bottom edge read as a line across the page
+       (Adam's screenshot, 2026-09-30). */
+    inset: 0 0 -28px -24rem;
+    z-index: -1;
+    pointer-events: none;
+    background: linear-gradient(180deg,
+        color-mix(in oklab, var(--surface-0) 70%, transparent) 0%,
+        color-mix(in oklab, var(--surface-0) 45%, transparent) calc(100% - 28px),
+        transparent 100%);
+    backdrop-filter: blur(12px) saturate(1.2);
+    -webkit-mask-image: linear-gradient(180deg, #000 0%, #000 calc(100% - 44px), transparent 100%);
+    mask-image: linear-gradient(180deg, #000 0%, #000 calc(100% - 44px), transparent 100%);
+}
+
+/* The health strip sits in the same water as the top bar: no band of its own, no ruled edge. */
+:root[data-theme="wave"] [data-slot="health-strip"] {
+    background: none;
+    border-bottom-color: transparent;
+}
+
+/* Plankton by night, bubbles by day: three layers of specks rising at different speeds, each
+   moving exactly one tile per cycle so the loop has no seam, and breathing in brightness. */
+:root[data-theme="wave"] #root::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: -1;
+    background-image:
+        radial-gradient(circle at 20% 30%, var(--plankton) 0 1px, transparent 1.6px),
+        radial-gradient(circle at 70% 80%, var(--plankton-2) 0 1.3px, transparent 2px),
+        radial-gradient(circle at 45% 55%, var(--plankton) 0 0.8px, transparent 1.3px);
+    background-size: 170px 190px, 260px 300px, 110px 130px;
+    animation: wave-plankton 70s linear infinite, wave-breathe 7s ease-in-out infinite alternate;
+}
+
+/* Tide pools: a stat tile holds a little water that rolls at its foot. */
+:root[data-theme="wave"] [data-slot="stat-tile"] {
+    position: relative;
+    overflow: hidden;
+    isolation: isolate;
+}
+:root[data-theme="wave"] [data-slot="stat-tile"]::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 42%;
+    pointer-events: none;
+    z-index: -1;
+    background-image: var(--wave-swell-2), var(--wave-swell-1);
+    background-repeat: repeat-x;
+    background-size: 240px 80%, 340px 100%;
+    background-position: 0 100%, 0 100%;
+    animation: wave-pool 11s linear infinite;
+}
+:root[data-theme="wave"] [data-slot="stat-tile"]:nth-child(2n)::after { animation-duration: 14s; animation-direction: reverse; }
+:root[data-theme="wave"] [data-slot="stat-tile"]:nth-child(3n)::after { animation-duration: 17s; }
+
+/* Every card catches light along its top edge, like the lip of a wave. */
+:root[data-theme="wave"] [data-slot="card"] {
+    position: relative;
+}
+:root[data-theme="wave"] [data-slot="card"]::before {
+    content: "";
+    position: absolute;
+    top: -1px;
+    left: 10%;
+    right: 10%;
+    height: 1px;
+    pointer-events: none;
+    background: linear-gradient(90deg, transparent 0%, var(--accent) 50%, transparent 100%);
+    opacity: 0.55;
+}
+
+/* A calm sea where there is nothing: the empty state gets a quiet swell above its words. */
+:root[data-theme="wave"] [data-slot="empty-state"] {
+    border-style: solid;
+    background-image: linear-gradient(180deg, transparent 40%, var(--accent-soft) 100%);
+}
+:root[data-theme="wave"] [data-slot="empty-state"]::before {
+    content: "";
+    display: block;
+    width: 5rem;
+    height: 8px;
+    margin-bottom: 0.25rem;
+    background-image: var(--wave-swash);
+    background-repeat: repeat-x;
+    background-size: 24px 8px;
+    opacity: 0.7;
+    animation: wave-swash 4.5s linear infinite;
+}
+
+/* The page surfaces: each page's content rises a few pixels as it arrives. Movement only, never a
+   fade: text fading in reads as ~1.05:1 for half a second, which the axe sweep caught on every page
+   (Feature-40). `backwards` fill, not `both`: a transform left on the element after the animation
+   would become the containing block for anything fixed inside the page. */
+:root[data-theme="wave"] #main > * {
+    /* Name, length and curve only: the stagger delays and the backwards fill come from the shared
+       stagger-in on #main (Feature-79), so Wave staggers exactly like every other theme. */
+    animation-name: wave-surface;
+    animation-duration: 520ms;
+    animation-timing-function: var(--ease-out);
+}
+
+/* The page you are on glows in the sidebar like light on the water. */
+:root[data-theme="wave"] [data-slot="nav-pill"] {
+    /* A tint that fades out to the right, not a box: light on the water where the page is. */
+    background-color: transparent;
+    background-image: linear-gradient(90deg, var(--sidebar-active) 0%, color-mix(in oklab, var(--sidebar-active) 35%, transparent) 70%, transparent 100%);
+}
+:root[data-theme="wave"] [data-slot="nav-hover"] {
+    /* Hover is a fainter cousin of the active tint, in the crest color, never a grey block. */
+    background-color: transparent;
+    background-image: linear-gradient(90deg, color-mix(in oklab, var(--sidebar-active-fg) 14%, transparent) 0%, transparent 90%);
+}
+:root[data-theme="wave"] [data-slot="nav-marker"] {
+    /* The 3px bar at the pill's leading edge read as a stray border line down the nav (Adam, 2026-09-30,
+       twice). In Wave the tint alone says "you are here"; its leading edge is lit instead of ruled. */
+    display: none;
+}
+:root[data-theme="wave"] [data-slot="nav-pill"] {
+    box-shadow: inset 12px 0 14px -12px var(--sidebar-active-fg);
+}
+
+/* Switches and focus glow aqua. */
+:root[data-theme="wave"] [data-slot="switch"][data-state="on"] {
+    box-shadow: 0 0 0 3px var(--accent-soft), 0 0 14px -2px var(--accent);
+}
+:root[data-theme="wave"] :focus-visible {
+    box-shadow: 0 0 0 4px var(--accent-soft);
+}
+
+/* Toasts arrive with a crest along their top. */
+:root[data-theme="wave"] [data-sonner-toast] {
+    border-top: 2px solid var(--accent) !important;
+}
+
+@keyframes wave-tide {
+    0% { transform: translate3d(0, 0, 0) scale(1); }
+    50% { transform: translate3d(2%, -1.5%, 0) scale(1.04); }
+    100% { transform: translate3d(-2%, 1%, 0) scale(1.02); }
+}
+@keyframes wave-swell {
+    to { background-position: 1100px 100%, -900px 100%, 1440px 100%; }
+}
+@keyframes wave-swash {
+    to { background-position: 24px 0; }
+}
+@keyframes wave-tape {
+    to { background-position: 48px 0; }
+}
+@keyframes wave-plankton {
+    to { background-position: 0 -190px, 0 -300px, 0 -130px; }
+}
+@keyframes wave-breathe {
+    from { opacity: 0.55; }
+    to { opacity: 1; }
+}
+@keyframes wave-pool {
+    to { background-position: 240px 100%, -340px 100%; }
+}
+@keyframes wave-surface {
+    from { transform: translateY(10px); }
+    to { transform: translateY(0); }
+}
+@keyframes wave-foam {
+    to { background-position: 90px 100%; }
+}

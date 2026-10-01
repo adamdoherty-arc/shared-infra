@@ -1,0 +1,157 @@
+/* ============================================================================
+ * ui-kit motion (customer-ops Feature-79): one set of curves, durations, enter and exit animations,
+ * press/hover feedback, the glass surface and the reduced-motion stop, for every app in the family.
+ *
+ * Tailwind 4: @import this from the app's index.css after `@import "tailwindcss"`. The @theme block
+ * turns each --ease-* into an ease-* utility and each --animate-* into an animate-* utility; the
+ * @utility blocks add pressable, lift, glass and stagger-in.
+ *
+ * Rules: enter under 250 ms, exit shorter than enter, nothing animates on a keystroke, transform and
+ * opacity only. The prefers-reduced-motion rule at the bottom stops all of it, view transitions
+ * included. Use these instead of a one-off transition-* or keyframe.
+ * ============================================================================ */
+
+@theme {
+    /* ease-out for anything entering or answering the pointer (fast start, long settle; the built-in
+       ease-out is too soft to read as responsive), ease-in-out for things already on screen that move,
+       spring for the one overshoot (a chevron turning over, a switch thumb). */
+    --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+    --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+    --ease-spring: cubic-bezier(0.34, 1.45, 0.64, 1);
+
+    --animate-pulse-soft: pulse-soft 2s ease-in-out infinite;
+    --animate-fade-in: fade-in 180ms var(--ease-out);
+    --animate-pop-in: pop-in 180ms var(--ease-out);
+    --animate-rise-in: rise-in 320ms var(--ease-out) backwards;
+    --animate-reveal: reveal 220ms var(--ease-out);
+    --animate-pop-out: pop-out 120ms var(--ease-out) forwards;
+    --animate-fade-out: fade-out 120ms var(--ease-out) forwards;
+    --animate-sheet-out-right: sheet-out-right 180ms var(--ease-in-out) forwards;
+    --animate-sheet-out-left: sheet-out-left 180ms var(--ease-in-out) forwards;
+    --animate-shimmer: shimmer 1.6s ease-in-out infinite;
+    --animate-sheet-right: sheet-in-right 260ms var(--ease-out);
+    --animate-sheet-left: sheet-in-left 260ms var(--ease-out);
+
+    @keyframes pulse-soft {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.45; }
+    }
+    @keyframes fade-in {
+        from { opacity: 0; transform: translateY(2px); }
+        to { opacity: 1; transform: translateY(0); }
+    }
+    /* Popovers, menus, dialogs: from 96% at the side they open from (origin-(--radix-*-transform-origin)). */
+    @keyframes pop-in {
+        from { opacity: 0; transform: scale(0.96); }
+        to { opacity: 1; transform: scale(1); }
+    }
+    /* Content arriving on a page: a short slide, no fade, so text is never caught half-transparent
+       (an axe contrast failure on 2026-09-29 was a heading mid-fade). */
+    @keyframes rise-in {
+        from { transform: translateY(8px); }
+        to { transform: translateY(0); }
+    }
+    /* Exits: Radix keeps a closing popover, menu, tooltip or dialog mounted until its animation ends,
+       so each leaves the way it came, in two thirds of the time. */
+    @keyframes pop-out {
+        to { opacity: 0; transform: scale(0.96); }
+    }
+    @keyframes fade-out {
+        to { opacity: 0; }
+    }
+    @keyframes sheet-out-right {
+        to { transform: translateX(100%); }
+    }
+    @keyframes sheet-out-left {
+        to { transform: translateX(-100%); }
+    }
+    /* Something opened in place (a folded section, a tab, an empty or error state): settles 6px down. Transform
+       only, like rise-in: with a fade, an empty state arriving after the data caught axe mid-fade at 2.2:1. */
+    @keyframes reveal {
+        from { transform: translateY(-6px); }
+        to { transform: translateY(0); }
+    }
+    @keyframes sheet-in-right {
+        from { transform: translateX(100%); }
+        to { transform: translateX(0); }
+    }
+    @keyframes sheet-in-left {
+        from { transform: translateX(-100%); }
+        to { transform: translateX(0); }
+    }
+    @keyframes shimmer {
+        0% { background-position: 200% 0; }
+        100% { background-position: -200% 0; }
+    }
+}
+
+/* Glass (ADA's glass-popover): the floating surfaces (popover, menu, dialog, palette) are 94% surface-3
+   over a blur of what is behind, so they read as lifted without losing text contrast. */
+@utility glass {
+    /* Tailwind's own backdrop utilities: a hand-written backdrop-filter plus its -webkit- twin was folded
+       by Lightning CSS into the prefixed one alone, which Chromium ignores (found in Feature-79's screenshots). */
+    background-color: color-mix(in oklab, var(--surface-3) 94%, transparent);
+    @apply backdrop-blur-xl backdrop-saturate-150;
+}
+
+/* Press feedback: anything clickable sinks 3% while held, on the shared curve. Transform only, so it
+   never reflows and costs nothing to run. */
+@utility pressable {
+    transition-property: transform, background-color, border-color, color, box-shadow, opacity, filter;
+    transition-duration: 160ms;
+    transition-timing-function: var(--ease-out);
+    &:active:not(:disabled, [aria-disabled="true"]) {
+        transform: scale(0.97);
+    }
+}
+
+/* Hover lift for a surface that is itself a link or a control: rises 2px and deepens its shadow. Only on
+   devices that hover, so a tap on a phone never leaves a card floating. */
+@utility lift {
+    transition-property: transform, box-shadow, border-color, background-color;
+    transition-duration: 200ms;
+    transition-timing-function: var(--ease-out);
+    @media (hover: hover) {
+        &:hover { transform: translateY(-2px); box-shadow: var(--shadow-2); }
+    }
+}
+
+/* Staggered entrance for a list or grid of cards: each child rises 30 ms after the one before, capped at
+   the eighth so a long list never waits. Pure CSS: no observer, no JS, no layout reads. */
+@utility stagger-in {
+    & > * { animation: var(--animate-rise-in); }
+    & > :nth-child(2) { animation-delay: 30ms; }
+    & > :nth-child(3) { animation-delay: 60ms; }
+    & > :nth-child(4) { animation-delay: 90ms; }
+    & > :nth-child(5) { animation-delay: 120ms; }
+    & > :nth-child(6) { animation-delay: 150ms; }
+    & > :nth-child(7) { animation-delay: 180ms; }
+    & > :nth-child(n + 8) { animation-delay: 210ms; }
+}
+
+/* Route changes: React Router's viewTransition on internal links. Only the page (#main) is named, so the
+   sidebar and top bar hold still while the page crossfades; the rise comes from stagger-in. */
+#main { view-transition-name: page; }
+::view-transition-old(page) { animation: 120ms var(--ease-out) both vt-out; }
+::view-transition-new(page) { animation: 240ms var(--ease-out) both vt-in; }
+/* A theme, mode or scope (account, user) change crossfades the whole app: ThemeProvider wraps the swap in a
+   view transition and marks <html data-vt="theme"> while it runs. A route change does not: crossfading root
+   there left a ghost of the sidebar's old active pill while the live one slid to the new page. */
+:root[data-vt="theme"]::view-transition-old(root),
+:root[data-vt="theme"]::view-transition-new(root) { animation-duration: 260ms; animation-timing-function: var(--ease-out); }
+:root:not([data-vt="theme"])::view-transition-old(root) { animation: none; opacity: 0; }
+:root:not([data-vt="theme"])::view-transition-new(root) { animation: none; }
+@keyframes vt-out { to { opacity: 0; } }
+@keyframes vt-in { from { opacity: 0; } }
+
+@media (prefers-reduced-motion: reduce) {
+    ::view-transition-group(*),
+    ::view-transition-old(*),
+    ::view-transition-new(*) { animation: none !important; }
+    *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+        scroll-behavior: auto !important;
+    }
+}
