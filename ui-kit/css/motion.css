@@ -129,6 +129,51 @@
     & > :nth-child(n + 8) { animation-delay: 210ms; }
 }
 
+/* Floating nav rail: an inset card (not a full-height slab) that sticks to the window with a margin, rounded,
+   lifted by the e2 shadow. Width comes from the app (expanded / collapsed) and eases over 300 ms. */
+@utility floating-rail {
+    position: sticky;
+    top: 0.5rem;
+    margin: 0.5rem 0 0.5rem 0.5rem;
+    height: calc(100dvh - 1rem);
+    border-radius: var(--radius-2xl, 1rem);
+    border: 1px solid var(--sidebar-border);
+    background-color: var(--sidebar);
+    box-shadow: var(--shadow-2);
+    transition: width 300ms var(--ease-out);
+}
+
+/* The shared active pill of a nav (see components/nav-glide.ts): placed by DOM writes, it springs only
+   once data-ready is set after its first placement. */
+@utility nav-pill {
+    pointer-events: none;
+    position: absolute;
+    top: 0;
+    left: 0;
+    border-radius: var(--radius-lg, 0.5rem);
+    background-color: var(--sidebar-active);
+    opacity: 0;
+    &[data-ready] {
+        transition-property: transform, width, height, opacity;
+        transition-duration: 500ms;
+        transition-timing-function: var(--ease-spring);
+    }
+}
+
+/* The pointer-following hover highlight of a nav (useHoverGlide). */
+@utility nav-hover {
+    pointer-events: none;
+    position: absolute;
+    top: 0;
+    left: 0;
+    border-radius: var(--radius-lg, 0.5rem);
+    background-color: var(--sidebar-hover);
+    opacity: 0;
+    transition-property: transform, width, height, opacity;
+    transition-duration: 200ms;
+    transition-timing-function: var(--ease-out);
+}
+
 /* Route changes: React Router's viewTransition on internal links. Only the page (#main) is named, so the
    sidebar and top bar hold still while the page crossfades; the rise comes from stagger-in. */
 #main { view-transition-name: page; }
