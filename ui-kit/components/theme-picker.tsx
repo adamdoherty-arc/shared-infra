@@ -11,7 +11,7 @@
  * description; the kit carries no tooltip of its own, because not every app has Radix Tooltip.
  */
 import { useRef, type KeyboardEvent, type ReactElement, type ReactNode } from 'react';
-import { Check } from 'lucide-react';
+import { CheckIcon } from './icons';
 import { cn } from '../cn';
 import { useTheme } from '../theme/ThemeProvider';
 import { THEMES, type ThemeMode } from '../theme/themes';
@@ -102,7 +102,7 @@ export function ThemePicker({ variant = 'full', className, tip }: ThemePickerPro
                   <span className="flex flex-col gap-0.5">
                     <span className="flex items-center gap-1.5 text-sm font-semibold text-text-primary">
                       {t.label}
-                      {active && <Check className="size-3.5 text-accent-fg" aria-hidden="true" />}
+                      {active && <CheckIcon className="size-3.5 text-accent-fg" aria-hidden="true" />}
                     </span>
                     <span className="text-xs leading-snug text-text-muted">{t.description}</span>
                   </span>

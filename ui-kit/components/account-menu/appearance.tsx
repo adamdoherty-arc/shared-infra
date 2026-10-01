@@ -50,8 +50,8 @@ export function AccountMenuAppearance({ className }: { className?: string }) {
             data-testid={`menu-theme-${t.id}`}
             aria-label={`${t.label}: ${t.description}`}
             className={cn(
-              'flex cursor-pointer flex-col gap-1 rounded-md border p-1 outline-none select-none data-[highlighted]:ring-2 data-[highlighted]:ring-ring',
-              'border-border-subtle bg-surface-1 data-[state=checked]:border-accent data-[state=checked]:bg-accent-soft',
+              'flex cursor-pointer flex-col gap-1 rounded-md border border-border-subtle p-1 outline-none select-none data-[highlighted]:ring-2 data-[highlighted]:ring-ring',
+              'bg-surface-1 data-[state=checked]:border-accent data-[state=checked]:bg-accent-soft',
             )}
           >
             <span

@@ -19,7 +19,7 @@
  */
 import * as React from 'react';
 import * as Menu from '@radix-ui/react-dropdown-menu';
-import { Check, ChevronsUpDown } from 'lucide-react';
+import { CheckIcon, ChevronsUpDownIcon } from '../icons';
 import { cn } from '../../cn';
 
 export const AccountMenu = Menu.Root;
@@ -46,7 +46,7 @@ export const AccountMenuTrigger = React.forwardRef<React.ComponentRef<typeof Men
     >
       {dot}
       <span className={cn('hidden min-w-0 truncate', labelFrom === 'md' ? 'md:inline' : 'sm:inline')}>{label}</span>
-      <ChevronsUpDown className="size-3.5 shrink-0 text-text-muted" aria-hidden="true" />
+      <ChevronsUpDownIcon className="size-3.5 shrink-0 text-text-muted" aria-hidden="true" />
     </Menu.Trigger>
   ),
 );
@@ -160,7 +160,7 @@ export function AccountScopeList({ value, scopes, onChoose, 'aria-label': ariaLa
             )}
           </span>
           <Menu.ItemIndicator className="pt-0.5">
-            <Check className="text-accent-fg" aria-hidden="true" />
+            <CheckIcon className="text-accent-fg" aria-hidden="true" />
           </Menu.ItemIndicator>
         </Menu.RadioItem>
       ))}

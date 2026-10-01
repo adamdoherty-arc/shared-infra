@@ -31,7 +31,8 @@ export interface ThemeAttrs {
  * @param prefersDark whether `(prefers-color-scheme: dark)` currently matches
  * @param cfg the app's PrepaintConfig
  *
- * Order: the scope's saved choice, then (before the store has migrated) a flat pre-kit {theme, mode},
+ * Order: the scope's saved choice, then (before the store has migrated) a flat pre-kit {theme, mode}
+ * (ADA's pre-kit store named the theme `preset`: {preset, mode}),
  * then the scope's seed, then the store's own fallback, then the config's fallback. Each field falls
  * back on its own, so a bad theme keeps a good mode.
  */
@@ -53,13 +54,12 @@ export function resolveThemeAttrs(raw: string | null, rawScope: string | null, p
     const parsed = obj(raw ? JSON.parse(raw) : null);
     state = parsed && obj(parsed.state) ? obj(parsed.state) : parsed;
   } catch {
-    // Unreadable preference: fall through to the seed and the fallback rather than failing the paint.
-    state = null;
+    // Unreadable preference: `state` stays null, so the paint falls through to the seed and the fallback.
   }
   const byScope = state ? obj(state.byScope) : null;
   const picks: Array<Record<string, unknown> | null> = [];
   if (scope && byScope) picks.push(obj(byScope[scope]));
-  if (state && !byScope) picks.push(state);
+  if (state && !byScope) picks.push(state.theme === undefined && state.preset !== undefined ? { theme: state.preset, mode: state.mode } : state);
   if (scope) picks.push(obj(cfg.seeds[scope]));
   if (state) picks.push(obj(state.fallback));
   picks.push(obj(cfg.fallback));

@@ -26,10 +26,12 @@ both apps adopt it.
 | `components/theme-picker.tsx` | `ThemePicker variant="full" \| "compact"`, with an optional `tip` to wrap compact tiles in the app's tooltip. |
 | `components/account-menu/` | `AccountMenu`, `AccountMenuTrigger` (dot or avatar, label from sm/md up, `ChevronsUpDown`), `AccountMenuContent`, `AccountMenuHeader` (title, subtitle, meta line, chips), `AccountMenuSection`, `AccountMenuItem`, `AccountMenuSeparator`, `AccountScopeList` (radio items with a check; `unavailable` greys one with its reason), `AccountMenuAppearance` (the compact picker as menu items). |
 | `components/theme-dot.tsx`, `segmented.tsx`, `theme-options.tsx`, `cn.ts` | A theme's accent dot; the roving radiogroup; the mode options and swatch gradient; the kit's own class merger. |
+| `components/icons.tsx` | The six icons the kit draws (Lucide's paths, inline), so the kit has no icon dependency: ADA refuses `lucide-react` barrel imports (they fetch every icon module in its dev server) and the console has no types for lucide's per-icon paths. |
 | `tools/kit-check.mjs` | Synced to `<app>/scripts/kit-check.mjs`: verifies `kit.lock.json` with Node alone. |
 
-Kit files import only `react`, `@radix-ui/react-dropdown-menu`, `lucide-react`, `zustand`, `clsx`,
-`tailwind-merge` and each other by relative path. Never an app's `@/` alias.
+Kit files import only `react`, `@radix-ui/react-dropdown-menu`, `zustand`, `clsx`,
+`tailwind-merge` and each other by relative path. Never an app's `@/` alias, and no icon package
+(`components/icons.tsx`).
 
 ## The vocabulary
 
@@ -91,8 +93,10 @@ How each app wires its scope:
   `scope={useAccountStore((s) => s.active)}` in `src/theme/AppThemeProvider.tsx`; seeds Work = Law
   (system), Personal = Wave (dark); `legacy` = `consoleLegacyTheme` (its store v1-v3).
 - **ADA:** `scope: {storageKey: 'ada.user', path: ['state', 'activeUserId']}` (store/userStore.ts);
-  `scope={useUserStore((s) => s.activeUserId)}`; `legacy` reads its old `ada-theme-store` shape; the
-  store also writes through to `PUT /api/user/preferences/appearance`.
+  `scope={useUserStore((s) => s.activeUserId)}`; `legacy` reads its old `ada-theme-store` shape
+  (`{mode, preset}`, zustand version 0), and `resolveThemeAttrs` reads that flat shape too, so the first load
+  after adopting the kit paints the saved preset before the store has migrated; the app also writes the
+  user's choice through to `PUT /api/user/preferences/appearance` (ADA `src/theme/sync.ts`).
 
 `ThemeProvider` re-applies on a scope change inside the same view-transition crossfade as a theme pick.
 `resolveThemeAttrs` must stay self-contained (its source is inlined); its id lists are repeated inside

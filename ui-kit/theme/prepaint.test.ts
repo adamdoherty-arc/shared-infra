@@ -34,6 +34,11 @@ describe('resolveThemeAttrs', () => {
     expect(resolveThemeAttrs(flatRaw('sunset', 'dark'), scopeRaw('work'), false, CFG)).toMatchObject({ theme: 'sunset', mode: 'dark' });
   });
 
+  it("reads ADA's pre-kit flat {preset, mode} the same way, so its first load after the kit does not flash", () => {
+    const raw = JSON.stringify({ state: { mode: 'light', preset: 'tokyo' }, version: 0 });
+    expect(resolveThemeAttrs(raw, scopeRaw('work'), true, CFG)).toMatchObject({ theme: 'tokyo', mode: 'light', resolved: 'light' });
+  });
+
   it('keeps mid as its own resolved mode; system resolves from the OS and never picks mid', () => {
     expect(resolveThemeAttrs(kitRaw({ work: { theme: 'wave', mode: 'mid' } }), scopeRaw('work'), true, CFG).resolved).toBe('mid');
     expect(resolveThemeAttrs(kitRaw({ work: { theme: 'mint', mode: 'system' } }), scopeRaw('work'), true, CFG).resolved).toBe('dark');
