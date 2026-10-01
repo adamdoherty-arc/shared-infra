@@ -188,6 +188,8 @@ def test_heavy_request_is_refused_when_the_recorded_peak_overcommits_memory(tmp_
     monkeypatch.setattr(runner.sel, "preflight_changed", lambda *a, **k: None)
     with pytest.raises(runner.RunError, match="memory budget"):
         runner.preflight(project, "full", None)
+    (project.root / "tests").mkdir(exist_ok=True)
+    (project.root / "tests" / "test_a.py").write_text("def test_a():\n    pass\n", encoding="utf-8")
     runner.preflight(project, "tests/test_a.py", None)
 
 

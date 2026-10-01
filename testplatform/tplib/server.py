@@ -17,7 +17,7 @@ from typing import Any
 from . import runner
 from .artifacts import prune
 from .legion import LegionClient
-from .lock import LOCK_DIR, pid_alive, queue_snapshot, split_stem
+from .lock import LIGHT, LOCK_DIR, pid_alive, queue_snapshot, split_stem
 from .profile import PLATFORM_ROOT, ProfileError, legion_url, load_project
 
 DEFAULT_PORT = 8790
@@ -101,15 +101,31 @@ class RunnerService:
             restored += 1
         return restored
 
-    def _run_queued(self, project, body: dict[str, Any], trigger: str, key: str, queue_id: str) -> None:
-        lock = runner.lock_for(project, body.get("target"), body.get("paths") or None, self.lock_dir)
-        acquired = lock.wait_acquire(key, QUEUE_TIMEOUT_S)
+    def _dequeued(self, queue_id: str) -> None:
         with self._queue_lock:
             self._queued.discard(queue_id)
         try:
             self._queue_file(queue_id).unlink(missing_ok=True)
         except OSError:
             pass
+
+    def _run_queued(self, project, body: dict[str, Any], trigger: str, key: str, queue_id: str) -> None:
+        lock = runner.lock_for(project, body.get("target"), body.get("paths") or None, self.lock_dir)
+        if lock.lane == LIGHT:
+            try:
+                outcome = runner.wait_and_run(project, body.get("target"), trigger, self.legion, lock, key,
+                                              body.get("paths") or None, QUEUE_TIMEOUT_S,
+                                              schedule_id=body.get("schedule_id"),
+                                              on_dequeued=lambda: self._dequeued(queue_id))
+            except Exception as exc:
+                self._dequeued(queue_id)
+                sys.stderr.write(f"queued run failed: {type(exc).__name__}: {exc}\n")
+                return
+            if outcome is None:
+                sys.stderr.write(f"queued run for {project.name} gave up after {QUEUE_TIMEOUT_S}s\n")
+            return
+        acquired = lock.wait_acquire(key, QUEUE_TIMEOUT_S)
+        self._dequeued(queue_id)
         if not acquired:
             sys.stderr.write(f"queued run for {project.name} gave up after {QUEUE_TIMEOUT_S}s\n")
             return

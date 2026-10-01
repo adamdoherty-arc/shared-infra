@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -28,6 +29,11 @@ class Project:
     legion_project_id: int
     profile: dict[str, Any] = field(default_factory=dict)
     light_concurrency: int = DEFAULT_LIGHT_CONCURRENCY
+    light_concurrency_max: int | None = None
+
+    @property
+    def light_slots_max(self) -> int:
+        return max(self.light_concurrency, self.light_concurrency_max or 0)
 
     def tier(self, name: str) -> dict[str, Any] | None:
         return (self.profile.get("tiers") or {}).get(name)
@@ -110,6 +116,58 @@ def light_slots_while_heavy(profile: dict[str, Any], light_concurrency: int, mea
     return max(0, min(light_concurrency, int(spare // light)))
 
 
+DEFAULT_HOST_RESERVE_MB = 1024.0
+
+
+def host_available_mb() -> float | None:
+    """Physical RAM the host can still hand out, or None when it cannot be read."""
+    if sys.platform == "win32":
+        import ctypes
+
+        class _Mem(ctypes.Structure):
+            _fields_ = [("length", ctypes.c_ulong), ("load", ctypes.c_ulong), ("total", ctypes.c_ulonglong),
+                        ("avail", ctypes.c_ulonglong), ("pt", ctypes.c_ulonglong), ("pa", ctypes.c_ulonglong),
+                        ("vt", ctypes.c_ulonglong), ("va", ctypes.c_ulonglong), ("ve", ctypes.c_ulonglong)]
+
+        mem = _Mem()
+        mem.length = ctypes.sizeof(_Mem)
+        if not ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(mem)):
+            return None
+        return mem.avail / (1024 * 1024)
+    try:
+        for line in Path("/proc/meminfo").read_text(encoding="utf-8").splitlines():
+            if line.startswith("MemAvailable:"):
+                return int(line.split()[1]) / 1024
+    except (OSError, ValueError, IndexError):
+        return None
+    return None
+
+
+def light_slots_idle(profile: dict[str, Any], base: int, maximum: int, available_mb: float | None = None) -> int:
+    """How many light runs may run at once while NO heavy run is live.
+
+    A profile without a `light_concurrency_max` above `base` keeps exactly `base`. Otherwise the answer starts at
+    `maximum` and is cut by the container memory budget (`light_rss_mb` each beside the parent), the cpu budget
+    (a light run is one in-process interpreter) and the host's free RAM minus `host_reserve_mb`; a tight machine
+    degrades toward 1, never to 0, so the lane always makes progress.
+    """
+    if maximum <= base:
+        return base
+    lanes = profile.get("lanes") or {}
+    light = max(1.0, float(lanes.get("light_rss_mb", 1)))
+    allowed = float(maximum)
+    budget = lanes.get("mem_budget_mb")
+    if budget is not None:
+        allowed = min(allowed, (float(budget) - float(lanes.get("parent_rss_mb", 450))) // light)
+    cpu = lanes.get("cpu_budget")
+    if cpu is not None:
+        allowed = min(allowed, float(cpu))
+    if available_mb is not None:
+        reserve = float(lanes.get("host_reserve_mb", DEFAULT_HOST_RESERVE_MB))
+        allowed = min(allowed, max(0.0, available_mb - reserve) // light)
+    return max(1, min(int(maximum), int(allowed)))
+
+
 def worker_budget_problem(profile: dict[str, Any], light_concurrency: int) -> str | None:
     """None when the xdist workers of every run that can overlap fit the container's CPUs, else why not.
 
@@ -168,6 +226,7 @@ def validate_profile(profile: dict[str, Any], where: str) -> None:
         if not isinstance(lanes, dict):
             raise ProfileError(f"{where}: 'lanes' must be a mapping")
         check_light_concurrency(lanes.get("light_concurrency"), where)
+        check_light_concurrency(lanes.get("light_concurrency_max"), where)
         budget = lanes.get("cpu_budget")
         if budget is not None and (isinstance(budget, bool) or not isinstance(budget, int) or budget < 1):
             raise ProfileError(f"{where}: lanes.cpu_budget must be a positive integer, got {budget!r}")
@@ -199,11 +258,12 @@ def load_project(name: str, registry_path: Path = PROJECTS_FILE) -> Project:
     if light is None:
         light = check_light_concurrency(entry.get("light_concurrency"), str(registry_path))
     light = light or DEFAULT_LIGHT_CONCURRENCY
+    light_max = check_light_concurrency((profile.get("lanes") or {}).get("light_concurrency_max"), str(pfile))
     problem = worker_budget_problem(profile, light) or fast_timeout_problem(profile) or memory_budget_problem(profile, light, None)
     if problem:
         raise ProfileError(f"{pfile}: {problem}")
     return Project(name=name, root=root, legion_project_id=int(entry["legion_project_id"]), profile=profile,
-                   light_concurrency=light)
+                   light_concurrency=light, light_concurrency_max=light_max)
 
 
 def legion_url(registry_path: Path = PROJECTS_FILE) -> str:

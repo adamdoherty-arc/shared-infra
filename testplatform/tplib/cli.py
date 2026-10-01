@@ -69,6 +69,13 @@ def cmd_run(args: argparse.Namespace) -> int:
             behind = f" behind run {holder.run_id}" if holder is not None and holder.run_id else ""
             emit(f"queued #{position} in the {lock.lane} lane{behind}", stream=sys.stderr)
 
+        if lock.lane == LIGHT:
+            outcome = runner.wait_and_run(project, target, trigger, client, lock, key, args.paths, QUEUE_TIMEOUT_S,
+                                          on_wait=announce)
+            if outcome is None:
+                emit([f"error: {name} test lock still held by another run after {QUEUE_TIMEOUT_S}s"])
+                return 2
+            return _finish_run(outcome, args.detail, args.quiet)
         if not lock.wait_acquire(key, QUEUE_TIMEOUT_S, on_wait=announce):
             emit([f"error: {name} test lock still held by another run after {QUEUE_TIMEOUT_S}s"])
             return 2

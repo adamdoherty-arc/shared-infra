@@ -6,14 +6,14 @@ path_tier: path
 runtime:
   kind: run
   image: legion-legion-backend
-  workdir: /work/testplatform
+  workdir: /work
   setup: pip install -q pytest-json-report pytest-rerunfailures
   mounts:
     - {host: testplatform, container: /work/testplatform, mode: ro}
+    - {host: scripts, container: /work/scripts, mode: ro}
 
 pytest:
   command: [python, -m, pytest]
-  path_prefix: testplatform/
   common_args:
     - -p
     - no:cacheprovider
@@ -22,7 +22,7 @@ pytest:
 
 tiers:
   fast:
-    paths: [tests]
+    paths: [testplatform/tests, scripts/tests]
     workers: 0
     timeout_s: 600
     min_executed: 1

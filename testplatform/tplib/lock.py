@@ -17,6 +17,7 @@ LOCK_DIR = ARTIFACTS_ROOT / ".locks"
 HEAVY = "heavy"
 LIGHT = "light"
 GATE_STALE_S = 15.0
+CLAIM_GRACE_S = 30.0
 _SLOT_STEM = re.compile(r"^(?P<project>.+)\.light(?P<slot>\d+)$")
 
 
@@ -27,6 +28,17 @@ def split_stem(stem: str) -> tuple[str, str]:
 
 
 _TICKETS = itertools.count()
+
+
+def _unlink_quiet(path: Path, attempts: int = 40) -> None:
+    """Remove a file another process may be reading right now: Windows refuses with a sharing violation until the
+    reader closes it, and a leader scanning the queue must never be able to kill the waiter it is scanning."""
+    for _ in range(attempts):
+        try:
+            path.unlink(missing_ok=True)
+            return
+        except PermissionError:
+            time.sleep(0.025)
 
 
 def caller_group() -> str:
@@ -171,6 +183,10 @@ class ProjectLock:
         self.dir.mkdir(parents=True, exist_ok=True)
         self.key = key
         if self.lane == HEAVY:
+            blocker = self.admit(0) if self.admit is not None else None
+            if blocker is not None:
+                self._attach = blocker
+                return False, blocker
             ok, held = self._try_slot(self._slot_path(0), key)
             self._attach = None if ok else held
             return ok, held
@@ -201,30 +217,52 @@ class ProjectLock:
             return
         held = self.read()
         if held is not None and held.pid == os.getpid():
-            try:
-                self.path.unlink()
-            except OSError:
-                pass
+            _unlink_quiet(self.path)
         self.mine = False
 
-    def wait_acquire(self, key: str | None, timeout: float, poll: float = 5.0,
+    @property
+    def _claimed_dir(self) -> Path:
+        return self.dir / f"{self.project}.light.claimed"
+
+    @property
+    def _handoff_dir(self) -> Path:
+        return self.dir / f"{self.project}.light.handoff"
+
+    def wait_acquire(self, key: str | None, timeout: float, poll: float = 1.0,
                      on_wait: Callable[[int, Held | None], None] | None = None) -> bool:
         """Queue behind the lane, fair-share across caller groups then first come first served; True once this
         process owns a slot. A group already holding slots yields to waiters from groups holding fewer, so one
-        session's parallel sweep cannot occupy every slot while other sessions wait."""
+        session's parallel sweep cannot occupy every slot while other sessions wait. A waiter that passes no
+        `spec` is never claimed into a batch (see `wait_slot_or_handoff`)."""
+        state, _ = self.wait_slot_or_handoff(key, timeout, poll, on_wait)
+        return state == "slot"
+
+    def wait_slot_or_handoff(self, key: str | None, timeout: float, poll: float = 1.0,
+                             on_wait: Callable[[int, Held | None], None] | None = None,
+                             spec: dict[str, Any] | None = None) -> tuple[str, dict[str, Any] | None]:
+        """Wait in the lane's queue. Returns ("slot", None) once this process owns a slot, ("handoff", payload) when
+        a leader claimed this waiter's ticket and ran its request in the leader's own pytest process, or
+        ("timeout", None). A `{"retry": true}` payload means the leader could not deliver a result for this request:
+        the caller queues again."""
         queue_dir = self._queue_dir
         queue_dir.mkdir(parents=True, exist_ok=True)
         ticket = queue_dir / f"{time.time_ns():020d}-{os.getpid()}-{next(_TICKETS)}"
         ticket.write_text(json.dumps({"pid": os.getpid(), "group": caller_group(), "key": key,
-                                      "queued_at": time.time()}), encoding="utf-8")
+                                      "queued_at": time.time(), "spec": spec}), encoding="utf-8")
         deadline = time.time() + timeout
         last_position = -1
         try:
             while time.time() < deadline:
+                if not ticket.exists():
+                    payload = self._await_handoff(ticket.name, deadline)
+                    return ("handoff", payload) if payload is not None else ("timeout", None)
                 if self._is_next(queue_dir, ticket):
                     ok, _ = self.acquire(key)
                     if ok:
-                        return True
+                        if spec is None or self._take_ticket(ticket):
+                            return "slot", None
+                        self.release()
+                        continue
                 if on_wait is not None:
                     position = self.queue_position(ticket)
                     if position != last_position:
@@ -232,9 +270,96 @@ class ProjectLock:
                         busy = self.holders()
                         on_wait(position, busy[0] if busy else None)
                 time.sleep(poll)
-            return False
+            return "timeout", None
         finally:
-            ticket.unlink(missing_ok=True)
+            _unlink_quiet(ticket)
+
+    def _take_ticket(self, ticket: Path) -> bool:
+        """Settle, atomically, that this waiter runs on its own slot rather than inside a leader's batch.
+
+        A leader claims a ticket by renaming it; the waiter takes its own the same way, so exactly one of the two
+        renames succeeds. False means the leader (or a sharing violation) got there first: the caller gives the slot
+        back and either receives the leader's result or tries again.
+        """
+        self._claimed_dir.mkdir(parents=True, exist_ok=True)
+        mine = self._claimed_dir / f"{ticket.name}.self"
+        try:
+            ticket.rename(mine)
+        except OSError:
+            return False
+        _unlink_quiet(mine)
+        return True
+
+    def claim_peers(self, batch_class: str, max_peers: int, max_files: int) -> list[dict[str, Any]]:
+        """Claim queued waiters whose request can share this process's pytest run; returns their specs.
+
+        A claim is an atomic rename of the waiter's ticket into the lane's claimed directory, so a waiter is taken by
+        exactly one leader and never also starts on its own. Only waiters that published a `spec` of the same
+        `batch_class` with a live owner are taken, up to `max_peers` and `max_files` distinct targets in total.
+        """
+        out: list[dict[str, Any]] = []
+        if self.lane != LIGHT or not self._queue_dir.exists():
+            return out
+        self._claimed_dir.mkdir(parents=True, exist_ok=True)
+        files = 0
+        for ticket in sorted(self._queue_dir.iterdir()):
+            if len(out) >= max_peers:
+                break
+            try:
+                data = json.loads(ticket.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            spec = data.get("spec") if isinstance(data, dict) else None
+            if not isinstance(spec, dict) or spec.get("batch_class") != batch_class:
+                continue
+            if not pid_alive(int(data.get("pid", 0))):
+                continue
+            targets = list(spec.get("targets") or [])
+            if files + len(targets) > max_files:
+                continue
+            claimed = self._claimed_dir / ticket.name
+            try:
+                ticket.rename(claimed)
+            except OSError:
+                continue
+            claimed.write_text(json.dumps({**data, "leader_pid": os.getpid(), "claimed_at": time.time()}),
+                               encoding="utf-8")
+            files += len(targets)
+            out.append({"ticket": ticket.name, "key": data.get("key"), "spec": spec, "pid": data.get("pid")})
+        return out
+
+    def deliver(self, ticket_name: str, payload: dict[str, Any]) -> None:
+        """Hand a claimed waiter its result (or a retry) and drop the claim marker."""
+        self._handoff_dir.mkdir(parents=True, exist_ok=True)
+        target = self._handoff_dir / f"{ticket_name}.json"
+        tmp = target.with_suffix(".tmp")
+        tmp.write_text(json.dumps(payload), encoding="utf-8")
+        os.replace(tmp, target)
+
+    def _await_handoff(self, ticket_name: str, deadline: float) -> dict[str, Any] | None:
+        """Wait for the leader's result for a claimed ticket; a retry payload when the leader died without one."""
+        handoff = self._handoff_dir / f"{ticket_name}.json"
+        claimed = self._claimed_dir / ticket_name
+        grace_until = time.time() + CLAIM_GRACE_S
+        while time.time() < deadline:
+            if handoff.exists():
+                try:
+                    payload = json.loads(handoff.read_text(encoding="utf-8"))
+                except (OSError, ValueError):
+                    time.sleep(0.05)
+                    continue
+                _unlink_quiet(handoff)
+                _unlink_quiet(claimed)
+                return payload
+            try:
+                leader = int(json.loads(claimed.read_text(encoding="utf-8")).get("leader_pid", 0))
+            except (OSError, ValueError):
+                leader = 0
+            if (leader and not pid_alive(leader)) or (not leader and time.time() > grace_until):
+                _unlink_quiet(claimed)
+                return {"retry": True, "reason": "leader died before delivering"}
+            time.sleep(0.25)
+        return None
 
     def queued_duplicate(self, key: str | None) -> int | None:
         """1-based queue place of a live waiter already holding `key` in this lane, else None: a repeat of a

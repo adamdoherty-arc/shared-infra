@@ -21,8 +21,8 @@ from . import selection as sel
 from .artifacts import new_artifact_dir
 from .legion import LegionClient, LegionError, retryable
 from .lock import HEAVY, LIGHT, Held, ProjectLock
-from .profile import (ARTIFACTS_ROOT, Project, light_slots_while_heavy, measured_rss_file, measured_worker_rss_mb,
-                      memory_budget_problem)
+from .profile import (ARTIFACTS_ROOT, Project, host_available_mb, light_slots_idle, light_slots_while_heavy,
+                      measured_rss_file, measured_worker_rss_mb, memory_budget_problem)
 
 TRIGGERS = ("claude", "schedule", "hook", "manual")
 NO_WINDOW = 0x08000000 if sys.platform == "win32" else 0
@@ -104,9 +104,9 @@ def lock_for(project: Project, target: str | None, changed_paths: list[str] | No
     """The lock a request must hold: the project's single heavy slot, or one of its light-lane slots."""
     kwargs: dict[str, Any] = {} if lock_dir is None else {"lock_dir": lock_dir}
     if lane_of(project, target, changed_paths) == LIGHT:
-        return ProjectLock(project.name, lane=LIGHT, slots=project.light_concurrency,
+        return ProjectLock(project.name, lane=LIGHT, slots=project.light_slots_max,
                            admit=lambda n: light_blocker(project, n, lock_dir), **kwargs)
-    return ProjectLock(project.name, **kwargs)
+    return ProjectLock(project.name, admit=lambda _n: heavy_blocker(project, lock_dir), **kwargs)
 
 
 def request_key(target: str | None, paths: list[str] | None) -> str:
@@ -116,7 +116,11 @@ def request_key(target: str | None, paths: list[str] | None) -> str:
 
 def preflight(project: Project, target: str | None, changed_paths: list[str] | None) -> None:
     """Refuse before a Legion run row exists when the request cannot be scoped."""
-    _, tier, _ = resolve_target(project, target)
+    _, tier, named = resolve_target(project, target)
+    for node in named or []:
+        if not (project.root / node.split("::", 1)[0]).exists():
+            raise RunError(f"target {node!r} is not a tier ({', '.join(project.tier_names)}) and names no existing "
+                           f"file or directory under {project.root.as_posix()}")
     if lane_of(project, target, changed_paths) == HEAVY:
         problem = memory_budget_problem(project.profile, project.light_concurrency, measured_worker_rss_mb(project.name))
         if problem:
@@ -242,14 +246,43 @@ def ensure_container(runtime: dict[str, Any], root: Path) -> str | None:
 DEFAULT_PARALLEL_MIN_FILES = 150
 
 
-def light_blocker(project: Project, held_light: int, lock_dir: Path | None = None) -> Held | None:
-    """The live heavy run when a further light run would not fit beside it in memory, else None."""
+def light_blocker(project: Project, held_light: int, lock_dir: Path | None = None,
+                  available_mb: float | None = None) -> Held | None:
+    """The run that stops a further light run from starting, else None.
+
+    While a heavy run is live that is the heavy run when no memory is left beside it. With no heavy run the lane is
+    capped by `light_slots_idle` (container memory, cpu, host free RAM) and the blocker is a live light holder.
+    """
     kwargs: dict[str, Any] = {} if lock_dir is None else {"lock_dir": lock_dir}
     heavy = ProjectLock(project.name, **kwargs).read()
-    if heavy is None or heavy.stale:
+    if heavy is not None and not heavy.stale:
+        allowed = light_slots_while_heavy(project.profile, project.light_concurrency,
+                                          measured_worker_rss_mb(project.name))
+        return heavy if held_light >= allowed else None
+    if project.light_slots_max <= project.light_concurrency:
         return None
+    if available_mb is None:
+        available_mb = host_available_mb()
+    allowed = light_slots_idle(project.profile, project.light_concurrency, project.light_slots_max, available_mb)
+    if held_light < allowed:
+        return None
+    live = ProjectLock(project.name, lane=LIGHT, slots=project.light_slots_max, **kwargs).holders()
+    return live[0] if live else None
+
+
+def heavy_blocker(project: Project, lock_dir: Path | None = None) -> Held | None:
+    """A live light holder when more light runs are live than fit beside a heavy run, else None.
+
+    The light lane may widen to `light_concurrency_max` while nothing heavy runs; a heavy run starting then would add
+    its workers on top and push the container past its memory limit, so it waits for the lane to drain to the
+    heavy-compatible level instead.
+    """
+    if project.light_slots_max <= project.light_concurrency:
+        return None
+    kwargs: dict[str, Any] = {} if lock_dir is None else {"lock_dir": lock_dir}
+    live = ProjectLock(project.name, lane=LIGHT, slots=project.light_slots_max, **kwargs).holders()
     allowed = light_slots_while_heavy(project.profile, project.light_concurrency, measured_worker_rss_mb(project.name))
-    return heavy if held_light >= allowed else None
+    return live[0] if len(live) > max(allowed, 0) else None
 
 
 def light_worker_cap(project: Project, lock_dir: Path | None = None) -> int | None:
@@ -968,12 +1001,158 @@ def _iso(ts: float | None = None) -> str:
     return dt.datetime.fromtimestamp(ts or time.time(), tz=dt.UTC).isoformat()
 
 
+def _finish_batch(lock: Any, exe: Execution, own_targets: list[str], peers: list[dict[str, Any]],
+                  run_id: int | None, art: Path, elapsed: float) -> Execution:
+    """Split the shared run, hand every claimed waiter its own slice (or a retry), return the leader's own slice."""
+    parts = split_execution(exe, [own_targets] + [list(p["spec"]["targets"]) for p in peers])
+    for peer, part in zip(peers, parts[1:], strict=False):
+        if part is None:
+            lock.deliver(peer["ticket"], {"retry": True, "reason": f"shared run {exe.status} without per-test results"})
+            continue
+        lock.deliver(peer["ticket"], {"execution": _execution_payload(part), "leader_run_id": run_id,
+                                      "leader_artifact": art.as_posix(), "elapsed": round(elapsed, 2),
+                                      "batch_size": len(peers) + 1})
+    (art / "batch.json").write_text(json.dumps({"leader": True, "members": len(peers) + 1,
+                                                "targets": [t for p in peers for t in p["spec"]["targets"]]}),
+                                    encoding="utf-8")
+    return parts[0] if parts[0] is not None else exe
+
+
+DEFAULT_BATCH_MAX_PEERS = 5
+DEFAULT_BATCH_MAX_FILES = 8
+
+
+class NullLock:
+    """Stands in for a lane slot when a request runs inside another process's pytest invocation."""
+
+    lane = LIGHT
+    stale_taken = None
+    mine = False
+
+    def set_run_id(self, run_id: int) -> None:
+        return None
+
+    def release(self) -> None:
+        return None
+
+
+def batch_spec(project: Project, target: str | None, trigger: str, changed_paths: list[str] | None,
+               key: str | None = None) -> dict[str, Any] | None:
+    """What a queued light request publishes so another process may run it in the same pytest invocation, or None
+    when it must run alone (a whole tier, a `changed --paths` mapping, any non-pytest tier).
+
+    Requests are only combined when they select tests the same way: the path tier's marker filter is dropped as soon
+    as one named target carries a node id, so node-id requests and plain file requests never share a process.
+    """
+    if os.environ.get("TESTCTL_BATCH") == "0":
+        return None
+    tier_name, tier, paths = resolve_target(project, target)
+    framework = tier.get("framework", project.profile.get("framework"))
+    if not paths or changed_paths or framework != "pytest" or tier_name != project.profile.get("path_tier"):
+        return None
+    node = any("::" in p for p in paths)
+    return {"batch_class": f"{tier_name}|{trigger}|{'node' if node else 'file'}", "targets": list(paths),
+            "target": target or project.default_target, "trigger": trigger}
+
+
+def _targets_match(node_id: str, targets: list[str]) -> bool:
+    node = node_id.replace("\\", "/")
+    for raw in targets:
+        t = raw.replace("\\", "/").rstrip("/")
+        if node == t or node.startswith(t + "::") or node.startswith(t + "/"):
+            return True
+    return False
+
+
+def split_execution(exe: Execution, members: list[list[str]]) -> list[Execution | None]:
+    """One shared pytest Execution -> one Execution per member (their own targets' cases, their own verdict).
+
+    None for every member when the shared run produced no per-test evidence (timeout, killed, no report): such a run
+    says nothing about any single request, so each of them runs again on its own.
+    """
+    if exe.status in ("timeout",) or not exe.cases:
+        return [None for _ in members]
+    out: list[Execution | None] = []
+    for targets in members:
+        cases = [c for c in exe.cases if _targets_match(str(c["node_id"]), targets)]
+        totals = parsers.totals_of(cases)
+        if totals["errors"] and not totals["failed"]:
+            status = "error"
+        else:
+            status = "failed" if (totals["failed"] or totals["errors"]) else "passed"
+        summary = f"collection/setup errors in {totals['errors']} items: see the batch log"[:500] if status == "error" else None
+        out.append(Execution(status, cases, summary, exe.quarantined_deselected, exe.rc, exe.reason))
+    return out
+
+
+def _execution_payload(exe: Execution) -> dict[str, Any]:
+    return {"status": exe.status, "cases": exe.cases, "error_summary": exe.error_summary,
+            "quarantined_deselected": exe.quarantined_deselected, "rc": exe.rc, "reason": exe.reason}
+
+
+def execution_from_payload(data: dict[str, Any]) -> Execution:
+    return Execution(str(data["status"]), list(data.get("cases") or []), data.get("error_summary"),
+                     int(data.get("quarantined_deselected") or 0), data.get("rc"), data.get("reason"))
+
+
+def wait_and_run(project: Project, target: str | None, trigger: str, legion: LegionClient, lock: ProjectLock,
+                 key: str, changed_paths: list[str] | None, timeout_s: float,
+                 on_wait: Callable[[int, Any], None] | None = None, schedule_id: int | None = None,
+                 on_dequeued: Callable[[], None] | None = None,
+                 artifacts_root: Path = ARTIFACTS_ROOT) -> Outcome | None:
+    """Queue for a lane slot and run the request, or receive its result from the leader that ran it inside its own
+    pytest process; None when the queue wait timed out.
+
+    This path would pass trivially if a handed-off request were reported without its own Legion run: the handoff
+    branch therefore goes through `start_and_run` with the leader's slice, so every request still gets its own run
+    row, verdict and artifact directory.
+    """
+    spec = batch_spec(project, target, trigger, changed_paths, key)
+    deadline = time.time() + timeout_s
+    while True:
+        state, payload = lock.wait_slot_or_handoff(key, max(1.0, deadline - time.time()), on_wait=on_wait, spec=spec)
+        if on_dequeued is not None:
+            on_dequeued()
+        if state == "slot":
+            try:
+                return start_and_run(project, target, trigger, legion, lock, artifacts_root=artifacts_root,
+                                     changed_paths=changed_paths, schedule_id=schedule_id)
+            finally:
+                lock.release()
+        if state == "handoff" and payload is not None and payload.get("retry"):
+            continue
+        if state == "handoff" and payload is not None:
+            return start_and_run(project, target, trigger, legion, NullLock(), artifacts_root=artifacts_root,
+                                 changed_paths=changed_paths, schedule_id=schedule_id,
+                                 precomputed=execution_from_payload(payload["execution"]),
+                                 batched_with={"leader_run_id": payload.get("leader_run_id"),
+                                               "leader_artifact": payload.get("leader_artifact"),
+                                               "elapsed": payload.get("elapsed", 0),
+                                               "batch_size": payload.get("batch_size")})
+        return None
+
+
 def start_and_run(project: Project, target: str | None, trigger: str, legion: LegionClient,
                   lock: ProjectLock, on_started: Callable[[int | None, Path], None] | None = None,
                   artifacts_root: Path = ARTIFACTS_ROOT, changed_paths: list[str] | None = None,
-                  schedule_id: int | None = None) -> Outcome:
+                  schedule_id: int | None = None, precomputed: Execution | None = None,
+                  batched_with: dict[str, Any] | None = None) -> Outcome:
     tier_name, tier, paths = resolve_target(project, target)
     target_label = target or project.default_target
+    peers: list[dict[str, Any]] = []
+    own_spec = None
+    if precomputed is None and lock.lane == LIGHT and getattr(lock, "mine", False):
+        own_spec = batch_spec(project, target, trigger, changed_paths)
+        if own_spec is not None:
+            lanes = project.profile.get("lanes") or {}
+            peers = lock.claim_peers(own_spec["batch_class"], int(lanes.get("batch_max_peers", DEFAULT_BATCH_MAX_PEERS)),
+                                     int(lanes.get("batch_max_files", DEFAULT_BATCH_MAX_FILES)))
+    if peers:
+        union = list(paths or [])
+        for peer in peers:
+            union += [t for t in peer["spec"]["targets"] if t not in union]
+    else:
+        union = paths
     try:
         drain_pending(legion, artifacts_root, DRAIN_MAX_ITEMS, DRAIN_BUDGET_S)
     except OSError:
@@ -1006,11 +1185,23 @@ def start_and_run(project: Project, target: str | None, trigger: str, legion: Le
                 "error_summary": "runner process died before completing this run", "cases": []})
         except LegionError:
             pass
+    delivered = not peers
     try:
-        exe = execute_framework(project, tier, paths, trigger, art, legion, target_label, changed_paths)
-    except Exception as exc:
-        exe = Execution("error", error_summary=f"runner exception: {type(exc).__name__}: {exc}"[:500])
-    duration = time.time() - started_at
+        try:
+            exe = precomputed if precomputed is not None else execute_framework(
+                project, tier, union, trigger, art, legion, target_label, changed_paths)
+        except Exception as exc:
+            exe = Execution("error", error_summary=f"runner exception: {type(exc).__name__}: {exc}"[:500])
+        if peers:
+            exe = _finish_batch(lock, exe, list(paths or []), peers, run_id, art, time.time() - started_at)
+            delivered = True
+    finally:
+        if not delivered:
+            for peer in peers:
+                lock.deliver(peer["ticket"], {"retry": True, "reason": "leader failed before delivering"})
+    duration = float(batched_with["elapsed"]) if batched_with else time.time() - started_at
+    if batched_with:
+        (art / "batch.json").write_text(json.dumps(batched_with), encoding="utf-8")
     totals = parsers.totals_of(exe.cases)
     refusal = zero_test_refusal(framework, tier, changed_paths, exe, totals)
     if refusal:
