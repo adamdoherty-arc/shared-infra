@@ -589,7 +589,8 @@ def test_service_queues_a_different_request_once(tmp_path, monkeypatch):
     service = server.RunnerService(legion=object(), lock_dir=tmp_path)
     first = service.submit({"project": "p", "target": "fast", "trigger": "schedule"})
     second = service.submit({"project": "p", "target": "fast", "trigger": "schedule"})
-    assert first == (202, {"accepted": True, "run_id": None, "queued": True, "duplicate": False})
+    assert first == (202, {"accepted": True, "run_id": None, "queued": True, "duplicate": False,
+                           "queue_position": None, "lane": "heavy", "waiting_for_run_id": None})
     assert second[1]["duplicate"] is True and len(started) == 1
     holder.release()
 

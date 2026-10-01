@@ -236,6 +236,18 @@ def ensure_container(runtime: dict[str, Any], root: Path) -> str | None:
 DEFAULT_PARALLEL_MIN_FILES = 150
 
 
+def light_worker_cap(project: Project, lock_dir: Path | None = None) -> int | None:
+    """xdist worker ceiling for a light-lane run: in-process while a heavy run is live, else its share of cpu_budget."""
+    budget = (project.profile.get("lanes") or {}).get("cpu_budget")
+    if budget is None:
+        return None
+    kwargs: dict[str, Any] = {} if lock_dir is None else {"lock_dir": lock_dir}
+    heavy = ProjectLock(project.name, **kwargs).read()
+    if heavy is not None and not heavy.stale:
+        return 0
+    return int(budget) // max(1, project.light_concurrency)
+
+
 def effective_workers(workers: int, paths: list[str] | None, parallel_min_files: int) -> int:
     """xdist only pays for itself on a large file set: each worker re-imports the whole backend (~1 GB, tens of
     seconds), and under lane contention the per-test thread timeout kills starved workers in a replace loop.
@@ -379,6 +391,10 @@ def run_pytest(project: Project, tier: dict[str, Any], paths: list[str] | None, 
             reap_orphaned_heavy_pytest(runtime)
         tmp_dir = runtime.get("tmp_dir", "/tmp/testplatform")
         report_in = f"{tmp_dir}/{report_name}"
+        if paths or changed_paths:
+            cap = light_worker_cap(project)
+            if cap is not None:
+                tier = {**tier, "workers": min(int(tier.get("workers", 0)), cap)}
         pytest_args = _pytest_args(project, tier, paths, trigger, report_in, quarantined, extra)
         cmd = ["docker", "exec", "-w", runtime.get("workdir", "/app")]
         for k, v in env.items():

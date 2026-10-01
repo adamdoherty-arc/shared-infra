@@ -57,6 +57,45 @@ def check_light_concurrency(value: Any, where: str) -> int | None:
     return value
 
 
+def worker_budget_problem(profile: dict[str, Any], light_concurrency: int) -> str | None:
+    """None when the xdist workers of every run that can overlap fit the container's CPUs, else why not.
+
+    A whole-tier (heavy) run owns `workers` processes; every light-lane run is forced in-process (one process)
+    while a heavy run is live, so the worst overlap is heavy workers + one process per light slot. With no heavy
+    run the light slots share the budget between them.
+    """
+    lanes = profile.get("lanes") or {}
+    budget = lanes.get("cpu_budget")
+    if budget is None:
+        return None
+    tiers = profile.get("tiers") or {}
+    path_tier = profile.get("path_tier")
+    heavy = max([int(t.get("workers", 0)) for n, t in tiers.items()
+                 if n != path_tier and t.get("framework", profile.get("framework")) == "pytest"] or [0])
+    if heavy + light_concurrency > budget:
+        return f"heavy workers {heavy} + light slots {light_concurrency} exceed cpu_budget {budget}"
+    light = max([int(t.get("workers", 0)) for n, t in tiers.items()
+                 if t.get("mode") == "changed" or n == path_tier] or [0])
+    if light * light_concurrency > budget:
+        return f"light workers {light} x light slots {light_concurrency} exceed cpu_budget {budget}"
+    return None
+
+
+MAX_FAST_PER_TEST_TIMEOUT_S = 60
+
+
+def fast_timeout_problem(profile: dict[str, Any]) -> str | None:
+    """A fast tier whose per-test pytest-timeout exceeds the cap lets one hung test burn minutes of a worker."""
+    fast = (profile.get("tiers") or {}).get("fast")
+    if not fast or fast.get("framework", profile.get("framework")) != "pytest":
+        return None
+    args = [str(a) for a in list((profile.get("pytest") or {}).get("common_args", [])) + list(fast.get("args", []))]
+    values = [int(a.split("=", 1)[1]) for a in args if a.startswith("--timeout=") and a.split("=", 1)[1].isdigit()]
+    if values and values[-1] > MAX_FAST_PER_TEST_TIMEOUT_S:
+        return f"fast tier per-test --timeout={values[-1]} exceeds the {MAX_FAST_PER_TEST_TIMEOUT_S}s cap"
+    return None
+
+
 def validate_profile(profile: dict[str, Any], where: str) -> None:
     if not isinstance(profile, dict):
         raise ProfileError(f"{where}: profile must be a mapping")
@@ -76,6 +115,9 @@ def validate_profile(profile: dict[str, Any], where: str) -> None:
         if not isinstance(lanes, dict):
             raise ProfileError(f"{where}: 'lanes' must be a mapping")
         check_light_concurrency(lanes.get("light_concurrency"), where)
+        budget = lanes.get("cpu_budget")
+        if budget is not None and (isinstance(budget, bool) or not isinstance(budget, int) or budget < 1):
+            raise ProfileError(f"{where}: lanes.cpu_budget must be a positive integer, got {budget!r}")
     default = profile.get("default_target", "fast")
     if default not in tiers:
         raise ProfileError(f"{where}: default_target {default!r} is not a tier")
@@ -103,8 +145,12 @@ def load_project(name: str, registry_path: Path = PROJECTS_FILE) -> Project:
     light = check_light_concurrency((profile.get("lanes") or {}).get("light_concurrency"), str(pfile))
     if light is None:
         light = check_light_concurrency(entry.get("light_concurrency"), str(registry_path))
+    light = light or DEFAULT_LIGHT_CONCURRENCY
+    problem = worker_budget_problem(profile, light)
+    if problem:
+        raise ProfileError(f"{pfile}: {problem}")
     return Project(name=name, root=root, legion_project_id=int(entry["legion_project_id"]), profile=profile,
-                   light_concurrency=light or DEFAULT_LIGHT_CONCURRENCY)
+                   light_concurrency=light)
 
 
 def legion_url(registry_path: Path = PROJECTS_FILE) -> str:

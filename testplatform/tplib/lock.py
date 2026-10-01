@@ -6,6 +6,7 @@ import os
 import re
 import sys
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -189,25 +190,48 @@ class ProjectLock:
                 pass
         self.mine = False
 
-    def wait_acquire(self, key: str | None, timeout: float, poll: float = 5.0) -> bool:
+    def wait_acquire(self, key: str | None, timeout: float, poll: float = 5.0,
+                     on_wait: Callable[[int, Held | None], None] | None = None) -> bool:
         """Queue behind the lane, fair-share across caller groups then first come first served; True once this
         process owns a slot. A group already holding slots yields to waiters from groups holding fewer, so one
         session's parallel sweep cannot occupy every slot while other sessions wait."""
         queue_dir = self._queue_dir
         queue_dir.mkdir(parents=True, exist_ok=True)
         ticket = queue_dir / f"{time.time_ns():020d}-{os.getpid()}-{next(_TICKETS)}"
-        ticket.write_text(json.dumps({"pid": os.getpid(), "group": caller_group()}), encoding="utf-8")
+        ticket.write_text(json.dumps({"pid": os.getpid(), "group": caller_group(), "key": key,
+                                      "queued_at": time.time()}), encoding="utf-8")
         deadline = time.time() + timeout
+        last_position = -1
         try:
             while time.time() < deadline:
                 if self._is_next(queue_dir, ticket):
                     ok, _ = self.acquire(key)
                     if ok:
                         return True
+                if on_wait is not None:
+                    position = self.queue_position(ticket)
+                    if position != last_position:
+                        last_position = position
+                        busy = self.holders()
+                        on_wait(position, busy[0] if busy else None)
                 time.sleep(poll)
             return False
         finally:
             ticket.unlink(missing_ok=True)
+
+    def queue_position(self, ticket: Path) -> int:
+        """1-based place in this lane's queue (1 = next to start), counting only live waiters."""
+        ahead = 0
+        for other in sorted(self._queue_dir.iterdir()) if self._queue_dir.exists() else []:
+            if other == ticket:
+                return ahead + 1
+            try:
+                owner, _ = self._read_ticket(other)
+            except (OSError, ValueError):
+                continue
+            if pid_alive(owner):
+                ahead += 1
+        return ahead + 1
 
     @staticmethod
     def _read_ticket(path: Path) -> tuple[int, str]:
@@ -301,3 +325,27 @@ class _Gate:
 
     def __exit__(self, *exc: object) -> None:
         self._drop()
+
+
+def queue_snapshot(lock_dir: Path = LOCK_DIR) -> list[dict[str, object]]:
+    """Every live waiter across every project and lane: `queued #N` for agents and the owner instead of a silent wait."""
+    rows: list[dict[str, object]] = []
+    if not lock_dir.exists():
+        return rows
+    for qdir in sorted(lock_dir.glob("*.queue")):
+        stem = qdir.name[: -len(".queue")]
+        light = stem.endswith(".light")
+        project = stem[: -len(".light")] if light else stem
+        lane = LIGHT if light else HEAVY
+        live = 0
+        for ticket in sorted(qdir.iterdir()):
+            try:
+                data = json.loads(ticket.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            if not isinstance(data, dict) or not pid_alive(int(data.get("pid", 0))):
+                continue
+            live += 1
+            rows.append({"project": project, "lane": lane, "position": live, "pid": data.get("pid"),
+                         "group": data.get("group"), "key": data.get("key"), "queued_at": data.get("queued_at")})
+    return rows

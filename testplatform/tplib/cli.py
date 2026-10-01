@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import subprocess
 import sys
@@ -10,7 +11,7 @@ from typing import Any
 from . import runner, server
 from .artifacts import prune
 from .legion import LegionClient, LegionError
-from .lock import LIGHT, ProjectLock
+from .lock import LIGHT, ProjectLock, queue_snapshot
 from .printer import budget, emit
 from .profile import ARTIFACTS_ROOT, PLATFORM_ROOT, ProfileError, legion_url, load_project, parse_target_spec
 
@@ -59,7 +60,11 @@ def cmd_run(args: argparse.Namespace) -> int:
     key = runner.request_key(target or project.default_target, args.paths)
     ok, held = lock.acquire(key)
     if not ok and held is not None and held.key != key:
-        if not lock.wait_acquire(key, QUEUE_TIMEOUT_S):
+        def announce(position: int, holder: Any) -> None:
+            behind = f" behind run {holder.run_id}" if holder is not None and holder.run_id else ""
+            emit(f"queued #{position} in the {lock.lane} lane{behind}", stream=sys.stderr)
+
+        if not lock.wait_acquire(key, QUEUE_TIMEOUT_S, on_wait=announce):
             emit([f"error: {name} test lock still held by another run after {QUEUE_TIMEOUT_S}s"])
             return 2
         ok = True
@@ -87,8 +92,16 @@ def _run_detached(args: argparse.Namespace, name: str, lock: ProjectLock) -> int
     held = lock.wait_for_run_id(20.0, mine) if lock.lane == LIGHT else lock.wait_for_run_id(20.0)
     if held is not None and held.run_id is not None:
         if held.key != mine:
-            emit([f"queued {args.spec} behind run {held.run_id} in the {lock.lane} lane (first come, first served); "
-                  f"poll with: testctl status"])
+            deadline = time.time() + 5.0
+            position = None
+            while position is None and time.time() < deadline:
+                mine_row = next((r for r in queue_snapshot() if r["project"] == name and r["lane"] == lock.lane
+                                 and r["key"] == mine), None)
+                position = mine_row["position"] if mine_row else None
+                if position is None:
+                    time.sleep(0.2)
+            emit([f"queued #{position or '?'} {args.spec} behind run {held.run_id} in the {lock.lane} lane "
+                  f"(first come, first served); poll with: testctl status"])
             return 0
         emit([f"started run {held.run_id} for {args.spec}; poll with: testctl status {held.run_id}"])
         return 0
@@ -183,6 +196,10 @@ def cmd_status(args: argparse.Namespace) -> int:
         return 0
     active = server.active_runs()
     lines = [f"active: {a['project']} {a['lane']} run {a['run_id']} (pid {a['pid']})" for a in active] or ["active: none"]
+    for q in queue_snapshot():
+        key = json.loads(q["key"]) if q.get("key") else ["?", []]
+        lines.append(f"queued #{q['position']}: {q['project']} {q['lane']} {key[0] or 'default'}"
+                     f"{' ' + ','.join(key[1]) if key[1] else ''}")
     lines.append(f"runner service: {'up' if server.is_up() else 'DOWN'} on :{server.DEFAULT_PORT}")
     lines += _local_recent()
     emit(lines, args.detail)

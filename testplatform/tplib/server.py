@@ -17,7 +17,7 @@ from typing import Any
 from . import runner
 from .artifacts import prune
 from .legion import LegionClient
-from .lock import LOCK_DIR, pid_alive, split_stem
+from .lock import LOCK_DIR, pid_alive, queue_snapshot, split_stem
 from .profile import PLATFORM_ROOT, ProfileError, legion_url, load_project
 
 DEFAULT_PORT = 8790
@@ -44,6 +44,19 @@ def active_runs(lock_dir: Path = LOCK_DIR) -> list[dict[str, Any]]:
             rows.append({"project": project, "lane": lane, "run_id": data.get("run_id"), "pid": pid,
                          "started_at": data.get("started_at")})
     return rows
+
+
+def queue_position_of(project: str, lane: str, key: str, lock_dir: Path = LOCK_DIR, wait_s: float = 2.0) -> int | None:
+    """Place of the waiter holding `key` in its lane's queue; the waiter thread writes its ticket asynchronously."""
+    deadline = time.time() + wait_s
+    while True:
+        rows = [r for r in queue_snapshot(lock_dir) if r["project"] == project and r["lane"] == lane]
+        mine = next((r for r in rows if r["key"] == key), None)
+        if mine is not None:
+            return int(mine["position"])
+        if time.time() >= deadline:
+            return None
+        time.sleep(0.1)
 
 
 class RunnerService:
@@ -135,7 +148,10 @@ class RunnerService:
                 self._persist_queued(queue_id, body, trigger)
                 threading.Thread(target=self._run_queued, args=(project, body, trigger, key, queue_id), daemon=True,
                                  name=f"queued-{name}").start()
-            return 202, {"accepted": True, "run_id": None, "queued": True, "duplicate": already}
+            position = queue_position_of(name, lock.lane, key, self.lock_dir)
+            return 202, {"accepted": True, "run_id": None, "queued": True, "duplicate": already,
+                         "queue_position": position, "lane": lock.lane,
+                         "waiting_for_run_id": held.run_id}
         if not ok:
             held = lock.wait_for_run_id(5.0) or held
             return 409, {"accepted": False, "attached_run_id": held.run_id if held else None}
@@ -173,6 +189,8 @@ def make_handler(service: RunnerService):
         def do_GET(self) -> None:
             if self.path.startswith("/runs/active"):
                 self._send(200, active_runs(service.lock_dir))
+            elif self.path.startswith("/queue"):
+                self._send(200, {"active": active_runs(service.lock_dir), "queued": queue_snapshot(service.lock_dir)})
             elif self.path.startswith("/health"):
                 self._send(200, {"ok": True, "pid": os.getpid(), "code_hash": LOADED_CODE_HASH})
             else:

@@ -1,0 +1,136 @@
+from __future__ import annotations
+
+import sys
+import threading
+import time
+from pathlib import Path
+
+import pytest
+import yaml
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from test_lanes import _project  # noqa: E402
+from tplib import profile, runner, server  # noqa: E402
+from tplib.lock import HEAVY, ProjectLock, queue_snapshot  # noqa: E402
+
+MAX_FAST_PER_TEST_TIMEOUT_S = 60
+
+
+def _service(tmp_path: Path, monkeypatch, project, started: list[str]) -> server.RunnerService:
+    monkeypatch.setattr(server, "load_project", lambda name: project)
+    monkeypatch.setattr(runner, "preflight", lambda *a, **k: None)
+    monkeypatch.setattr(server, "QUEUE_TIMEOUT_S", 6)
+
+    def fake_run(proj, target, trigger, legion, lock, on_started=None, changed_paths=None, schedule_id=None):
+        started.append(target)
+        if on_started:
+            on_started(900 + len(started), tmp_path)
+
+    monkeypatch.setattr(runner, "start_and_run", fake_run)
+    return server.RunnerService(legion=object(), lock_dir=tmp_path)
+
+
+def test_second_heavy_request_for_a_running_target_attaches_instead_of_spawning(tmp_path, monkeypatch):
+    """Would pass trivially if it only checked 'a run is active' for ANY target: the attach must be keyed on the
+    SAME target, return the running run's id, and start nothing."""
+    project = _project(tmp_path)
+    started: list[str] = []
+    service = _service(tmp_path, monkeypatch, project, started)
+    holder = ProjectLock("demo", tmp_path)
+    assert holder.acquire(runner.request_key("fast", None))[0]
+    holder.set_run_id(41)
+    code, body = service.submit({"project": "demo", "target": "fast", "trigger": "claude"})
+    assert code == 409 and body["attached_run_id"] == 41 and body["accepted"] is False
+    assert started == [], "an attach must never start a second heavy run"
+    holder.release()
+
+
+def test_heavy_request_for_a_different_target_queues_with_a_position_and_does_not_start(tmp_path, monkeypatch):
+    project = _project(tmp_path)
+    started: list[str] = []
+    service = _service(tmp_path, monkeypatch, project, started)
+    holder = ProjectLock("demo", tmp_path)
+    assert holder.acquire(runner.request_key("fast", None))[0]
+    holder.set_run_id(42)
+    code, body = service.submit({"project": "demo", "target": "full", "trigger": "claude"})
+    assert code == 202 and body["queued"] is True and body["run_id"] is None
+    assert body["queue_position"] == 1 and body["waiting_for_run_id"] == 42 and body["lane"] == HEAVY
+    code2, body2 = service.submit({"project": "demo", "target": "full", "trigger": "claude"})
+    assert body2["duplicate"] is True and body2["queue_position"] == 1, "a repeat request must not take a second place"
+    assert started == []
+    assert [r["position"] for r in queue_snapshot(tmp_path)] == [1]
+    holder.release()
+    deadline = time.time() + 12
+    while not started and time.time() < deadline:
+        time.sleep(0.2)
+    assert started == ["full"], "the queued request runs once the holder is done"
+
+
+def test_queue_positions_count_every_waiter_in_arrival_order(tmp_path):
+    project = _project(tmp_path)
+    holder = ProjectLock("demo", tmp_path)
+    assert holder.acquire(runner.request_key("fast", None))[0]
+    holder.set_run_id(7)
+    seen: list[tuple[str, int]] = []
+
+    def wait(target: str) -> None:
+        lock = runner.lock_for(project, target, None, tmp_path)
+        lock.wait_acquire(runner.request_key(target, None), 4, poll=0.1,
+                          on_wait=lambda pos, held: seen.append((target, pos)))
+
+    first = threading.Thread(target=wait, args=("full",), daemon=True)
+    first.start()
+    time.sleep(0.4)
+    second = threading.Thread(target=wait, args=("changed",), daemon=True)
+    second.start()
+    time.sleep(0.6)
+    assert [r["position"] for r in queue_snapshot(tmp_path)] == [1, 2]
+    assert ("full", 1) in seen and ("changed", 2) in seen
+    holder.release()
+    first.join(8)
+    second.join(8)
+
+
+def test_worker_budget_rejects_an_overcommitted_profile(tmp_path):
+    ok = "lanes: {cpu_budget: 8}\n"
+    assert _project(tmp_path, "    light_concurrency: 2\n", ok.replace("8", "8")) is not None
+    over = {"tiers": {"fast": {"workers": 7, "framework": "pytest"}}, "framework": "pytest",
+            "lanes": {"cpu_budget": 8}}
+    assert profile.worker_budget_problem(over, 2) is not None
+    over["tiers"]["fast"]["workers"] = 6
+    assert profile.worker_budget_problem(over, 2) is None
+
+
+def test_light_run_is_in_process_while_a_heavy_run_is_live(tmp_path):
+    project = _project(tmp_path, "    light_concurrency: 2\n", "lanes: {cpu_budget: 8}\n")
+    assert runner.light_worker_cap(project, tmp_path) == 4
+    heavy = ProjectLock("demo", tmp_path)
+    assert heavy.acquire("k")[0]
+    assert runner.light_worker_cap(project, tmp_path) == 0
+    heavy.release()
+
+
+def test_shipped_ada_fast_tier_has_a_fail_fast_per_test_timeout_and_a_fitting_worker_budget():
+    ada_root = Path(str(profile.load_registry(profile.PROJECTS_FILE)["projects"]["ada"]["root"]))
+    pfile = ada_root / profile.PROFILE_NAME
+    if not pfile.exists():
+        pytest.skip(f"ADA checkout not present at {ada_root}")
+    prof = yaml.safe_load(pfile.read_text(encoding="utf-8"))
+    args = list(prof["pytest"]["common_args"]) + list(prof["tiers"]["fast"].get("args", []))
+    timeouts = [int(a.split("=", 1)[1]) for a in args if a.startswith("--timeout=")]
+    assert timeouts and timeouts[-1] <= MAX_FAST_PER_TEST_TIMEOUT_S, f"fast per-test timeout is {timeouts}"
+    assert "--timeout-method=signal" in args, "the thread method kills the xdist worker and crashes the run"
+    project = profile.load_project("ada")
+    assert profile.worker_budget_problem(prof, project.light_concurrency) is None
+
+
+def test_a_profile_whose_fast_tier_timeout_exceeds_the_cap_is_refused(tmp_path):
+    base = {"framework": "pytest", "pytest": {"common_args": ["--timeout=420"]}, "tiers": {"fast": {"args": []}}}
+    assert "exceeds" in (profile.fast_timeout_problem(base) or "")
+    base["tiers"]["fast"]["args"] = ["--timeout=60"]
+    assert profile.fast_timeout_problem(base) is None
+    base["tiers"]["fast"]["args"] = ["--timeout=61"]
+    assert profile.fast_timeout_problem(base) is not None
+    assert profile.fast_timeout_problem({"framework": "pytest", "tiers": {"fast": {}}}) is None

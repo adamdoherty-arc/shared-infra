@@ -3,7 +3,7 @@ projects:
   ada:
     root: C:/code/ADA
     legion_project_id: 5
-    light_concurrency: 6
+    light_concurrency: 2
   legion:
     root: C:/code/legion
     legion_project_id: 1
