@@ -183,6 +183,11 @@ def port_heal_cmd(name: str, port: int) -> list[str] | None:
     return ["docker", "restart", name]
 
 
+def save_state(last: dict) -> None:
+    STATE.parent.mkdir(parents=True, exist_ok=True)
+    STATE.write_text(json.dumps(last))
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--dry-run", action="store_true")
@@ -252,19 +257,23 @@ def main() -> int:
         if paused or args.dry_run:
             print(f"WOULD heal {name} (dead host port {port}): {' '.join(cmd)}")
             continue
-        p = sh(cmd, 900)
-        if p.returncode != 0 and "no compose service mapping" in (p.stderr + p.stdout):
-            cmd = ["docker", "restart", name]
-            p = sh(cmd, 300)
         last[f"port:{name}"] = time.time()
+        save_state(last)
+        try:
+            p = sh(cmd, 900)
+            if p.returncode != 0 and "no compose service mapping" in (p.stderr + p.stdout):
+                cmd = ["docker", "restart", name]
+                p = sh(cmd, 300)
+        except subprocess.TimeoutExpired:
+            failed.append(f"{name}: dead port {port}, heal timed out")
+            continue
         if p.returncode == 0:
             healed.append(f"{name} (dead host port {port})")
         else:
             tail = (p.stderr or p.stdout).strip()[-200:]
             failed.append(f"{name}: dead port {port}, heal rc={p.returncode} {tail}")
     if not (paused or args.dry_run):
-        STATE.parent.mkdir(parents=True, exist_ok=True)
-        STATE.write_text(json.dumps(last))
+        save_state(last)
     if healed:
         notify("**ops-reconcile** brought back: " + ", ".join(healed))
     if failed:
