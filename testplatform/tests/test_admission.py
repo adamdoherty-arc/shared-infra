@@ -134,3 +134,58 @@ def test_a_profile_whose_fast_tier_timeout_exceeds_the_cap_is_refused(tmp_path):
     base["tiers"]["fast"]["args"] = ["--timeout=61"]
     assert profile.fast_timeout_problem(base) is not None
     assert profile.fast_timeout_problem({"framework": "pytest", "tiers": {"fast": {}}}) is None
+
+
+MEM = {"framework": "pytest", "tiers": {"fast": {"workers": 4, "framework": "pytest"}},
+       "lanes": {"mem_budget_mb": 10240, "worker_rss_mb": 1800, "light_rss_mb": 650, "parent_rss_mb": 450,
+                 "headroom_mb": 500}}
+
+
+def test_memory_budget_sizes_workers_by_ram_and_trusts_a_larger_measurement():
+    """Would pass trivially if only the configured estimate were consulted: a measured worker peak larger than
+    the estimate must flip a fitting profile to refused."""
+    assert profile.memory_budget_problem(MEM, 2) is None
+    assert profile.memory_budget_problem(MEM, 2, measured_mb=2300) is None
+    refused = profile.memory_budget_problem(MEM, 2, measured_mb=2400)
+    assert refused and "exceeds mem_budget_mb" in refused
+    assert profile.memory_budget_problem({**MEM, "tiers": {"fast": {"workers": 6, "framework": "pytest"}}}, 2)
+    assert profile.memory_budget_problem({"tiers": {}}, 2) is None
+
+
+def test_light_runs_fit_beside_a_heavy_run_only_when_memory_is_left():
+    assert profile.light_slots_while_heavy(MEM, 2, None) == 2
+    tight = profile.light_slots_while_heavy(MEM, 2, measured_mb=2200)
+    assert tight == 1, "a larger measured worker leaves room for fewer light runs"
+    assert profile.light_slots_while_heavy(MEM, 2, measured_mb=2400) == 0
+    assert profile.light_slots_while_heavy({"tiers": {}}, 2, None) == 2
+
+
+def test_light_request_queues_behind_a_live_heavy_run_when_no_memory_is_left(tmp_path, monkeypatch):
+    lanes = "lanes: {mem_budget_mb: 10240, worker_rss_mb: 2300, light_rss_mb: 650, parent_rss_mb: 450, headroom_mb: 500}"
+    project = _project(tmp_path, "    light_concurrency: 2" + chr(10), lanes + chr(10))
+    project.profile["tiers"]["fast"]["workers"] = 4
+    monkeypatch.setattr(runner, "measured_worker_rss_mb", lambda name: None)
+    light = runner.lock_for(project, "tests/test_a.py", None, tmp_path)
+    assert light.acquire(runner.request_key("tests/test_a.py", None))[0], "no heavy run, so the light run starts"
+    light.release()
+    heavy = ProjectLock("demo", tmp_path)
+    assert heavy.acquire("heavy-key")[0]
+    heavy.set_run_id(5)
+    blocked = runner.lock_for(project, "tests/test_b.py", None, tmp_path)
+    ok, holder = blocked.acquire(runner.request_key("tests/test_b.py", None))
+    assert not ok and holder is not None and holder.run_id == 5, "it must wait behind the heavy run, not overlap it"
+    heavy.release()
+    again = runner.lock_for(project, "tests/test_b.py", None, tmp_path)
+    assert again.acquire(runner.request_key("tests/test_b.py", None))[0]
+    again.release()
+
+
+def test_heavy_request_is_refused_when_the_recorded_peak_overcommits_memory(tmp_path, monkeypatch):
+    lanes = "lanes: {mem_budget_mb: 10240, worker_rss_mb: 1800, light_rss_mb: 650, parent_rss_mb: 450, headroom_mb: 500}"
+    project = _project(tmp_path, "    light_concurrency: 2" + chr(10), lanes + chr(10))
+    project.profile["tiers"]["full"]["workers"] = 4
+    monkeypatch.setattr(runner, "measured_worker_rss_mb", lambda name: 2600.0)
+    monkeypatch.setattr(runner.sel, "preflight_changed", lambda *a, **k: None)
+    with pytest.raises(runner.RunError, match="memory budget"):
+        runner.preflight(project, "full", None)
+    runner.preflight(project, "tests/test_a.py", None)

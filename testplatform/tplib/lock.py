@@ -83,13 +83,15 @@ class ProjectLock:
     under a short-lived gate file so two identical requests can never take two slots.
     """
 
-    def __init__(self, project: str, lock_dir: Path = LOCK_DIR, lane: str = HEAVY, slots: int = 1):
+    def __init__(self, project: str, lock_dir: Path = LOCK_DIR, lane: str = HEAVY, slots: int = 1,
+                 admit: Callable[[int], Held | None] | None = None):
         if lane not in (HEAVY, LIGHT):
             raise ValueError(f"unknown lane {lane!r}")
         self.project = project
         self.dir = lock_dir
         self.lane = lane
         self.slots = 1 if lane == HEAVY else max(1, int(slots))
+        self.admit = admit
         self.path = self._slot_path(0)
         self.mine = False
         self.key: str | None = None
@@ -157,7 +159,7 @@ class ProjectLock:
         """Own a slot (True, None), or (False, holder): the same-key holder to attach to, else a busy holder."""
         self.dir.mkdir(parents=True, exist_ok=True)
         self.key = key
-        if self.slots == 1:
+        if self.lane == HEAVY:
             ok, held = self._try_slot(self._slot_path(0), key)
             self._attach = None if ok else held
             return ok, held
@@ -166,6 +168,10 @@ class ProjectLock:
             if same is not None:
                 self._attach = same
                 return False, same
+            blocker = self.admit(len(self.holders())) if self.admit is not None else None
+            if blocker is not None:
+                self._attach = blocker
+                return False, blocker
             for slot in range(self.slots):
                 ok, _ = self._try_slot(self._slot_path(slot), key)
                 if ok:

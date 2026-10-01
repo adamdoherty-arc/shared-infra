@@ -20,8 +20,9 @@ from . import parsers
 from . import selection as sel
 from .artifacts import new_artifact_dir
 from .legion import LegionClient, LegionError, retryable
-from .lock import HEAVY, LIGHT, ProjectLock
-from .profile import ARTIFACTS_ROOT, Project
+from .lock import HEAVY, LIGHT, Held, ProjectLock
+from .profile import (ARTIFACTS_ROOT, Project, light_slots_while_heavy, measured_rss_file, measured_worker_rss_mb,
+                      memory_budget_problem)
 
 TRIGGERS = ("claude", "schedule", "hook", "manual")
 NO_WINDOW = 0x08000000 if sys.platform == "win32" else 0
@@ -103,7 +104,8 @@ def lock_for(project: Project, target: str | None, changed_paths: list[str] | No
     """The lock a request must hold: the project's single heavy slot, or one of its light-lane slots."""
     kwargs: dict[str, Any] = {} if lock_dir is None else {"lock_dir": lock_dir}
     if lane_of(project, target, changed_paths) == LIGHT:
-        return ProjectLock(project.name, lane=LIGHT, slots=project.light_concurrency, **kwargs)
+        return ProjectLock(project.name, lane=LIGHT, slots=project.light_concurrency,
+                           admit=lambda n: light_blocker(project, n, lock_dir), **kwargs)
     return ProjectLock(project.name, **kwargs)
 
 
@@ -115,6 +117,10 @@ def request_key(target: str | None, paths: list[str] | None) -> str:
 def preflight(project: Project, target: str | None, changed_paths: list[str] | None) -> None:
     """Refuse before a Legion run row exists when the request cannot be scoped."""
     _, tier, _ = resolve_target(project, target)
+    if lane_of(project, target, changed_paths) == HEAVY:
+        problem = memory_budget_problem(project.profile, project.light_concurrency, measured_worker_rss_mb(project.name))
+        if problem:
+            raise RunError(f"memory budget: {problem}; lower the heavy workers or raise the container limit")
     if changed_paths and tier.get("mode") != "changed":
         raise RunError("--paths only applies to the changed tier (testctl run <project>:changed --paths <files>)")
     if tier.get("mode") == "changed" and project.profile.get("runtime"):
@@ -236,6 +242,16 @@ def ensure_container(runtime: dict[str, Any], root: Path) -> str | None:
 DEFAULT_PARALLEL_MIN_FILES = 150
 
 
+def light_blocker(project: Project, held_light: int, lock_dir: Path | None = None) -> Held | None:
+    """The live heavy run when a further light run would not fit beside it in memory, else None."""
+    kwargs: dict[str, Any] = {} if lock_dir is None else {"lock_dir": lock_dir}
+    heavy = ProjectLock(project.name, **kwargs).read()
+    if heavy is None or heavy.stale:
+        return None
+    allowed = light_slots_while_heavy(project.profile, project.light_concurrency, measured_worker_rss_mb(project.name))
+    return heavy if held_light >= allowed else None
+
+
 def light_worker_cap(project: Project, lock_dir: Path | None = None) -> int | None:
     """xdist worker ceiling for a light-lane run: in-process while a heavy run is live, else its share of cpu_budget."""
     budget = (project.profile.get("lanes") or {}).get("cpu_budget")
@@ -340,6 +356,94 @@ def expand_env(env: dict[str, str], root: Path) -> dict[str, str]:
     return {k: _ENV_REF.sub(sub, str(v)) for k, v in env.items()}
 
 
+class RssSampler:
+    """Records the largest xdist worker RSS seen while a heavy run executes, so the memory gate rests on a
+    measurement and not on an estimate."""
+
+    def __init__(self, container: str, project: str, interval_s: float = 20.0):
+        self.container, self.project, self.interval_s = container, project, interval_s
+        self.peak_kb = 0
+        self.workers = 0
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._loop, daemon=True, name="rss-sampler")
+
+    def _sample(self) -> None:
+        rc, text = _run(["docker", "exec", self.container, "sh", "-c",
+                         "ps -eo rss=,args= | grep 'exec(eval' | grep -v grep | sort -rn"], 30)
+        if rc != 0:
+            return
+        rows = [int(line.split()[0]) for line in text.splitlines() if line.strip() and line.split()[0].isdigit()]
+        if rows:
+            self.peak_kb = max(self.peak_kb, rows[0])
+            self.workers = max(self.workers, len(rows))
+
+    def _loop(self) -> None:
+        while not self._stop.wait(self.interval_s):
+            self._sample()
+
+    def start(self) -> None:
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        self._thread.join(timeout=35)
+        if self.peak_kb:
+            target = measured_rss_file(self.project)
+            try:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(json.dumps({"worker_rss_mb": round(self.peak_kb / 1024, 1), "workers": self.workers,
+                                              "at": _iso()}), encoding="utf-8")
+            except OSError:
+                pass
+
+
+def sync_snapshot(project: Project, runtime: dict[str, Any], out_log: Path) -> str | None:
+    """Mirror the committed tree into the container's own filesystem and return its path, or None on failure.
+
+    The repo reaches the container over a 9p bind mount where a whole-backend read costs ~20s and every
+    repo-scanning test pays it; the snapshot is local disk (0.3s). Committed content only, so another
+    session's uncommitted edits cannot fail an official run. Untracked runtime paths are symlinked back.
+    """
+    cfg = runtime["snapshot"]
+    dest, rev, container = cfg["dest"], cfg.get("rev", "HEAD"), runtime["container"]
+    include = list(cfg["include"])
+    app = runtime.get("workdir", "/app")
+    started = time.time()
+    staging = f"{dest}.new"
+    prep = f"rm -rf {staging} && mkdir -p {staging}"
+    rc, text = _run(["docker", "exec", container, "sh", "-c", prep], 120)
+    if rc != 0:
+        out_log.write_text(f"snapshot prepare failed: {text[:300]}\n", encoding="utf-8")
+        return None
+    git = ["git", "-c", "safe.directory=*", "-C", str(project.root), "archive", rev, "--", *include,
+           *[f":(exclude){x}" for x in cfg.get("exclude", [])]]
+    try:
+        producer = subprocess.Popen(git, stdout=subprocess.PIPE, creationflags=NO_WINDOW)
+        consumer = subprocess.run(["docker", "exec", "-i", container, "tar", "-x", "-C", staging],
+                                  stdin=producer.stdout, capture_output=True, timeout=300, creationflags=NO_WINDOW)
+        producer.stdout.close()
+        producer.wait(timeout=60)
+    except (OSError, subprocess.SubprocessError) as exc:
+        out_log.write_text(f"snapshot stream failed: {exc}\n", encoding="utf-8")
+        return None
+    if producer.returncode != 0 or consumer.returncode != 0:
+        detail = consumer.stderr.decode("utf-8", "replace")[:300]
+        out_log.write_text(f"snapshot extract failed: git rc={producer.returncode} tar rc={consumer.returncode} {detail}\n",
+                           encoding="utf-8")
+        return None
+    link = (f'cd {staging} && for base in {" ".join(cfg.get("link_children_of", ["."]))}; do '
+            f'mkdir -p "{staging}/$base"; '
+            f'for f in {app}/$base/* {app}/$base/.[!.]*; do b=$(basename "$f"); '
+            f'[ -e "{staging}/$base/$b" ] || [ -L "{staging}/$base/$b" ] || ln -s "$f" "{staging}/$base/$b"; done; done; '
+            f'rm -rf {dest} && mv {staging} {dest}')
+    rc, text = _run(["docker", "exec", container, "sh", "-c", link], 120)
+    if rc != 0:
+        out_log.write_text(f"snapshot link failed: {text[:300]}\n", encoding="utf-8")
+        return None
+    out_log.write_text(f"snapshot {rev} -> {container}:{dest} in {time.time() - started:.1f}s\n", encoding="utf-8")
+    return dest
+
+
 def run_pytest(project: Project, tier: dict[str, Any], paths: list[str] | None, trigger: str, art: Path,
                legion: LegionClient, target: str, changed_paths: list[str] | None = None) -> Execution:
     runtime = project.profile["runtime"]
@@ -387,21 +491,43 @@ def run_pytest(project: Project, tier: dict[str, Any], paths: list[str] | None, 
         problem = ensure_container(runtime, project.root)
         if problem:
             return Execution("error", error_summary=problem)
+        snapshot_dir: str | None = None
         if not paths and not changed_paths:
             reap_orphaned_heavy_pytest(runtime)
+            if runtime.get("snapshot"):
+                snapshot_dir = sync_snapshot(project, runtime, art / "snapshot.log")
+                if snapshot_dir is None:
+                    return Execution("error", error_summary="could not build the clean-tree snapshot for the heavy run, "
+                                                            f"see {(art / 'snapshot.log').as_posix()}")
+                if runtime["snapshot"].get("pycache"):
+                    env["PYTHONPYCACHEPREFIX"] = runtime["snapshot"]["pycache"]
         tmp_dir = runtime.get("tmp_dir", "/tmp/testplatform")
         report_in = f"{tmp_dir}/{report_name}"
         if paths or changed_paths:
             cap = light_worker_cap(project)
             if cap is not None:
                 tier = {**tier, "workers": min(int(tier.get("workers", 0)), cap)}
+        workdir = runtime.get("workdir", "/app")
+        if snapshot_dir:
+            workdir = snapshot_dir
+        heavy = not paths and not changed_paths
         pytest_args = _pytest_args(project, tier, paths, trigger, report_in, quarantined, extra)
-        cmd = ["docker", "exec", "-w", runtime.get("workdir", "/app")]
+        if snapshot_dir:
+            pytest_args = [f"--rootdir={snapshot_dir}" if a == f"--rootdir={runtime.get('workdir', '/app')}" else a
+                           for a in pytest_args]
+        cmd = ["docker", "exec", "-w", workdir]
         for k, v in env.items():
             cmd += ["-e", f"{k}={v}"]
         cmd += [runtime["container"], "sh", "-c", f'mkdir -p {tmp_dir}; exec "$@"', "sh"] + timeout_prefix + pytest_args
-        rc, _ = _run(cmd, timeout_s + 120, out_log)
-        cp_rc = pull_file(runtime['container'], report_in, report_host)
+        sampler = RssSampler(runtime["container"], project.name) if heavy else None
+        if sampler:
+            sampler.start()
+        try:
+            rc, _ = _run(cmd, timeout_s + 120, out_log)
+        finally:
+            if sampler:
+                sampler.stop()
+        cp_rc = pull_file(runtime["container"], report_in, report_host)
         _run(["docker", "exec", runtime["container"], "rm", "-f", report_in], 30)
     else:
         report_in = f"/out/{report_name}"

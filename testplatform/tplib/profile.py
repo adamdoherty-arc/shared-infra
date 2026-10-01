@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -55,6 +56,58 @@ def check_light_concurrency(value: Any, where: str) -> int | None:
     if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= MAX_LIGHT_CONCURRENCY:
         raise ProfileError(f"{where}: light_concurrency must be an integer 1..{MAX_LIGHT_CONCURRENCY}, got {value!r}")
     return value
+
+
+def measured_rss_file(project: str) -> Path:
+    return PLATFORM_ROOT / "state" / f"measured_worker_rss_{project}.json"
+
+
+def measured_worker_rss_mb(project: str) -> float | None:
+    try:
+        return float(json.loads(measured_rss_file(project).read_text(encoding="utf-8"))["worker_rss_mb"])
+    except (OSError, ValueError, KeyError):
+        return None
+
+
+def memory_budget_problem(profile: dict[str, Any], light_concurrency: int, measured_mb: float | None = None) -> str | None:
+    """None when the heavy run's workers fit under the container memory limit, else why not.
+
+    Workers are sized by RAM, not CPU: every xdist worker collects the whole suite and grows to 1.3-2.2 GB, so
+    the budget is `workers * worker_rss + parent + headroom <= mem_budget`; light runs are admitted around
+    that at run time (`light_slots_while_heavy`) and queue when nothing is left. A recorded
+    measurement from the last heavy run (the sampled peak worker RSS) overrides the configured estimate when it
+    is larger, so the config can never claim a fit the machine has already disproved.
+    """
+    lanes = profile.get("lanes") or {}
+    budget = lanes.get("mem_budget_mb")
+    if budget is None:
+        return None
+    tiers = profile.get("tiers") or {}
+    path_tier = profile.get("path_tier")
+    heavy = max([int(t.get("workers", 0)) for n, t in tiers.items()
+                 if n != path_tier and t.get("framework", profile.get("framework")) == "pytest"] or [0])
+    worker = max(float(lanes.get("worker_rss_mb", 0)), measured_mb or 0.0)
+    need = heavy * worker + float(lanes.get("parent_rss_mb", 450)) + float(lanes.get("headroom_mb", 0))
+    if need > float(budget):
+        return (f"heavy workers {heavy} x {worker:.0f} MB + parent {lanes.get('parent_rss_mb', 450)} MB + headroom "
+                f"{lanes.get('headroom_mb', 0)} MB = {need:.0f} MB exceeds mem_budget_mb {budget}")
+    return None
+
+
+def light_slots_while_heavy(profile: dict[str, Any], light_concurrency: int, measured_mb: float | None = None) -> int:
+    """How many light runs fit beside a live heavy run under the memory budget (all of them when no budget)."""
+    lanes = profile.get("lanes") or {}
+    budget = lanes.get("mem_budget_mb")
+    if budget is None:
+        return light_concurrency
+    tiers = profile.get("tiers") or {}
+    path_tier = profile.get("path_tier")
+    heavy = max([int(t.get("workers", 0)) for n, t in tiers.items()
+                 if n != path_tier and t.get("framework", profile.get("framework")) == "pytest"] or [0])
+    worker = max(float(lanes.get("worker_rss_mb", 0)), measured_mb or 0.0)
+    spare = float(budget) - heavy * worker - float(lanes.get("parent_rss_mb", 450))
+    light = max(1.0, float(lanes.get("light_rss_mb", 1)))
+    return max(0, min(light_concurrency, int(spare // light)))
 
 
 def worker_budget_problem(profile: dict[str, Any], light_concurrency: int) -> str | None:
@@ -146,7 +199,7 @@ def load_project(name: str, registry_path: Path = PROJECTS_FILE) -> Project:
     if light is None:
         light = check_light_concurrency(entry.get("light_concurrency"), str(registry_path))
     light = light or DEFAULT_LIGHT_CONCURRENCY
-    problem = worker_budget_problem(profile, light)
+    problem = worker_budget_problem(profile, light) or fast_timeout_problem(profile) or memory_budget_problem(profile, light, None)
     if problem:
         raise ProfileError(f"{pfile}: {problem}")
     return Project(name=name, root=root, legion_project_id=int(entry["legion_project_id"]), profile=profile,
