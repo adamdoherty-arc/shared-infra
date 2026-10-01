@@ -261,9 +261,6 @@ def main() -> int:
         save_state(last)
         try:
             p = sh(cmd, 900)
-            if p.returncode != 0 and "no compose service mapping" in (p.stderr + p.stdout):
-                cmd = ["docker", "restart", name]
-                p = sh(cmd, 300)
         except subprocess.TimeoutExpired:
             failed.append(f"{name}: dead port {port}, heal timed out")
             continue
