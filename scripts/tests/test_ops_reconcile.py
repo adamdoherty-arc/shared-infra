@@ -109,3 +109,13 @@ def test_probe_port_classification():
     srv, p = _server(nonhttp)
     assert r.probe_port(p, 2) is True
     srv.close()
+
+
+def test_stopped_bitcoin_engine_is_standby_while_its_sibling_runs():
+    assert r.is_standby_engine("ada-bitcoin", {"ada-bitcoin": "exited", "ada-bitcoin-prod": "running"})
+    assert r.is_standby_engine("ada-bitcoin-prod", {"ada-bitcoin": "running"})
+
+
+def test_both_bitcoin_engines_down_is_healed_and_other_containers_unaffected():
+    assert not r.is_standby_engine("ada-bitcoin", {"ada-bitcoin": "exited", "ada-bitcoin-prod": "exited"})
+    assert not r.is_standby_engine("ada-backend", {"ada-backend": "exited", "ada-bitcoin": "running"})

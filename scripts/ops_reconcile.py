@@ -188,6 +188,19 @@ def save_state(last: dict) -> None:
     STATE.write_text(json.dumps(last))
 
 
+BITCOIN_ENGINES = ("ada-bitcoin", "ada-bitcoin-prod")
+
+
+def is_standby_engine(name: str, state: dict[str, str]) -> bool:
+    """ADA runs one Bitcoin engine container at a time (dev before the
+    Migration-22 cutover, ada-bitcoin-prod after); the stopped one is the
+    standby while its sibling runs, and starting it would start a second
+    live-money engine."""
+    if name not in BITCOIN_ENGINES:
+        return False
+    return any(state.get(other) == "running" for other in BITCOIN_ENGINES if other != name)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--dry-run", action="store_true")
@@ -218,6 +231,8 @@ def main() -> int:
     for name in must:
         st = state.get(name)
         if st == "running" or st in ("restarting", "paused", "created"):
+            continue
+        if is_standby_engine(name, state):
             continue
         if time.time() - last.get(name, 0) < COOLDOWN_S:
             continue
