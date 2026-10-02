@@ -152,6 +152,32 @@ def _run(cmd: list[str], timeout: float, out_file: Path | None = None, cwd: Path
             handle.close()
 
 
+ARGFILE_CMDLINE_LIMIT = 24000
+
+
+def spill_paths_to_argfile(cmd_prefix: list[str], pytest_args: list[str], path_count: int, command_len: int,
+                           write: Callable[[str, str], int], remote: str) -> list[str]:
+    """Windows CreateProcess refuses a command line over 32,767 characters, so a changed-tier run that selects
+    thousands of test files failed to start (exit 127, no report). Past ARGFILE_CMDLINE_LIMIT the selected paths
+    move into a pytest @argfile written inside the container; below it the arguments are returned unchanged."""
+    if path_count <= 0 or len(subprocess.list2cmdline(cmd_prefix + pytest_args)) <= ARGFILE_CMDLINE_LIMIT:
+        return pytest_args
+    path_args = pytest_args[command_len:command_len + path_count]
+    if write(remote, "\n".join(path_args) + "\n") != 0:
+        return pytest_args
+    return pytest_args[:command_len] + [f"@{remote}"] + pytest_args[command_len + path_count:]
+
+
+def push_text(container: str, remote: str, text: str) -> int:
+    try:
+        proc = subprocess.run(["docker", "exec", "-i", container, "sh", "-c", 'mkdir -p "$(dirname "$1")" && cat > "$1"',
+                               "sh", remote], input=text.encode("utf-8"), capture_output=True, timeout=60,
+                              creationflags=NO_WINDOW)
+    except (OSError, subprocess.SubprocessError):
+        return 1
+    return proc.returncode
+
+
 def pull_file(container: str, remote: str, dest: Path) -> int:
     rc, _ = _run(["docker", "exec", container, "cat", remote], 120, dest)
     if rc != 0 and dest.exists():
@@ -555,7 +581,12 @@ def run_pytest(project: Project, tier: dict[str, Any], paths: list[str] | None, 
         cmd = ["docker", "exec", "-w", workdir]
         for k, v in env.items():
             cmd += ["-e", f"{k}={v}"]
-        cmd += [runtime["container"], "sh", "-c", f'mkdir -p {tmp_dir}; exec "$@"', "sh"] + timeout_prefix + pytest_args
+        cmd += [runtime["container"], "sh", "-c", f'mkdir -p {tmp_dir}; exec "$@"', "sh"] + timeout_prefix
+        argfile_in = f"{tmp_dir}/{report_name}.args"
+        command_len = len(project.profile.get("pytest", {}).get("command", ["python", "-m", "pytest"]))
+        spilled = spill_paths_to_argfile(cmd, pytest_args, len(paths or []), command_len,
+                                         lambda remote, text: push_text(runtime["container"], remote, text), argfile_in)
+        cmd += spilled
         sampler = RssSampler(runtime["container"], project.name) if heavy else None
         if sampler:
             sampler.start()
@@ -565,7 +596,7 @@ def run_pytest(project: Project, tier: dict[str, Any], paths: list[str] | None, 
             if sampler:
                 sampler.stop()
         cp_rc = pull_file(runtime["container"], report_in, report_host)
-        _run(["docker", "exec", runtime["container"], "rm", "-f", report_in], 30)
+        _run(["docker", "exec", runtime["container"], "rm", "-f", report_in, argfile_in], 30)
     else:
         report_in = f"/out/{report_name}"
         pytest_args = _pytest_args(project, tier, paths, trigger, report_in, quarantined, extra)

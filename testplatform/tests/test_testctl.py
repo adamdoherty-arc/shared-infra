@@ -963,3 +963,24 @@ def test_commands_pass_a_gates_own_env_to_its_process(tmp_path):
                                           {"name": "without", "run": ["python", "-c", code]}]}
     exe = runner.run_commands(SimpleNamespace(root=tmp_path), tier, art)
     assert {c["node_id"]: c["status"] for c in exe.cases} == {"gates::with": "passed", "gates::without": "failed"}
+
+
+def test_a_large_path_selection_spills_into_a_pytest_argfile():
+    written: dict[str, str] = {}
+
+    def write(remote, text):
+        written[remote] = text
+        return 0
+
+    paths = [f"backend/tests/test_{i:04d}_some_long_module_name.py" for i in range(1700)]
+    args = ["python", "-m", "pytest", *paths, "-n0", "--json-report"]
+    out = runner.spill_paths_to_argfile(["docker", "exec", "c"], args, len(paths), 3, write, "/tmp/tp/r.json.args")
+    assert out == ["python", "-m", "pytest", "@/tmp/tp/r.json.args", "-n0", "--json-report"]
+    assert written["/tmp/tp/r.json.args"].splitlines() == paths
+
+
+def test_control_a_small_selection_or_a_failed_write_keeps_the_paths_inline():
+    args = ["python", "-m", "pytest", "backend/tests/test_a.py", "-n0"]
+    assert runner.spill_paths_to_argfile(["docker"], args, 1, 3, lambda r, t: 0, "/x") == args
+    big = ["python", "-m", "pytest", *[f"backend/tests/test_{i}.py" * 3 for i in range(2000)], "-n0"]
+    assert runner.spill_paths_to_argfile(["docker"], big, 2000, 3, lambda r, t: 1, "/x") == big
