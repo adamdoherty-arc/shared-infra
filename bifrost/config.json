@@ -4,7 +4,9 @@
     "_comment_drop_excess": "2026-08-10: false -> true. With false, a full provider buffer QUEUES instead of rejecting, so requests sat in Bifrost's buffer for hours (observed: 3.9h on /v1/chat/completions, 231 leaked CLOSE_WAIT sockets, 4300 open FDs). true makes an over-capacity lane return immediately so the caller's fallback chain cascades to a cloud provider. Nothing may queue unbounded.",
     "drop_excess_requests": true,
     "initial_pool_size": 100,
-    "enforce_auth_on_inference": true
+    "enforce_auth_on_inference": true,
+    "_comment_log_retention_days": "2026-10-02 (ADA Perf-1000637): Bifrost v2.2.3 reads log retention from client_config.log_retention_days (default 365) and ignores logs_store.retention_days, so bifrost_logs.logs had grown to 633k rows / 6.7 GB (78% older than 2 days) and the per-minute REFRESH MATERIALIZED VIEW CONCURRENTLY mv_logs_hourly cost 6.9 s mean (4,352 calls = 29,920 s since 2026-09-29) plus statement timeouts. Set live via PUT /api/config the same day.",
+    "log_retention_days": 2
   },
   "providers": {
     "vllm-local": {
