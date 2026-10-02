@@ -5,6 +5,10 @@
 # No paths -> "nothing changed", exit 0.
 set -uo pipefail
 subject="$1"; body="$2"; shift 2
+if ! gerr=$(git -C /c/code/ADA rev-parse --git-dir 2>&1 >/dev/null); then
+    echo "ada-autocommit: git unusable, refusing to report nothing changed: $gerr" >&2
+    exit 2
+fi
 if [ "$#" -eq 0 ]; then
     echo "ada-autocommit: nothing changed"
     exit 0

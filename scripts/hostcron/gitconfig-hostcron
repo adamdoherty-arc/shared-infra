@@ -1,0 +1,14 @@
+# Global git config for hostcron jobs (they run as NT AUTHORITY\SYSTEM, whose own
+# global config does not trust repos owned by the user). Points every job at the
+# owner's config and trusts the repos the jobs touch. Wired per job via
+# "env": {"GIT_CONFIG_GLOBAL": ...} in schedule.json; tests/test_hostcron_git_env.py
+# fails if a job lacks it.
+[include]
+	path = C:/Users/hadam/.gitconfig
+[safe]
+	directory = C:/code/ADA
+	directory = C:/code/legion
+	directory = C:/code/Legion
+	directory = C:/code/shared-infra
+	directory = C:/code/erpnext
+	directory = C:/code/ArchitectureMaster
