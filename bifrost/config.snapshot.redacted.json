@@ -168,6 +168,7 @@
           "name": "openrouter-primary",
           "value": "env.OPENROUTER_API_KEY",
           "models": [
+            "apodex/apodex-1.1-mini:free",
             "cohere/north-mini-code:free",
             "deepseek-v4-flash-or",
             "deepseek/deepseek-v4-flash",
@@ -404,7 +405,7 @@
         {
           "provider": "openrouter",
           "allow_all_keys": true,
-          "allowed_models": 34
+          "allowed_models": 35
         },
         {
           "provider": "sealion",
@@ -451,7 +452,7 @@
         {
           "provider": "openrouter",
           "allow_all_keys": true,
-          "allowed_models": 34
+          "allowed_models": 35
         },
         {
           "provider": "sealion",
@@ -540,7 +541,7 @@
         {
           "provider": "openrouter",
           "allow_all_keys": true,
-          "allowed_models": 34
+          "allowed_models": 35
         },
         {
           "provider": "sealion",

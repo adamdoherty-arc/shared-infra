@@ -243,7 +243,8 @@
             "ling-flash-sante",
             "dots-note-preview",
             "glm-5.3-flash",
-            "ox-alpha"
+            "ox-alpha",
+            "apodex/apodex-1.1-mini:free"
           ],
           "weight": 1.0,
           "aliases": {
