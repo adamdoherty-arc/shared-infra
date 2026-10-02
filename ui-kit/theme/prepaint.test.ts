@@ -59,10 +59,12 @@ describe('resolveThemeAttrs', () => {
 
   it('keeps its inlined id lists equal to the catalogue (it must stay self-contained)', () => {
     const src = resolveThemeAttrs.toString();
-    const listOf = (name: string) =>
-      [...(src.match(new RegExp(`${name}\\s*=\\s*\\[([^\\]]*)\\]`))?.[1] ?? '').matchAll(/["']([a-z]+)["']/g)].map((m) => m[1]);
-    expect(listOf('themes')).toEqual([...THEME_IDS]);
-    expect(listOf('modes')).toEqual([...MODES]);
+    const lists = new Map<string, string[]>();
+    for (const m of src.matchAll(/(themes|modes)\s*=\s*\[([^\]]*)\]/g)) {
+      lists.set(m[1], [...m[2].matchAll(/["']([a-z]+)["']/g)].map((x) => x[1]));
+    }
+    expect(lists.get('themes') ?? []).toEqual([...THEME_IDS]);
+    expect(lists.get('modes') ?? []).toEqual([...MODES]);
     for (const id of THEME_IDS) expect(resolveThemeAttrs(kitRaw({ work: { theme: id, mode: 'light' } }), scopeRaw('work'), false, CFG).theme).toBe(id);
   });
 });
