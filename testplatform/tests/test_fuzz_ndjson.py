@@ -6,6 +6,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from tplib import parsers, runner  # noqa: E402
@@ -146,10 +148,41 @@ def test_a_run_that_dies_before_the_engine_finishes_is_an_error_with_its_cases()
 
 
 def test_exclusions_flatten_reason_groups_in_order_without_duplicates():
-    tier = {"exclude_paths": {"unbounded_stream": ["/a/stream", "/b/events"], "llm_generating": ["/c", "/a/stream"]}}
+    tier = {"exclude_paths": {"event_stream": ["/a/stream", "/b/events"], "llm_generating": ["/c", "/a/stream"]}}
     assert runner.fuzz_exclusions(tier) == ["/a/stream", "/b/events", "/c"]
     assert runner.fuzz_exclusions({"exclude_paths": ["/x"]}) == ["/x"]
     assert runner.fuzz_exclusions({}) == []
+
+
+def test_exclusions_merge_a_reason_grouped_file_from_the_project_root(tmp_path):
+    (tmp_path / "fuzz").mkdir()
+    (tmp_path / "fuzz" / "x.yml").write_text("event_stream: [/s/stream, /a]\nllm_generating: [/l]\n", encoding="utf-8")
+    tier = {"exclude_paths": ["/a"], "exclude_paths_file": "fuzz/x.yml"}
+    assert runner.fuzz_exclusions(tier, tmp_path) == ["/a", "/s/stream", "/l"]
+
+
+def test_a_named_exclusion_file_that_is_missing_or_malformed_is_an_error(tmp_path):
+    with pytest.raises(runner.RunError, match="exclude_paths_file"):
+        runner.fuzz_exclusions({"exclude_paths_file": "nope.yml"}, tmp_path)
+    (tmp_path / "bad.yml").write_text("just a string\n", encoding="utf-8")
+    with pytest.raises(runner.RunError, match="list or a reason"):
+        runner.fuzz_exclusions({"exclude_paths_file": "bad.yml"}, tmp_path)
+
+
+def _fake_project(tmp_path):
+    return Project(name="p", root=tmp_path, legion_project_id=1,
+                   profile={"runtime": {"kind": "exec", "container": "c", "workdir": "/app"}})
+
+
+def test_run_schemathesis_refuses_to_start_without_its_exclusion_file(tmp_path, monkeypatch):
+    calls: list[list[str]] = []
+    monkeypatch.setattr(runner, "_run", lambda cmd, *a, **k: (calls.append(list(cmd)), (0, ""))[1])
+    monkeypatch.setattr(runner, "ensure_container", lambda runtime, root: None)
+    tier = {"framework": "schemathesis", "schema_url": "http://b:8003/openapi.json", "timeout_s": 1,
+            "exclude_paths_file": "scripts/fuzz/missing.yml"}
+    exe = runner.run_schemathesis(_fake_project(tmp_path), tier, "schedule", tmp_path)
+    assert exe.status == "error" and "missing.yml" in exe.error_summary
+    assert not any("schemathesis" in c for c in calls)
 
 
 def test_run_schemathesis_streams_ndjson_and_reports_a_killed_run(tmp_path, monkeypatch):
@@ -169,17 +202,17 @@ def test_run_schemathesis_streams_ndjson_and_reports_a_killed_run(tmp_path, monk
     monkeypatch.setattr(runner, "_run", fake_run)
     monkeypatch.setattr(runner, "pull_file", fake_pull)
     monkeypatch.setattr(runner, "ensure_container", lambda runtime, root: None)
-    project = Project(name="p", root=tmp_path, legion_project_id=1,
-                      profile={"runtime": {"kind": "exec", "container": "c", "workdir": "/app"}})
+    (tmp_path / "excl.yml").write_text("llm_generating: [/api/l]\n", encoding="utf-8")
     tier = {"framework": "schemathesis", "schema_url": "http://b:8003/openapi.json", "timeout_s": 1,
             "checks": "no_undeclared_server_error", "env": {"SCHEMATHESIS_HOOKS": "/app/hooks.py"},
-            "exclude_paths": {"unbounded_stream": ["/api/s/stream"]}, "args": ["--workers", 4]}
-    exe = runner.run_schemathesis(project, tier, "schedule", tmp_path)
+            "exclude_paths": {"event_stream": ["/api/s/stream"]}, "exclude_paths_file": "excl.yml",
+            "args": ["--workers", 4]}
+    exe = runner.run_schemathesis(_fake_project(tmp_path), tier, "schedule", tmp_path)
     assert exe.status == "timeout" and [c["node_id"] for c in exe.cases] == ["fuzz::GET /api/a"]
     cmd = next(c for c in calls if "schemathesis" in c)
     assert cmd[cmd.index("-e") + 1] == "SCHEMATHESIS_HOOKS=/app/hooks.py"
     assert cmd[cmd.index("--report") + 1] == "ndjson"
-    assert cmd[cmd.index("--exclude-path") + 1] == "/api/s/stream"
+    assert [cmd[i + 1] for i, a in enumerate(cmd) if a == "--exclude-path"] == ["/api/s/stream", "/api/l"]
     assert cmd[cmd.index("--checks") + 1] == "no_undeclared_server_error"
     assert cmd[-2:] == ["--workers", "4"]
     assert (tmp_path / "report.ndjson.gz").exists() and not (tmp_path / "report.ndjson").exists()

@@ -51,7 +51,9 @@ plain `changed` runs `pytest --testmon`, and with neither paths nor testmon data
 command is one case, exit 0 pass / 1 fail / 2 error; used for the non-test static gates),
 `fuzz` (schemathesis, GET only, fixed seed, against `http://ada-backend:8003`; the tier's `checks` names the
 schemathesis check, `env` is passed into the container (ADA loads its checks through `SCHEMATHESIS_HOOKS`) and
-`exclude_paths` lists the operation templates kept out of the run, as a list or as reason -> list groups. The report is
+`exclude_paths` lists the operation templates kept out of the run, as a list or as reason -> list groups, and
+`exclude_paths_file` reads the same shape from a file relative to the repo root (ADA: `scripts/fuzz/exclude_paths.yml`,
+kept honest by `scripts/fuzz/fuzz_tier_gate.py`); a named file that cannot be read makes the run an `error`. The report is
 schemathesis' NDJSON event stream (`report.ndjson.gz` in the artifact dir), flushed one event per line, so a run killed
 at `timeout_s` still reports every operation that finished, as a `timeout` run with those cases and the count of
 scenarios that were still running),

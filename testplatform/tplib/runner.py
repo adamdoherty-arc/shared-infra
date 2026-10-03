@@ -16,6 +16,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 from . import parsers
 from . import selection as sel
 from . import snapshot as snapmod
@@ -868,20 +870,31 @@ def run_vitest_for_changed(project: Project, tier: dict[str, Any], fe_paths: lis
     return merged
 
 
-def fuzz_exclusions(tier: dict[str, Any]) -> list[str]:
-    """The tier's `exclude_paths`: a list of operation path templates, or a mapping of reason -> list (the reason
-    keys document why each group is out of the run; schemathesis only sees the paths)."""
-    raw = tier.get("exclude_paths") or []
-    groups = list(raw.values()) if isinstance(raw, dict) else [raw]
+def fuzz_exclusions(tier: dict[str, Any], root: Path | None = None) -> list[str]:
+    """The tier's excluded operation path templates, in order and without duplicates: `exclude_paths` (a list, or a
+    mapping of reason -> list; the reason keys document why each group is out of the run, schemathesis only sees the
+    paths) plus the same shape read from `exclude_paths_file`, relative to the project root, so a long reason-grouped
+    list can live next to the project's own gate that checks it. A named file that cannot be read or is not a list or
+    mapping is a RunError: a fuzz run that silently drops its exclusions is the run that hangs on an event stream."""
+    sources: list[Any] = [tier.get("exclude_paths") or []]
+    if tier.get("exclude_paths_file"):
+        path = (root or Path(".")) / str(tier["exclude_paths_file"])
+        try:
+            sources.append(yaml.safe_load(path.read_text(encoding="utf-8")) or [])
+        except (OSError, yaml.YAMLError) as exc:
+            raise RunError(f"fuzz exclude_paths_file {path}: {exc}") from exc
     out: list[str] = []
-    for group in groups:
-        for path in group or []:
-            if str(path) not in out:
-                out.append(str(path))
+    for raw in sources:
+        if not isinstance(raw, dict | list):
+            raise RunError(f"fuzz exclusions must be a list or a reason -> list mapping, got {type(raw).__name__}")
+        for group in list(raw.values()) if isinstance(raw, dict) else [raw]:
+            for path in group or []:
+                if str(path) not in out:
+                    out.append(str(path))
     return out
 
 
-def schemathesis_args(tier: dict[str, Any], report_in: str) -> list[str]:
+def schemathesis_args(tier: dict[str, Any], report_in: str, root: Path | None = None) -> list[str]:
     """`schemathesis run` for a fuzz tier. The report is the NDJSON event stream, flushed one event per line, so a run
     killed at its budget still says which operations finished; the JUnit report is only written at exit."""
     base_url = tier.get("base_url", tier["schema_url"].rsplit("/", 1)[0])
@@ -891,7 +904,7 @@ def schemathesis_args(tier: dict[str, Any], report_in: str) -> list[str]:
             "--report", "ndjson", "--report-ndjson-path", report_in, "--no-color"]
     for method in tier.get("methods", ["GET"]):
         args += ["--include-method", str(method)]
-    for path in fuzz_exclusions(tier):
+    for path in fuzz_exclusions(tier, root):
         args += ["--exclude-path", path]
     return args + [str(a) for a in tier.get("args", [])]
 
@@ -950,11 +963,15 @@ def run_schemathesis(project: Project, tier: dict[str, Any], trigger: str, art: 
         return Execution("error", error_summary=problem)
     tmp_dir = runtime.get("tmp_dir", "/tmp/testplatform")
     report_in = f"{tmp_dir}/{uuid.uuid4().hex}.ndjson"
+    try:
+        st_args = schemathesis_args(tier, report_in, project.root)
+    except RunError as exc:
+        return Execution("error", error_summary=str(exc)[:500])
     cmd = ["docker", "exec", "-w", runtime.get("workdir", "/app")]
     for key, value in (tier.get("env") or {}).items():
         cmd += ["-e", f"{key}={value}"]
     cmd += [runtime["container"], "sh", "-c", f'mkdir -p {tmp_dir}; exec "$@"', "sh",
-            "timeout", "-s", "TERM", "-k", "20", str(timeout_s)] + schemathesis_args(tier, report_in)
+            "timeout", "-s", "TERM", "-k", "20", str(timeout_s)] + st_args
     out_log = art / "output.log"
     started = time.time()
     rc, _ = _run(cmd, timeout_s + 120, out_log)
