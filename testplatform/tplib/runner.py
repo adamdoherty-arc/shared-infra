@@ -12,7 +12,7 @@ import threading
 import time
 import uuid
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -605,7 +605,9 @@ def quarantine_in_scope(quarantined: list[str], paths: list[str] | None) -> list
 
 def run_pytest(project: Project, tier: dict[str, Any], paths: list[str] | None, trigger: str, art: Path,
                legion: LegionClient, target: str, changed_paths: list[str] | None = None,
-               snap: snapmod.Snapshot | None = None) -> Execution:
+               snap: snapmod.Snapshot | None = None, reuse_snapshot: bool = False) -> Execution:
+    """One pytest invocation. `reuse_snapshot` is a whole-tier run's serial phase: it runs on the container snapshot
+    the parallel phase synced, so both phases test the same commit, and leaves the orphan reap to that phase."""
     runtime = project.profile["runtime"]
     timeout_s = int(tier["timeout_s"])
     quarantined: list[str] = []
@@ -656,9 +658,11 @@ def run_pytest(project: Project, tier: dict[str, Any], paths: list[str] | None, 
             return Execution("error", error_summary=problem)
         snapshot_dir: str | None = None
         if not paths and not changed_paths:
-            reap_orphaned_heavy_pytest(runtime)
+            if not reuse_snapshot:
+                reap_orphaned_heavy_pytest(runtime)
             if runtime.get("snapshot"):
-                snapshot_dir = sync_snapshot(project, runtime, art / "snapshot.log")
+                snapshot_dir = (str(runtime["snapshot"]["dest"]) if reuse_snapshot
+                                else sync_snapshot(project, runtime, art / "snapshot.log"))
                 if snapshot_dir is None:
                     return Execution("error", error_summary="could not build the clean-tree snapshot for the heavy run, "
                                                             f"see {(art / 'snapshot.log').as_posix()}")
@@ -998,6 +1002,102 @@ def merge_executions(parts: list[Execution]) -> Execution:
                      sum(p.quarantined_deselected for p in parts), worst.rc, "; ".join(reasons) or None)
 
 
+SERIAL_PHASE_DROPPED = ("serial_marker", "serial_min_executed", "serial_timeout_s", "floors_file", "testmon_build",
+                        "testmon_datafile", "marker_unless_node_id", "mode")
+PHASE_ORDER = {"passed": 0, "failed": 1, "error": 2, "timeout": 3}
+
+
+def serial_phase_tier(tier: dict[str, Any]) -> dict[str, Any] | None:
+    """The serial second phase of a whole pytest tier, or None when the tier declares no `serial_marker`.
+
+    A test that grows one process by gigabytes (ADA's memory_heavy marker: TestMonteCarloOracle's 200,000-path draw)
+    cannot share the container with a tier's xdist workers, so the tier's `marker` deselects it and this phase runs
+    it after the workers have exited: one process (-n0), `-m serial_marker`, the tier's own paths and args (its -k).
+    Floors and testmon data belong to the whole run, so this phase carries neither; `serial_min_executed` (default
+    0) is its own executed-test floor and `serial_timeout_s` (default the tier's) its own budget.
+    """
+    marker = tier.get("serial_marker")
+    if not marker:
+        return None
+    serial = {k: v for k, v in tier.items() if k not in SERIAL_PHASE_DROPPED}
+    serial.update(marker=str(marker), workers=0, min_executed=int(tier.get("serial_min_executed", 0)),
+                  timeout_s=int(tier.get("serial_timeout_s", tier["timeout_s"])))
+    return serial
+
+
+def merge_phases(project: Project, tier: dict[str, Any], parallel: Execution, serial: Execution) -> Execution:
+    """One verdict from a tier's two phases.
+
+    The worst status wins, the serial phase's own problem is labelled as such, the quarantine list (both phases
+    deselect it) counts once, and the tier's floors are judged on every case the run executed: judged per phase, a
+    floor whose tests all run in the serial phase reads as matching zero tests.
+    """
+    cases = list({c["node_id"]: c for c in [*parallel.cases, *serial.cases]}.values())
+    worst = max((parallel, serial), key=lambda e: PHASE_ORDER.get(e.status, 2))
+    status = worst.status
+    summaries = [s for s in (parallel.error_summary,
+                             f"serial phase: {serial.error_summary}" if serial.error_summary else None) if s]
+    breach = check_floors(project.root / tier["floors_file"], cases) if tier.get("floors_file") else None
+    if breach:
+        summaries.append(f"consequence: {breach}" if status in ("error", "timeout") else breach)
+        if status != "timeout":
+            status = "error"
+    reasons = [r for r in (parallel.reason, serial.reason) if r]
+    return Execution(status, cases, "; ".join(summaries)[:500] or None,
+                     max(parallel.quarantined_deselected, serial.quarantined_deselected), worst.rc,
+                     "; ".join(reasons) or None)
+
+
+def run_pytest_with_serial_phase(project: Project, tier: dict[str, Any], trigger: str, art: Path,
+                                 legion: LegionClient, target: str,
+                                 snap: snapmod.Snapshot | None = None) -> Execution:
+    """A whole pytest tier that declares `serial_marker`: its xdist workers first, then the serial phase.
+
+    The serial phase writes its own artifacts under `serial/` and runs on the snapshot the parallel phase built,
+    so one verdict and one @sha cover both. A parallel phase that timed out (its budget is spent) or produced no
+    cases at all (no container, no snapshot) ends the run there.
+
+    This would pass trivially if the serial phase re-synced the snapshot (a commit landing between the phases makes
+    them test different code under one @sha), if floors were judged per phase, or if a serial phase that selected
+    nothing passed while the tier requires it to run something (a renamed class would drop out of the release gate
+    silently); `serial_min_executed` turns that into an error, and testplatform/tests/test_serial_phase.py has a
+    sabotage case for each beside its control.
+    """
+    serial = serial_phase_tier(tier)
+    if serial is None:
+        raise RunError("run_pytest_with_serial_phase needs a tier with a serial_marker")
+    kw: dict[str, Any] = {"snap": snap} if snap else {}
+    parallel = {k: v for k, v in tier.items() if k != "floors_file"}
+    first = run_pytest(project, parallel, None, trigger, art, legion, target, **kw)
+    if first.status == "timeout" or (first.status == "error" and not first.cases):
+        return first
+    serial_art = art / "serial"
+    serial_art.mkdir(parents=True, exist_ok=True)
+    second = run_pytest(project, serial, None, trigger, serial_art, legion, target, reuse_snapshot=True, **kw)
+    return merge_phases(project, tier, first, second)
+
+
+_SHA = re.compile(r"[0-9a-f]{7,40}")
+
+
+def pin_snapshot_rev(project: Project, sha: str) -> Project:
+    """`project` with its snapshot built from the commit the run reports instead of whatever HEAD is when the
+    snapshot is taken.
+
+    start_and_run records git_sha first and the snapshot read `rev: HEAD` later, after the container check and the
+    orphan reap; a commit landing in between made the verdict's @sha name code the run never tested, and
+    scripts/bitcoin_prod_release.py releases exactly that sha. Only the default HEAD rev is pinned, and only to a
+    real sha: a dirty tree reports head+diffhash, whose head part is the committed tree a snapshot holds.
+    """
+    runtime = project.profile.get("runtime") or {}
+    cfg = runtime.get("snapshot")
+    head = sha.split("+", 1)[0]
+    if not cfg or str(cfg.get("rev", "HEAD")) != "HEAD" or not _SHA.fullmatch(head):
+        return project
+    pinned = {**runtime, "snapshot": {**cfg, "rev": head}}
+    return replace(project, profile={**project.profile, "runtime": pinned})
+
+
 def run_vitest_for_changed(project: Project, tier: dict[str, Any], fe_paths: list[str], art: Path) -> Execution:
     """Vitest for frontend `--paths`: test files by path, source files through vitest's own `related` import graph."""
     vt = project.profile.get("vitest", {})
@@ -1284,6 +1384,8 @@ def _execute_framework(project: Project, tier: dict[str, Any], paths: list[str] 
     kw: dict[str, Any] = {"snap": snap} if snap else {}
     if framework == "pytest" and changed_paths and tier.get("mode") == "changed":
         return run_changed_paths(project, tier, trigger, art, legion, target, changed_paths)
+    if framework == "pytest" and tier.get("serial_marker") and not paths and not changed_paths:
+        return run_pytest_with_serial_phase(project, tier, trigger, art, legion, target, snap)
     if framework == "pytest":
         return run_pytest(project, tier, paths, trigger, art, legion, target, changed_paths, **kw)
     if framework == "vitest":
@@ -1504,7 +1606,7 @@ def start_and_run(project: Project, target: str | None, trigger: str, legion: Le
     try:
         try:
             exe = precomputed if precomputed is not None else execute_framework(
-                project, tier, union, trigger, art, legion, target_label, changed_paths)
+                pin_snapshot_rev(project, sha), tier, union, trigger, art, legion, target_label, changed_paths)
         except Exception as exc:
             exe = Execution("error", error_summary=f"runner exception: {type(exc).__name__}: {exc}"[:500])
         if peers:

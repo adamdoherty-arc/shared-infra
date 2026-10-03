@@ -227,6 +227,27 @@ def fast_timeout_problem(profile: dict[str, Any]) -> str | None:
     return None
 
 
+SERIAL_PHASE_INTS = {"serial_min_executed": 0, "serial_timeout_s": 1}
+
+
+def check_serial_phase(name: str, tier: dict[str, Any], framework: str | None, where: str) -> None:
+    """A `serial_marker` (runner.serial_phase_tier) belongs on a whole pytest tier only: a changed tier selects
+    through testmon or `--paths`, which a second whole-path phase would ignore. Its two companion keys need it."""
+    if "serial_marker" in tier:
+        marker = tier["serial_marker"]
+        if framework != "pytest" or tier.get("mode") == "changed" or not isinstance(marker, str) or not marker.strip():
+            raise ProfileError(f"{where}: tier {name!r} serial_marker must be a non-empty marker expression on a "
+                               "whole pytest tier (not a changed tier)")
+    for key, minimum in SERIAL_PHASE_INTS.items():
+        if key not in tier:
+            continue
+        value = tier[key]
+        if "serial_marker" not in tier:
+            raise ProfileError(f"{where}: tier {name!r} sets {key} without a serial_marker")
+        if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
+            raise ProfileError(f"{where}: tier {name!r} {key} must be an integer >= {minimum}, got {value!r}")
+
+
 def validate_profile(profile: dict[str, Any], where: str) -> None:
     if not isinstance(profile, dict):
         raise ProfileError(f"{where}: profile must be a mapping")
@@ -241,6 +262,7 @@ def validate_profile(profile: dict[str, Any], where: str) -> None:
             raise ProfileError(f"{where}: tier {name!r} framework {fw!r} not in {sorted(FRAMEWORKS)}")
         if int(tier.get("timeout_s", 0)) <= 0:
             raise ProfileError(f"{where}: tier {name!r} needs a positive timeout_s")
+        check_serial_phase(name, tier, fw, where)
     lanes = profile.get("lanes")
     if lanes is not None:
         if not isinstance(lanes, dict):

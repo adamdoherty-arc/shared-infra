@@ -43,6 +43,16 @@ with `runtime` (how to reach a test container), `pytest` defaults and named `tie
 path or node id and runs under `path_tier`. A tier may carry `floors_file` (per-service executed-test floors keyed on
 test module stem; a prefix that matches zero tests, or a shortfall, makes the run an `error`).
 
+A whole pytest tier may carry `serial_marker` (not a `changed` tier): after its xdist workers finish, the same run
+executes `-m <serial_marker>` in one process (`-n0`) with the tier's paths and args, on the snapshot the first phase
+built, and writes that phase's artifacts under `serial/`. One verdict covers both phases, floors are judged on their
+merged cases, the quarantine count is not doubled, `serial_min_executed` (default 0) is the phase's own floor and
+`serial_timeout_s` (default the tier's `timeout_s`) its budget. A first phase that timed out or produced nothing ends
+the run there. ADA uses it for tests one process grows by gigabytes (`memory_heavy`): the tier's own marker
+deselects them, its serial phase runs them, so `ada:bitcoin`, the live-money release preflight, still runs
+TestMonteCarloOracle. A heavy run's snapshot is built from the sha the run reports (`pin_snapshot_rev`), not
+whatever HEAD is when the snapshot is taken.
+
 ADA tiers: `changed` (two selection paths. `--paths <files>` maps the given source or test files to tests through the
 testmon dependency database, falling back to an import-graph scan of the test tree when the database cannot answer;
 plain `changed` runs `pytest --testmon`, and with neither paths nor testmon data it refuses with a hint), `testmon`
