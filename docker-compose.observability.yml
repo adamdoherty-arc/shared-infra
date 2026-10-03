@@ -41,7 +41,7 @@ services:
       - "host.docker.internal:host-gateway"
     deploy:
       resources:
-        limits: { memory: 768M }
+        limits: { memory: 1024M }
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:9090/-/healthy"]
       interval: 15s
@@ -225,7 +225,7 @@ services:
       - shared-infra
     deploy:
       resources:
-        limits: { memory: 256M }
+        limits: { memory: 384M }
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/healthz"]
       interval: 30s
