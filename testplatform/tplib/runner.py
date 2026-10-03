@@ -685,6 +685,45 @@ def check_floors(path: Path, cases: list[dict[str, Any]]) -> str | None:
     return ("service floor breach: " + "; ".join(problems)) if problems else None
 
 
+_CRASHED_WORKER = re.compile(r"worker '(gw\d+)' crashed while running '([^']+)'")
+
+
+def truncation_of(report: dict[str, Any], rc: int, out_log: Path) -> str | None:
+    """Why a pytest run stopped before running what it collected, or None when it ran to the end.
+
+    pytest exit 2 (interrupted) and 3 (internal error) end a session early whatever the cases that did report
+    say. Nightly ADA full run 3208: xdist worker gw3 was OOM-killed, the scheduler raised KeyError on its
+    replacement and pytest exited 3 at 93%, with 34,332 of 36,687 collected tests reported. The verdict named only
+    the paper_trading floor breach those 2,355 missing tests caused, and without a floors file it read as an
+    ordinary FAILED: exit 3 counted as an error only when no case had failed, and a crashed worker always leaves
+    one failed case behind. A crashed worker whose replacement finished the run (exit 1, nothing missing) is not
+    truncation; its crashed test is an ordinary failure. pytest-json-report's summary.collected counts deselected
+    items back in (an in-process run reports them as summary.deselected; an xdist controller deselects nothing),
+    so the tests that should have reported are collected minus deselected.
+    """
+    tests = report.get("tests") or []
+    summary = report.get("summary") or {}
+    selected = int(summary.get("collected") or 0) - int(summary.get("deselected") or 0)
+    missing = max(selected - len(tests), 0)
+    crashes = []
+    for test in tests:
+        for phase in test.values():
+            found = _CRASHED_WORKER.search(str(phase.get("longrepr") or "")) if isinstance(phase, dict) else None
+            if found:
+                crashes.append(f"worker {found.group(1)} crashed running {found.group(2)}")
+    if rc not in (2, 3) and not (crashes and missing):
+        return None
+    parts = [f"RUN TRUNCATED: pytest exit {rc}" + {2: " (interrupted)", 3: " (internal error)"}.get(rc, "")]
+    if missing:
+        parts.append(f"{len(tests)} of {selected} selected tests reported, {missing} never ran")
+    parts.extend(crashes[:2])
+    internal = [ln[len("INTERNALERROR> "):].strip() for ln in _tail(out_log, 400).splitlines()
+                if ln.startswith("INTERNALERROR> ") and "Error" in ln]
+    if internal:
+        parts.append(internal[-1])
+    return "; ".join(parts)
+
+
 def interpret_pytest(project: Project, tier: dict[str, Any], paths: list[str] | None, trigger: str, rc: int,
                      report_path: Path | None, out_log: Path, elapsed: float, timeout_s: int,
                      quarantined_count: int) -> Execution:
@@ -705,10 +744,14 @@ def interpret_pytest(project: Project, tier: dict[str, Any], paths: list[str] | 
     reruns = SCHEDULE_RERUNS if trigger == "schedule" else 0
     cases = parsers.parse_pytest_json(report, project.root, reruns=reruns,
                                       path_prefix=project.profile.get("pytest", {}).get("path_prefix", ""))
-    if tier.get("floors_file") and paths is None:
-        breach = check_floors(project.root / tier["floors_file"], cases)
-        if breach:
-            return Execution("error", cases, breach[:500], quarantined_count, rc)
+    breach = check_floors(project.root / tier["floors_file"], cases) \
+        if tier.get("floors_file") and paths is None else None
+    truncated = truncation_of(report, rc, out_log)
+    if truncated:
+        consequence = f"; consequence: {breach}" if breach else ""
+        return Execution("error", cases, (truncated + consequence)[:500], quarantined_count, rc)
+    if breach:
+        return Execution("error", cases, breach[:500], quarantined_count, rc)
     executed = sum(1 for c in cases if c["status"] not in ("skipped",))
     min_executed = int(tier.get("min_executed", 0))
     totals = parsers.totals_of(cases)
