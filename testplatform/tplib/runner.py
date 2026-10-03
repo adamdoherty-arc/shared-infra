@@ -39,7 +39,10 @@ TRIGGERS = ("claude", "schedule", "hook", "manual")
 NO_WINDOW = 0x08000000 if sys.platform == "win32" else 0
 OUTPUT_TAIL_LINES = 12
 SCHEDULE_RERUNS = 2
+RERUN_EXCEPT = ("Timeout >", "crashed while running")
+FAILURE_STREAM_ENV = "TESTCTL_FAILURE_STREAM"
 MAX_DESELECT = 400
+DEFAULT_STALL_S = 600
 
 
 class RunError(Exception):
@@ -117,7 +120,8 @@ def lock_for(project: Project, target: str | None, changed_paths: list[str] | No
     if lane_of(project, target, changed_paths) == LIGHT:
         return ProjectLock(project.name, lane=LIGHT, slots=project.light_slots_max,
                            admit=lambda n: light_blocker(project, n, lock_dir), **kwargs)
-    return ProjectLock(project.name, admit=lambda _n: heavy_blocker(project, lock_dir), **kwargs)
+    tier_name = resolve_target(project, target)[0]
+    return ProjectLock(project.name, admit=lambda _n: heavy_blocker(project, lock_dir, tier=tier_name), **kwargs)
 
 
 def request_key(target: str | None, paths: list[str] | None) -> str:
@@ -160,6 +164,50 @@ def _run(cmd: list[str], timeout: float, out_file: Path | None = None, cwd: Path
     finally:
         if handle:
             handle.close()
+
+
+class StallWatchdog:
+    """Ends a pytest run whose output stops growing, so one stuck worker cannot spend the tier's whole budget.
+
+    Scheduled fast runs 3048 and 3175 (2026-10-02) printed their last progress character about twelve minutes in
+    and then sat on the final 4 and 7 tests until the 1,800 s kill, a run that normally takes 11 to 13 minutes.
+    The per-test timeout cannot help when the controller itself is waiting on a worker that will never report.
+    The longest legitimate silence is one test's timeout plus the hang guard's grace, far under `stall_s`.
+    """
+
+    def __init__(self, container: str, out_log: Path, run_marker: str, stall_s: int, poll_s: float = 15.0):
+        self.container, self.out_log, self.run_marker = container, out_log, run_marker
+        self.stall_s, self.poll_s = stall_s, poll_s
+        self.fired = False
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._loop, daemon=True, name="stall-watchdog")
+
+    def _size(self) -> int:
+        try:
+            return self.out_log.stat().st_size
+        except OSError:
+            return 0
+
+    def _loop(self) -> None:
+        last_size, last_change = self._size(), time.time()
+        while not self._stop.wait(self.poll_s):
+            size = self._size()
+            if size != last_size:
+                last_size, last_change = size, time.time()
+                continue
+            if time.time() - last_change >= self.stall_s:
+                self.fired = True
+                _run(["docker", "exec", self.container, "pkill", "-TERM", "-f", self.run_marker], 30)
+                self._stop.wait(10)
+                _run(["docker", "exec", self.container, "pkill", "-KILL", "-f", self.run_marker], 30)
+                return
+
+    def start(self) -> None:
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        self._thread.join(timeout=60)
 
 
 ARGFILE_CMDLINE_LIMIT = 24000
@@ -283,12 +331,20 @@ def ensure_container(runtime: dict[str, Any], root: Path) -> str | None:
 DEFAULT_PARALLEL_MIN_FILES = 150
 
 
+HEAVY_PRIORITY_AFTER_S = 600.0
+
+
 def light_blocker(project: Project, held_light: int, lock_dir: Path | None = None,
-                  available_mb: float | None = None) -> Held | None:
+                  available_mb: float | None = None, now: float | None = None) -> Held | None:
     """The run that stops a further light run from starting, else None.
 
-    While a heavy run is live that is the heavy run when no memory is left beside it. With no heavy run the lane is
-    capped by `light_slots_idle` (container memory, cpu, host free RAM) and the blocker is a live light holder.
+    While a heavy run is live that is the heavy run when no memory is left beside it. A heavy request that has
+    waited HEAVY_PRIORITY_AFTER_S blocks further light runs the same way until what is live fits beside it: on
+    2026-10-03 ADA's fast, e2e_bitcoin, e2e and bitcoin requests waited over an hour while one targeted run after
+    another kept the light lane busy, because a heavy run starts only once the lane has drained. With no heavy run
+    the lane is capped by `light_slots_idle` (container memory, cpu, host free RAM) and the blocker is a live light
+    holder. This would pass trivially if a waiter never aged (light runs keep the lane forever) or aged at once
+    (every queued heavy request stalls targeted runs); test_admission.py pins both edges.
     """
     kwargs: dict[str, Any] = {} if lock_dir is None else {"lock_dir": lock_dir}
     heavy = ProjectLock(project.name, **kwargs).read()
@@ -296,6 +352,12 @@ def light_blocker(project: Project, held_light: int, lock_dir: Path | None = Non
         allowed = light_slots_while_heavy(project.profile, project.light_concurrency,
                                           measured_worker_rss_mb(project.name), heavy_tier=held_tier(heavy))
         return heavy if held_light >= allowed else None
+    waiting = ProjectLock(project.name, **kwargs).oldest_waiter()
+    if waiting is not None and (time.time() if now is None else now) - waiting[1] >= HEAVY_PRIORITY_AFTER_S:
+        allowed = light_slots_while_heavy(project.profile, project.light_concurrency,
+                                          measured_worker_rss_mb(project.name), heavy_tier=held_tier(waiting[0]))
+        if held_light >= allowed:
+            return waiting[0]
     if project.light_slots_max <= project.light_concurrency:
         return None
     if available_mb is None:
@@ -316,18 +378,20 @@ def held_tier(held: Held) -> str | None:
     return str(target) or None
 
 
-def heavy_blocker(project: Project, lock_dir: Path | None = None) -> Held | None:
-    """A live light holder when more light runs are live than fit beside a heavy run, else None.
+def heavy_blocker(project: Project, lock_dir: Path | None = None, tier: str | None = None) -> Held | None:
+    """A live light holder when more light runs are live than fit beside the requested heavy tier, else None.
 
     The light lane may widen to `light_concurrency_max` while nothing heavy runs; a heavy run starting then would add
     its workers on top and push the container past its memory limit, so it waits for the lane to drain to the
-    heavy-compatible level instead.
+    level that fits beside its own tier (a tier declaring `rss_mb`, such as one that runs on the host, waits for
+    nothing it does not need).
     """
     if project.light_slots_max <= project.light_concurrency:
         return None
     kwargs: dict[str, Any] = {} if lock_dir is None else {"lock_dir": lock_dir}
     live = ProjectLock(project.name, lane=LIGHT, slots=project.light_slots_max, **kwargs).holders()
-    allowed = light_slots_while_heavy(project.profile, project.light_concurrency, measured_worker_rss_mb(project.name))
+    allowed = light_slots_while_heavy(project.profile, project.light_concurrency, measured_worker_rss_mb(project.name),
+                                      heavy_tier=tier)
     return live[0] if len(live) > max(allowed, 0) else None
 
 
@@ -375,6 +439,8 @@ def _pytest_args(project: Project, tier: dict[str, Any], paths: list[str] | None
     args += extra
     if trigger == "schedule":
         args += ["--reruns", str(SCHEDULE_RERUNS)]
+        for pattern in RERUN_EXCEPT:
+            args += ["--rerun-except", pattern]
     else:
         args += ["-p", "no:randomly"]
     for node in deselect[:MAX_DESELECT]:
@@ -566,6 +632,8 @@ def run_pytest(project: Project, tier: dict[str, Any], paths: list[str] | None, 
     report_name = f"{uuid.uuid4().hex}.json"
     out_log = art / "output.log"
     report_host = art / "report.json"
+    failure_stream: Path | None = art / "failures.jsonl"
+    stalled_s = 0
     timeout_prefix = ["timeout", "-s", "TERM", "-k", "20", str(timeout_s)]
     started = time.time()
     if runtime["kind"] == "exec":
@@ -585,6 +653,8 @@ def run_pytest(project: Project, tier: dict[str, Any], paths: list[str] | None, 
                     env["PYTHONPYCACHEPREFIX"] = runtime["snapshot"]["pycache"]
         tmp_dir = runtime.get("tmp_dir", "/tmp/testplatform")
         report_in = f"{tmp_dir}/{report_name}"
+        stream_in = f"{tmp_dir}/{report_name}.failures"
+        env[FAILURE_STREAM_ENV] = stream_in
         if paths or changed_paths:
             cap = light_worker_cap(project)
             if cap is not None:
@@ -609,13 +679,22 @@ def run_pytest(project: Project, tier: dict[str, Any], paths: list[str] | None, 
         sampler = RssSampler(runtime["container"], project.name) if heavy else None
         if sampler:
             sampler.start()
+        stall_s = int(tier.get("stall_s", DEFAULT_STALL_S)) if heavy else 0
+        watchdog = StallWatchdog(runtime["container"], out_log, report_name, stall_s) if stall_s > 0 else None
+        if watchdog:
+            watchdog.start()
         try:
             rc, _ = _run(cmd, timeout_s + 120, out_log)
         finally:
             if sampler:
                 sampler.stop()
+            if watchdog:
+                watchdog.stop()
+        stalled_s = stall_s if watchdog and watchdog.fired else 0
         cp_rc = pull_file(runtime["container"], report_in, report_host)
-        _run(["docker", "exec", runtime["container"], "rm", "-f", report_in, argfile_in], 30)
+        if pull_file(runtime["container"], stream_in, failure_stream) != 0:
+            failure_stream = None
+        _run(["docker", "exec", runtime["container"], "rm", "-f", report_in, argfile_in, stream_in], 30)
     else:
         report_in = f"/out/{report_name}"
         pytest_args = _pytest_args(project, tier, paths, trigger, report_in, quarantined, extra)
@@ -639,7 +718,7 @@ def run_pytest(project: Project, tier: dict[str, Any], paths: list[str] | None, 
         cp_rc = 0 if report_host.exists() else 1
     elapsed = time.time() - started
     return interpret_pytest(project, tier, paths, trigger, rc, report_host if cp_rc == 0 else None, out_log,
-                            elapsed, timeout_s, len(quarantined[:MAX_DESELECT]))
+                            elapsed, timeout_s, len(quarantined[:MAX_DESELECT]), failure_stream, stalled_s)
 
 
 def tmpfs_masks(root: Path, runtime: dict[str, Any]) -> list[str]:
@@ -726,11 +805,20 @@ def truncation_of(report: dict[str, Any], rc: int, out_log: Path) -> str | None:
 
 def interpret_pytest(project: Project, tier: dict[str, Any], paths: list[str] | None, trigger: str, rc: int,
                      report_path: Path | None, out_log: Path, elapsed: float, timeout_s: int,
-                     quarantined_count: int) -> Execution:
+                     quarantined_count: int, failure_stream: Path | None = None, stalled_s: int = 0) -> Execution:
     tail = _summary(_tail(out_log))
-    if rc in (124, 137) and elapsed >= timeout_s - 5:
-        return Execution("timeout", error_summary=timeout_summary(out_log, timeout_s), rc=rc,
-                         quarantined_deselected=quarantined_count)
+    if stalled_s or (rc in (124, 137) and elapsed >= timeout_s - 5):
+        streamed = parsers.cases_from_failure_stream(failure_stream, project.root,
+                                                     project.profile.get("pytest", {}).get("path_prefix", ""))
+        summary = timeout_summary(out_log, timeout_s)
+        if stalled_s:
+            stalled = f"STALLED, no test progress for {stalled_s}s (killed at {int(elapsed)}s)"
+            summary = summary.replace(f"exceeded {timeout_s}s", stalled, 1)
+        if streamed:
+            names = ", ".join(c["node_id"].rsplit("/", 1)[-1] for c in streamed[:3])
+            more = f" +{len(streamed) - 3} more" if len(streamed) > 3 else ""
+            summary = f"{summary.split('; ', 1)[0]}; FAILED SO FAR ({len(streamed)}): {names}{more}"[:500]
+        return Execution("timeout", streamed, summary, quarantined_count, rc)
     report: dict[str, Any] | None = None
     if report_path and report_path.exists():
         try:

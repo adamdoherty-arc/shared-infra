@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import os
 import sys
 import threading
 import time
@@ -242,3 +244,55 @@ def test_a_repeat_of_a_queued_heavy_request_is_detected_but_a_different_target_i
     assert probe.queued_duplicate(None) is None
     holder.release()
     waiter.join(8)
+
+
+def _queue_heavy(tmp_path: Path, project: str, tier: str, waited_s: float) -> None:
+    queue = tmp_path / f"{project}.queue"
+    queue.mkdir(parents=True, exist_ok=True)
+    queued_at = time.time() - waited_s
+    (queue / f"{int(queued_at * 1e9):020d}-1-0").write_text(json.dumps(
+        {"pid": os.getpid(), "group": "waiter", "key": runner.request_key(tier, None), "queued_at": queued_at}),
+        encoding="utf-8")
+
+
+def _starvation_project(tmp_path: Path, monkeypatch):
+    lanes = ("lanes: {mem_budget_mb: 10240, worker_rss_mb: 2300, light_rss_mb: 650, parent_rss_mb: 450, "
+             "headroom_mb: 500, light_concurrency_max: 6}")
+    project = _project(tmp_path, "    light_concurrency: 2" + chr(10), lanes + chr(10))
+    project.profile["tiers"]["fast"]["workers"] = 4
+    project.profile["tiers"]["e2e"] = {"framework": "playwright", "rss_mb": 0, "timeout_s": 60}
+    monkeypatch.setattr(runner, "measured_worker_rss_mb", lambda name: None)
+    return project
+
+
+def test_sabotage_a_heavy_request_that_waited_too_long_stops_new_light_runs(tmp_path, monkeypatch):
+    """2026-10-03: ADA's fast, e2e_bitcoin, e2e and bitcoin requests waited over an hour because one targeted run
+    after another kept the light lane busy and a heavy run starts only once the lane drains."""
+    project = _starvation_project(tmp_path, monkeypatch)
+    _queue_heavy(tmp_path, "demo", "fast", runner.HEAVY_PRIORITY_AFTER_S + 1)
+    blocker = runner.light_blocker(project, 0, tmp_path, available_mb=60000)
+    assert blocker is not None and blocker.run_id is None and runner.held_tier(blocker) == "fast"
+
+
+def test_control_a_fresh_heavy_request_or_one_with_room_beside_it_lets_light_runs_start(tmp_path, monkeypatch):
+    project = _starvation_project(tmp_path, monkeypatch)
+    _queue_heavy(tmp_path, "demo", "fast", 30)
+    assert runner.light_blocker(project, 0, tmp_path, available_mb=60000) is None
+    other = tmp_path / "other"
+    other.mkdir()
+    _queue_heavy(other, "demo", "e2e", runner.HEAVY_PRIORITY_AFTER_S + 1)
+    assert runner.light_blocker(project, 1, other, available_mb=60000) is None
+
+
+def test_a_heavy_tier_that_needs_no_container_memory_starts_beside_live_light_runs(tmp_path, monkeypatch):
+    project = _starvation_project(tmp_path, monkeypatch)
+    light = runner.lock_for(project, "tests/test_a.py", None, tmp_path)
+    assert light.acquire(runner.request_key("tests/test_a.py", None))[0]
+    e2e = runner.lock_for(project, "e2e", None, tmp_path)
+    ok, holder = e2e.acquire(runner.request_key("e2e", None))
+    assert ok, f"an e2e run on the host must not wait for the light lane: {holder}"
+    e2e.release()
+    fast = runner.lock_for(project, "fast", None, tmp_path)
+    ok, holder = fast.acquire(runner.request_key("fast", None))
+    assert not ok and holder is not None and holder.lane == "light", "control: fast still waits for the lane"
+    light.release()

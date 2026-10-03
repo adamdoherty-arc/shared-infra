@@ -379,6 +379,23 @@ class ProjectLock:
                 return place
         return None
 
+    def oldest_waiter(self) -> tuple[Held, float] | None:
+        """This lane's longest-waiting live request and the time it queued, else None."""
+        if not self._queue_dir.exists():
+            return None
+        for ticket in sorted(self._queue_dir.iterdir()):
+            try:
+                data = json.loads(ticket.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            if not isinstance(data, dict) or not pid_alive(int(data.get("pid", 0))):
+                continue
+            pid = int(data["pid"])
+            held = Held(self.project, ticket, pid, None, key=data.get("key"), lane=self.lane,
+                        group=str(data.get("group") or f"pid:{pid}"))
+            return held, float(data.get("queued_at") or 0.0)
+        return None
+
     def queue_position(self, ticket: Path) -> int:
         """1-based place in this lane's queue (1 = next to start), counting only live waiters."""
         ahead = 0

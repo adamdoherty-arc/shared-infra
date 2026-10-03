@@ -189,6 +189,36 @@ def parse_pytest_json(report: dict[str, Any], repo_root: Path, reruns: int = 0,
     return cases
 
 
+def cases_from_failure_stream(stream: Path | None, repo_root: Path, path_prefix: str = "") -> list[dict[str, Any]]:
+    """Failed cases a run recorded one line at a time (failure_stream_plugin) before it was killed; [] when none."""
+    if stream is None:
+        return []
+    try:
+        lines = stream.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return []
+    cases: dict[str, dict[str, Any]] = {}
+    for line in lines:
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        node_id = str(row.get("node_id") or "")
+        if not node_id or node_id in cases:
+            continue
+        if path_prefix and node_id.startswith(path_prefix):
+            node_id = node_id[len(path_prefix):]
+        trace = str(row.get("trace") or "")
+        message = str(row.get("message") or "")
+        status = "failed" if row.get("phase") == "call" else "error"
+        cases[node_id] = {
+            "node_id": node_id, "file": node_id.split("::", 1)[0], "status": status, "duration_ms": 0, "attempts": 1,
+            "body_hash": body_hash(repo_root, node_id), "feature_slug": None, "requirement_ids": [],
+            "failure": make_failure(_failure_type(message, trace), message, trace or message),
+        }
+    return list(cases.values())
+
+
 def _file_hash(repo_root: Path, rel: str) -> str:
     try:
         return hashlib.sha1((repo_root / rel).read_bytes()).hexdigest()

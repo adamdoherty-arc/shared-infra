@@ -5,6 +5,7 @@ import json
 import os
 import sys
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
@@ -512,9 +513,31 @@ def test_pytest_args_by_trigger(tmp_path):
     tier = project.tier("fast")
     sched = runner._pytest_args(project, tier, None, "schedule", "/r.json", [], [])
     assert "--reruns" in sched and "no:randomly" not in sched
+    assert [sched[i + 1] for i, a in enumerate(sched) if a == "--rerun-except"] == list(runner.RERUN_EXCEPT)
+    assert "--rerun-except" not in runner._pytest_args(project, tier, None, "claude", "/r.json", [], [])
     claude = runner._pytest_args(project, tier, None, "claude", "/r.json", ["tests/a.py::q"], [])
     assert "--reruns" not in claude and "no:randomly" in claude
     assert claude[claude.index("--deselect") + 1] == "tests/a.py::q"
+
+
+def test_timed_out_run_reports_the_failures_it_streamed_before_the_kill(tmp_path):
+    project = profile.load_project("demo", _registry(tmp_path))
+    log = tmp_path / "out.log"
+    log.write_text("....F..\n", encoding="utf-8")
+    stream = tmp_path / "failures.jsonl"
+    rows = [{"node_id": "tests/test_a.py::test_x", "phase": "call", "message": "AssertionError: 1 == 2", "trace": "E"},
+            {"node_id": "tests/test_a.py::test_x", "phase": "call", "message": "dup", "trace": ""},
+            {"node_id": "tests/test_b.py::test_y", "phase": "setup", "message": "fixture boom", "trace": ""}]
+    stream.write_text("\n".join(json.dumps(r) for r in rows) + "\nnot json\n", encoding="utf-8")
+    tier = {"timeout_s": 60}
+    ex = runner.interpret_pytest(project, tier, None, "schedule", 124, None, log, 61, 60, 0, stream)
+    assert ex.status == "timeout"
+    assert [(c["node_id"], c["status"]) for c in ex.cases] == [("tests/test_a.py::test_x", "failed"),
+                                                              ("tests/test_b.py::test_y", "error")]
+    assert "FAILED SO FAR (2)" in ex.error_summary and "test_a.py::test_x" in ex.error_summary
+    assert parsers.totals_of(ex.cases)["failed"] == 1
+    bare = runner.interpret_pytest(project, tier, None, "schedule", 124, None, log, 61, 60, 0, None)
+    assert bare.status == "timeout" and bare.cases == [] and "FAILED SO FAR" not in bare.error_summary
 
 
 def test_paths_map_via_import_graph_and_direct_tests(tmp_path):
@@ -975,3 +998,40 @@ def test_control_a_small_selection_or_a_failed_write_keeps_the_paths_inline():
     assert runner.spill_paths_to_argfile(["docker"], args, 1, 3, lambda r, t: 0, "/x") == args
     big = ["python", "-m", "pytest", *[f"backend/tests/test_{i}.py" * 3 for i in range(2000)], "-n0"]
     assert runner.spill_paths_to_argfile(["docker"], big, 2000, 3, lambda r, t: 1, "/x") == big
+
+
+def test_stall_watchdog_kills_a_run_whose_output_stops_growing_and_leaves_a_live_one_alone(tmp_path, monkeypatch):
+    calls = []
+    monkeypatch.setattr(runner, "_run", lambda cmd, timeout, *a, **k: calls.append(cmd) or (0, ""))
+    quiet = tmp_path / "quiet.log"
+    quiet.write_text("....", encoding="utf-8")
+    dog = runner.StallWatchdog("c", quiet, "marker-1", stall_s=1, poll_s=0.1)
+    dog._stop.wait = lambda timeout=None: (time.sleep(0.3), False)[1] if not dog.fired else True
+    dog._loop()
+    assert dog.fired
+    assert [c[-3:] for c in calls] == [["-TERM", "-f", "marker-1"], ["-KILL", "-f", "marker-1"]]
+
+    calls.clear()
+    live = tmp_path / "live.log"
+    live.write_text("x", encoding="utf-8")
+    steady = runner.StallWatchdog("c", live, "marker-2", stall_s=1, poll_s=0.1)
+    ticks = {"n": 0}
+
+    def wait(timeout=None):
+        ticks["n"] += 1
+        with open(live, "a", encoding="utf-8") as fh:
+            fh.write(".")
+        time.sleep(0.4)
+        return ticks["n"] > 8
+
+    steady._stop.wait = wait
+    steady._loop()
+    assert not steady.fired and calls == []
+
+
+def test_a_stalled_run_is_a_timeout_that_says_so(tmp_path):
+    project = profile.load_project("demo", _registry(tmp_path))
+    log = tmp_path / "out.log"
+    log.write_text("....\n.... [ 50%]\n", encoding="utf-8")
+    ex = runner.interpret_pytest(project, {"timeout_s": 600}, None, "schedule", 143, None, log, 120, 600, 0, None, 90)
+    assert ex.status == "timeout" and ex.error_summary.startswith("STALLED, no test progress for 90s")
