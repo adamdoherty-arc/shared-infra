@@ -49,7 +49,12 @@ plain `changed` runs `pytest --testmon`, and with neither paths nor testmon data
 (builds the testmon data once), `fast`, `live_db`, `full` (also rebuilds the testmon data every night with
 `--testmon-noselect`, so `changed` stays current), `path`, `vitest`, `gates` (framework `commands`: each configured
 command is one case, exit 0 pass / 1 fail / 2 error; used for the non-test static gates),
-`fuzz` (schemathesis, GET only, fixed seed, `not_a_server_error`, against `http://ada-backend:8003`),
+`fuzz` (schemathesis, GET only, fixed seed, against `http://ada-backend:8003`; the tier's `checks` names the
+schemathesis check, `env` is passed into the container (ADA loads its checks through `SCHEMATHESIS_HOOKS`) and
+`exclude_paths` lists the operation templates kept out of the run, as a list or as reason -> list groups. The report is
+schemathesis' NDJSON event stream (`report.ndjson.gz` in the artifact dir), flushed one event per line, so a run killed
+at `timeout_s` still reports every operation that finished, as a `timeout` run with those cases and the count of
+scenarios that were still running),
 `e2e` (playwright smoke over a page list). Legion runs in a throwaway container from its own image.
 
 `customer-ops` (`C:/code/customer-ops/.testplatform.yml`, Legion project 29) shows the other runtime shapes: pytest in a throwaway

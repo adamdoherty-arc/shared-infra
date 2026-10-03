@@ -868,42 +868,106 @@ def run_vitest_for_changed(project: Project, tier: dict[str, Any], fe_paths: lis
     return merged
 
 
+def fuzz_exclusions(tier: dict[str, Any]) -> list[str]:
+    """The tier's `exclude_paths`: a list of operation path templates, or a mapping of reason -> list (the reason
+    keys document why each group is out of the run; schemathesis only sees the paths)."""
+    raw = tier.get("exclude_paths") or []
+    groups = list(raw.values()) if isinstance(raw, dict) else [raw]
+    out: list[str] = []
+    for group in groups:
+        for path in group or []:
+            if str(path) not in out:
+                out.append(str(path))
+    return out
+
+
+def schemathesis_args(tier: dict[str, Any], report_in: str) -> list[str]:
+    """`schemathesis run` for a fuzz tier. The report is the NDJSON event stream, flushed one event per line, so a run
+    killed at its budget still says which operations finished; the JUnit report is only written at exit."""
+    base_url = tier.get("base_url", tier["schema_url"].rsplit("/", 1)[0])
+    args = ["schemathesis", "run", tier["schema_url"], "--url", base_url,
+            "--seed", str(tier.get("seed", 20260929)), "--max-examples", str(tier.get("max_examples", 5)),
+            "--checks", str(tier.get("checks", "not_a_server_error")),
+            "--report", "ndjson", "--report-ndjson-path", report_in, "--no-color"]
+    for method in tier.get("methods", ["GET"]):
+        args += ["--include-method", str(method)]
+    for path in fuzz_exclusions(tier):
+        args += ["--exclude-path", path]
+    return args + [str(a) for a in tier.get("args", [])]
+
+
+def interpret_schemathesis(rc: int, report: dict[str, Any] | None, tail: str, elapsed: float,
+                           timeout_s: int) -> Execution:
+    """Verdict of one fuzz run from its exit code and its parsed NDJSON report (None when none could be read).
+
+    A run killed at its budget is `timeout` and still carries every operation that finished, so a run that spent
+    its budget on a hung request reports what it did test instead of nothing (runs 3188 and 3242, 2026-10-03:
+    0 cases after 3600 s). A run that exits before the engine's final event is an `error` with its partial cases.
+    """
+    cases = list(report["cases"]) if report else []
+    done = sum(1 for c in cases if c["status"] != "skipped")
+    if rc in (124, 137) and elapsed >= timeout_s - 5:
+        if report is None:
+            return Execution("timeout", error_summary=f"exceeded {timeout_s}s and left no event stream; {tail}"[:500],
+                             rc=rc)
+        return Execution("timeout", cases, (f"exceeded {timeout_s}s: {done} operations finished and are reported, "
+                                            f"{report['unfinished']} scenarios still running at the kill; {tail}")[:500],
+                         0, rc)
+    if report is None:
+        return Execution("error", error_summary=f"schemathesis exit {rc} and no event stream: {tail}"[:500], rc=rc)
+    if not cases:
+        return Execution("error", error_summary=f"schemathesis produced no test cases: {tail}"[:500], rc=rc)
+    if not report["engine_finished"]:
+        return Execution("error", cases, (f"schemathesis exit {rc} before the run finished: {done} operations "
+                                          f"reported, {report['unfinished']} unfinished; {tail}")[:500], 0, rc)
+    totals = parsers.totals_of(cases)
+    status = "failed" if (totals["failed"] or totals["errors"]) else "passed"
+    summary = None
+    if report["stop_reason"] not in (None, "completed"):
+        summary = f"schemathesis stopped early ({report['stop_reason']}) after {done} operations; {tail}"[:500]
+    return Execution(status, cases, summary, 0, rc)
+
+
+def gzip_in_place(path: Path) -> Path:
+    """`path` -> `path.gz` (the raw NDJSON keeps every response body, tens of MB a night); the original on failure."""
+    import gzip
+    import shutil
+    target = path.with_name(path.name + ".gz")
+    try:
+        with open(path, "rb") as src, gzip.open(target, "wb") as dst:
+            shutil.copyfileobj(src, dst)
+        path.unlink()
+    except OSError:
+        return path
+    return target
+
+
 def run_schemathesis(project: Project, tier: dict[str, Any], trigger: str, art: Path) -> Execution:
     runtime = project.profile["runtime"]
     timeout_s = int(tier["timeout_s"])
     problem = ensure_container(runtime, project.root)
     if problem:
         return Execution("error", error_summary=problem)
-    report_in = f"{runtime.get('tmp_dir', '/tmp/testplatform')}/{uuid.uuid4().hex}.xml"
-    seed = str(tier.get("seed", 20260929))
-    max_examples = str(tier.get("max_examples", 5))
-    methods = tier.get("methods", ["GET"])
-    args = ["schemathesis", "run", tier["schema_url"], "--url", tier.get("base_url", tier["schema_url"].rsplit("/", 1)[0]),
-            "--seed", seed, "--max-examples", str(max_examples), "--checks", tier.get("checks", "not_a_server_error"),
-            "--report", "junit", "--report-junit-path", report_in, "--no-color"]
-    for m in methods:
-        args += ["--include-method", m]
-    args += list(tier.get("args", []))
-    cmd = ["docker", "exec", "-w", runtime.get("workdir", "/app"), runtime["container"], "sh", "-c",
-           f'mkdir -p {runtime.get("tmp_dir", "/tmp/testplatform")}; exec "$@"', "sh",
-           "timeout", "-s", "TERM", "-k", "20", str(timeout_s)] + args
+    tmp_dir = runtime.get("tmp_dir", "/tmp/testplatform")
+    report_in = f"{tmp_dir}/{uuid.uuid4().hex}.ndjson"
+    cmd = ["docker", "exec", "-w", runtime.get("workdir", "/app")]
+    for key, value in (tier.get("env") or {}).items():
+        cmd += ["-e", f"{key}={value}"]
+    cmd += [runtime["container"], "sh", "-c", f'mkdir -p {tmp_dir}; exec "$@"', "sh",
+            "timeout", "-s", "TERM", "-k", "20", str(timeout_s)] + schemathesis_args(tier, report_in)
     out_log = art / "output.log"
     started = time.time()
     rc, _ = _run(cmd, timeout_s + 120, out_log)
-    report_host = art / "report.xml"
-    cp_rc = pull_file(runtime['container'], report_in, report_host)
+    elapsed = time.time() - started
+    report_host = art / "report.ndjson"
+    cp_rc = pull_file(runtime["container"], report_in, report_host)
     _run(["docker", "exec", runtime["container"], "rm", "-f", report_in], 30)
-    tail = _summary(_tail(out_log))
-    if rc in (124, 137) and time.time() - started >= timeout_s - 5:
-        return Execution("timeout", error_summary=f"exceeded {timeout_s}s; {tail}"[:500], rc=rc)
-    if cp_rc != 0 or not report_host.exists():
-        return Execution("error", error_summary=f"schemathesis exit {rc}, no junit: {tail}"[:500], rc=rc)
-    cases = parsers.parse_junit_xml(report_host.read_text(encoding="utf-8"), prefix="fuzz")
-    totals = parsers.totals_of(cases)
-    if not cases:
-        return Execution("error", error_summary=f"schemathesis produced no test cases: {tail}"[:500], rc=rc)
-    status = "failed" if (totals["failed"] or totals["errors"]) else "passed"
-    return Execution(status, cases, None, 0, rc)
+    report: dict[str, Any] | None = None
+    if cp_rc == 0 and report_host.exists():
+        with open(report_host, encoding="utf-8", errors="replace") as fh:
+            report = parsers.parse_schemathesis_ndjson(fh)
+        gzip_in_place(report_host)
+    return interpret_schemathesis(rc, report, _summary(_tail(out_log)), elapsed, timeout_s)
 
 
 def run_playwright(project: Project, tier: dict[str, Any], art: Path) -> Execution:

@@ -188,15 +188,6 @@ def test_parse_vitest_json(tmp_path):
     assert cases[1]["failure"]["type"] == "AssertionError"
 
 
-def test_parse_junit_xml_fuzz():
-    xml = ('<testsuites><testsuite><testcase classname="GET" name="/api/a" time="0.5"/>'
-           '<testcase classname="GET" name="/api/b" time="0.1"><failure message="500 Server Error" type="ServerError">'
-           'body</failure></testcase></testsuite></testsuites>')
-    cases = parsers.parse_junit_xml(xml)
-    assert cases[0]["status"] == "passed" and cases[1]["status"] == "failed"
-    assert cases[1]["node_id"] == "fuzz::GET::/api/b"
-
-
 def test_parse_playwright_smoke():
     cases = parsers.parse_playwright_smoke([
         {"url": "http://x/alerts", "returncode": 0, "output": {"status": "success"}, "duration_ms": 5},

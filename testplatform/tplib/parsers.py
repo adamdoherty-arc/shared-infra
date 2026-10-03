@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import base64
 import hashlib
+import json
 import re
-import xml.etree.ElementTree as ET
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -232,32 +234,160 @@ def parse_vitest_json(report: dict[str, Any], repo_root: Path, container_root: s
     return cases
 
 
-def parse_junit_xml(xml_text: str, prefix: str = "fuzz") -> list[dict[str, Any]]:
-    root = ET.fromstring(xml_text)
+FUZZ_REPRO_KINDS = 3
+FUZZ_BODY_EXCERPT = 300
+
+
+def _fuzz_body_excerpt(content: Any) -> str:
+    if isinstance(content, dict) and "$base64" in content:
+        try:
+            text = base64.b64decode(str(content["$base64"])).decode("utf-8", "replace")
+        except (ValueError, TypeError):
+            return ""
+    elif isinstance(content, str):
+        text = content
+    else:
+        return ""
+    return " ".join(text.split())[:FUZZ_BODY_EXCERPT]
+
+
+def _shell_quote(text: str) -> str:
+    return "'" + text.replace("'", "'\\''") + "'"
+
+
+def _fuzz_op(ops: dict[str, dict[str, Any]], label: str) -> dict[str, Any]:
+    return ops.setdefault(label, {"statuses": set(), "seconds": 0.0, "failures": [], "errors": []})
+
+
+def _fold_scenario(ops: dict[str, dict[str, Any]], body: dict[str, Any]) -> None:
+    recorder = body.get("recorder") if isinstance(body.get("recorder"), dict) else {}
+    label = str(recorder.get("label") or "")
+    if not label:
+        return
+    op = _fuzz_op(ops, label)
+    op["statuses"].add(str(body.get("status") or ""))
+    try:
+        op["seconds"] += float(body.get("elapsed_time") or 0)
+    except (TypeError, ValueError):
+        pass
+    interactions = recorder.get("interactions") if isinstance(recorder.get("interactions"), dict) else {}
+    checks = recorder.get("checks") if isinstance(recorder.get("checks"), dict) else {}
+    for case_id, results in checks.items():
+        for check in results or []:
+            if not isinstance(check, dict) or check.get("status") != "failure":
+                continue
+            failure = (check.get("failure_info") or {}).get("failure") or {}
+            interaction = interactions.get(case_id) or {}
+            request = interaction.get("request") or {}
+            response = interaction.get("response") or {}
+            op["failures"].append({
+                "type": str(failure.get("type") or "CheckFailed"),
+                "title": str(failure.get("title") or check.get("name") or "check failed"),
+                "message": str(failure.get("message") or ""),
+                "status_code": response.get("status_code"),
+                "method": str(request.get("method") or label.split(" ", 1)[0]),
+                "uri": str(request.get("uri") or ""),
+                "body": _fuzz_body_excerpt(response.get("content")),
+            })
+
+
+def _fold_error(ops: dict[str, dict[str, Any]], body: dict[str, Any]) -> None:
+    value = body.get("value") if isinstance(body.get("value"), dict) else {}
+    _fuzz_op(ops, str(body.get("label") or "-"))["errors"].append(
+        {"type": str(value.get("type") or "Error"), "message": str(value.get("message") or "")})
+
+
+def _fuzz_failure(label: str, failures: list[dict[str, Any]]) -> dict[str, Any]:
+    kinds: dict[tuple[str, Any], list[dict[str, Any]]] = {}
+    for item in failures:
+        kinds.setdefault((item["type"], item["status_code"]), []).append(item)
+    ordered = sorted(kinds.items(), key=lambda kv: (kv[0][0] != "ServerError", str(kv[0])))
+
+    def headline(item: dict[str, Any], code: Any) -> str:
+        return f"{item['title']}{f': {code}' if code is not None else ''} on {label}"
+
+    (ftype, code), group = ordered[0]
+    lines: list[str] = []
+    for (_kind, kind_code), items in ordered[:FUZZ_REPRO_KINDS]:
+        shortest = min(items, key=lambda f: len(f["uri"]))
+        lines.append(f"{headline(shortest, kind_code)} ({len(items)} case{'' if len(items) == 1 else 's'})")
+        if shortest["message"].strip():
+            lines.append(shortest["message"].strip()[:400])
+        if shortest["body"]:
+            lines.append(f"Response: {shortest['body']}")
+        if shortest["uri"]:
+            lines.append(f"Reproduce with: curl -X {shortest['method']} {_shell_quote(shortest['uri'])}")
+    if len(ordered) > FUZZ_REPRO_KINDS:
+        lines.append(f"+{len(ordered) - FUZZ_REPRO_KINDS} more failure kinds")
+    return make_failure(ftype, headline(group[0], code), "\n".join(lines))
+
+
+def _fuzz_error(label: str, errors: list[dict[str, Any]]) -> dict[str, Any]:
+    if not errors:
+        return make_failure("FuzzError", f"scenario ended in error on {label}", "")
+    first = errors[0]
+    text = first["message"].strip()
+    line = text.splitlines()[0] if text else first["type"]
+    return make_failure(first["type"], line, "\n\n".join(f"{e['type']}: {e['message']}" for e in errors[:3]))
+
+
+def parse_schemathesis_ndjson(lines: Iterable[str], prefix: str = "fuzz") -> dict[str, Any]:
+    """Per-operation cases from a schemathesis `--report ndjson` event stream, whole or cut off by a kill.
+
+    schemathesis flushes one line per engine event, so a run killed at its budget still holds every operation that
+    finished; a torn last line is skipped. An operation's verdict folds all its scenarios (examples and fuzzing): a
+    failed check is `failed`, a network or schema error `error`, any success `passed`, only skips `skipped`. The
+    failure message names the status and the operation template, never the fuzzed values, so one defect keeps one
+    signature night after night; the values, the response excerpt and a curl line go to the trace tail.
+    `unfinished` counts scenarios started but never finished (in flight when the run was killed).
+    """
+    ops: dict[str, dict[str, Any]] = {}
+    started: set[str] = set()
+    finished: set[str] = set()
+    stop_reason: str | None = None
+    engine_finished = False
+    for raw in lines:
+        raw = raw.strip()
+        if not raw:
+            continue
+        try:
+            event = json.loads(raw)
+        except ValueError:
+            continue
+        if not isinstance(event, dict) or len(event) != 1:
+            continue
+        kind, body = next(iter(event.items()))
+        if not isinstance(body, dict):
+            continue
+        if kind == "ScenarioStarted":
+            started.add(str(body.get("id")))
+        elif kind == "ScenarioFinished":
+            finished.add(str(body.get("id")))
+            _fold_scenario(ops, body)
+        elif kind == "NonFatalError":
+            _fold_error(ops, body)
+        elif kind == "EngineFinished":
+            engine_finished = True
+            stop_reason = str(body.get("stop_reason") or "") or None
     cases: list[dict[str, Any]] = []
-    for tc in root.iter("testcase"):
-        name = tc.get("name", "")
-        classname = tc.get("classname", "")
-        node_id = f"{prefix}::{name}" if not classname else f"{prefix}::{classname}::{name}"
-        duration_ms = int(float(tc.get("time") or 0) * 1000)
-        failed = tc.find("failure")
-        errored = tc.find("error")
-        skipped = tc.find("skipped")
-        case = {
-            "node_id": node_id, "file": prefix, "status": "passed", "duration_ms": duration_ms,
+    for label, op in sorted(ops.items()):
+        node_id = f"{prefix}::{label}"
+        case: dict[str, Any] = {
+            "node_id": node_id, "file": prefix, "status": "passed", "duration_ms": int(op["seconds"] * 1000),
             "attempts": 1, "body_hash": hashlib.sha1(node_id.encode()).hexdigest(),
             "feature_slug": None, "requirement_ids": [],
         }
-        bad = failed if failed is not None else errored
-        if bad is not None:
-            text = bad.text or ""
-            message = bad.get("message") or (text.strip().splitlines()[0] if text.strip() else "failed")
-            case["status"] = "failed" if failed is not None else "error"
-            case["failure"] = make_failure(bad.get("type") or "FuzzFailure", message, text)
-        elif skipped is not None:
+        if op["failures"]:
+            case["status"] = "failed"
+            case["failure"] = _fuzz_failure(label, op["failures"])
+        elif op["errors"] or "error" in op["statuses"]:
+            case["status"] = "error"
+            case["failure"] = _fuzz_error(label, op["errors"])
+        elif "success" not in op["statuses"]:
             case["status"] = "skipped"
         cases.append(case)
-    return cases
+    return {"cases": cases, "unfinished": len(started - finished), "stop_reason": stop_reason,
+            "engine_finished": engine_finished}
 
 
 def parse_playwright_smoke(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -289,7 +419,6 @@ def fit_rows(rows: list[dict[str, Any]], known_hashes: dict[str, str],
              budget: int = MAX_PAYLOAD_BYTES) -> list[dict[str, Any]]:
     """Keep the ingest body under Legion's 5 MB request limit: every failed/error/rerun row, then passed rows
     whose body changed, then the rest in node order until the byte budget is spent."""
-    import json
     sizes = [len(json.dumps(r)) for r in rows]
     if sum(sizes) <= budget:
         return rows
