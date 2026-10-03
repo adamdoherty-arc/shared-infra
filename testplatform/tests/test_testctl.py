@@ -867,7 +867,8 @@ def test_testmon_miss_for_a_file_falls_back_to_the_import_graph(tmp_path, monkey
     (tmp_path / "backend" / "services").mkdir()
     for name in ("known_mod", "missing_mod"):
         (tmp_path / "backend" / "services" / f"{name}.py").write_text("x = 1\n", encoding="utf-8")
-    (tmp_path / "backend" / "tests" / "test_a.py").write_text("from backend.services.known_mod import x\n", encoding="utf-8")
+    (tmp_path / "backend" / "tests" / "test_a.py").write_text(
+        "from backend.services.known_mod import x\n\n\ndef t():\n    assert x\n", encoding="utf-8")
     (tmp_path / "backend" / "tests" / "test_b.py").write_text("from backend.services.missing_mod import x\n", encoding="utf-8")
     monkeypatch.setattr(selection, "testmon_pairs", lambda *a, **k: [["backend/services/known_mod.py", "backend/tests/test_a.py::t"]])
     ids, info = selection.select_for_paths(
@@ -875,6 +876,47 @@ def test_testmon_miss_for_a_file_falls_back_to_the_import_graph(tmp_path, monkey
         ["backend/services/known_mod.py", "backend/services/missing_mod.py"], ["backend/tests/**/test_*.py"])
     assert ids == ["backend/tests/test_a.py::t", "backend/tests/test_b.py"]
     assert info["source"] == "testmon+import-graph" and info["import_graph_files"] == ["backend/services/missing_mod.py"]
+    assert "stale_node_ids" not in info
+
+
+def test_sabotage_a_renamed_or_deleted_recorded_test_never_turns_the_run_into_pytest_exit_4(tmp_path, monkeypatch):
+    """ADA run 3749 (2026-10-03): testmon still held test_system_alerts_test_breaker_guard.py::
+    test_real_breaker_names_still_publish after the test was renamed, pytest exited 4 on the missing node and the
+    changed run executed nothing. A stale id now selects its whole file and a deleted file is dropped."""
+    from tplib import selection
+    tests = tmp_path / "backend" / "tests"
+    tests.mkdir(parents=True)
+    (tests / "test_guard.py").write_text("def test_new_name():\n    pass\n", encoding="utf-8")
+    (tests / "test_live.py").write_text(
+        "class TestLive:\n    async def test_kept(self):\n        pass\n\n\ndef test_other():\n    pass\n", encoding="utf-8")
+    monkeypatch.setattr(selection, "testmon_pairs", lambda *a, **k: [
+        ["backend/services/mod.py", "backend/tests/test_guard.py::test_old_name"],
+        ["backend/services/mod.py", "backend/tests/test_guard.py::test_new_name"],
+        ["backend/services/mod.py", "backend/tests/test_live.py::TestLive::test_kept[case-1]"],
+        ["backend/services/mod.py", "backend/tests/test_deleted.py::test_gone"],
+    ])
+    ids, info = selection.select_for_paths(
+        tmp_path, {"kind": "exec", "container": "c"}, "/d", ["backend/services/mod.py"], ["backend/tests/**/test_*.py"])
+    assert ids == ["backend/tests/test_guard.py", "backend/tests/test_live.py::TestLive::test_kept[case-1]"]
+    assert info["stale_node_ids"] == ["backend/tests/test_deleted.py::test_gone", "backend/tests/test_guard.py::test_old_name"]
+    assert info["source"] == "testmon" and info["tests"] == 2 and info["files"] == 2
+
+
+def test_control_recorded_tests_that_still_exist_stay_node_ids(tmp_path, monkeypatch):
+    from tplib import selection
+    tests = tmp_path / "backend" / "tests"
+    tests.mkdir(parents=True)
+    (tests / "test_guard.py").write_text(
+        "import pytest\n\n\n@pytest.mark.parametrize('n', [1])\nasync def test_one(n):\n    pass\n\n\n"
+        "test_two = test_one\n", encoding="utf-8")
+    monkeypatch.setattr(selection, "testmon_pairs", lambda *a, **k: [
+        ["backend/services/mod.py", "backend/tests/test_guard.py::test_one[1]"],
+        ["backend/services/mod.py", "backend/tests/test_guard.py::test_two[1]"],
+    ])
+    ids, info = selection.select_for_paths(
+        tmp_path, {"kind": "exec", "container": "c"}, "/d", ["backend/services/mod.py"], ["backend/tests/**/test_*.py"])
+    assert ids == ["backend/tests/test_guard.py::test_one[1]", "backend/tests/test_guard.py::test_two[1]"]
+    assert "stale_node_ids" not in info
 
 
 def test_emit_survives_characters_the_console_cannot_encode():

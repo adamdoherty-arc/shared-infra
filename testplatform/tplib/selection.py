@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import fnmatch
 import json
 import re
@@ -116,6 +117,62 @@ def tests_from_imports(root: Path, files: list[str], test_globs: list[str]) -> l
     return sorted(chosen)
 
 
+def _defined_tests(text: str) -> set[str] | None:
+    try:
+        tree = ast.parse(text)
+    except (SyntaxError, ValueError):
+        return None
+    names: set[str] = set()
+    pending: list[tuple[list[ast.stmt], str]] = [(tree.body, "")]
+    while pending:
+        body, prefix = pending.pop()
+        for node in body:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                names.add(prefix + node.name)
+            elif isinstance(node, ast.ClassDef):
+                names.add(prefix + node.name)
+                pending.append((node.body, f"{prefix}{node.name}::"))
+            elif isinstance(node, ast.Assign):
+                names.update(prefix + t.id for t in node.targets if isinstance(t, ast.Name))
+            elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+                names.add(prefix + node.target.id)
+    return names
+
+
+def prune_stale_node_ids(root: Path, chosen: set[str]) -> tuple[set[str], list[str]]:
+    """Drop recorded node ids whose test is gone from its file (renamed or deleted after testmon recorded it).
+
+    pytest exits 4 and runs nothing when one requested node id does not exist, so a stale id makes its file a
+    whole-file selection, and an id or path whose test file no longer exists is dropped. A test the file does not
+    define at module or class level (inherited, generated) also widens to its whole file, never to nothing.
+    """
+    defined: dict[str, set[str] | None] = {}
+    kept: set[str] = set()
+    whole: set[str] = set()
+    stale: list[str] = []
+    for node in sorted(chosen):
+        rel, sep, rest = node.partition("::")
+        path = root / rel
+        if not path.is_file():
+            stale.append(node)
+            continue
+        if not sep:
+            kept.add(node)
+            continue
+        if rel not in defined:
+            try:
+                defined[rel] = _defined_tests(path.read_text(encoding="utf-8", errors="replace"))
+            except OSError:
+                defined[rel] = None
+        names = defined[rel]
+        if names is not None and rest.split("[", 1)[0] in names:
+            kept.add(node)
+        else:
+            stale.append(node)
+            whole.add(rel)
+    return {n for n in kept if n.partition("::")[0] not in whole} | whole, stale
+
+
 def select_for_paths(root: Path, runtime: dict[str, Any], data_file: str, files: list[str],
                      test_globs: list[str]) -> tuple[list[str], dict[str, Any]]:
     """Map caller-supplied paths to tests: testmon dependency data first, import graph otherwise."""
@@ -137,7 +194,10 @@ def select_for_paths(root: Path, runtime: dict[str, Any], data_file: str, files:
             selection["source"] = "testmon+import-graph"
             selection["import_graph_files"] = unknown
             chosen |= set(tests_from_imports(root, unknown, test_globs))
-    chosen = sorted(chosen)
+    pruned, stale = prune_stale_node_ids(root, chosen)
+    if stale:
+        selection["stale_node_ids"] = stale[:20]
+    chosen = sorted(pruned)
     files_only = sorted({t.split("::", 1)[0] for t in chosen})
     ids = chosen if len(chosen) <= MAX_NODE_IDS else files_only
     selection["tests"] = len(ids)
