@@ -22,8 +22,16 @@ from . import snapshot as snapmod
 from .artifacts import new_artifact_dir
 from .legion import LegionClient, LegionError, retryable
 from .lock import HEAVY, LIGHT, Held, ProjectLock
-from .profile import (ARTIFACTS_ROOT, Project, host_available_mb, light_slots_idle, light_slots_while_heavy,
-                      measured_rss_file, measured_worker_rss_mb, memory_budget_problem)
+from .profile import (
+    ARTIFACTS_ROOT,
+    Project,
+    host_available_mb,
+    light_slots_idle,
+    light_slots_while_heavy,
+    measured_rss_file,
+    measured_worker_rss_mb,
+    memory_budget_problem,
+)
 
 TRIGGERS = ("claude", "schedule", "hook", "manual")
 NO_WINDOW = 0x08000000 if sys.platform == "win32" else 0
@@ -284,7 +292,7 @@ def light_blocker(project: Project, held_light: int, lock_dir: Path | None = Non
     heavy = ProjectLock(project.name, **kwargs).read()
     if heavy is not None and not heavy.stale:
         allowed = light_slots_while_heavy(project.profile, project.light_concurrency,
-                                          measured_worker_rss_mb(project.name))
+                                          measured_worker_rss_mb(project.name), heavy_tier=held_tier(heavy))
         return heavy if held_light >= allowed else None
     if project.light_slots_max <= project.light_concurrency:
         return None
@@ -295,6 +303,15 @@ def light_blocker(project: Project, held_light: int, lock_dir: Path | None = Non
         return None
     live = ProjectLock(project.name, lane=LIGHT, slots=project.light_slots_max, **kwargs).holders()
     return live[0] if live else None
+
+
+def held_tier(held: Held) -> str | None:
+    """The tier a heavy lock holder is running, read from its request key (`[target, paths]`); None when unreadable."""
+    try:
+        target = json.loads(held.key or "")[0]
+    except (ValueError, TypeError, IndexError, KeyError):
+        return None
+    return str(target) or None
 
 
 def heavy_blocker(project: Project, lock_dir: Path | None = None) -> Held | None:

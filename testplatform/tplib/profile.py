@@ -100,18 +100,38 @@ def memory_budget_problem(profile: dict[str, Any], light_concurrency: int, measu
     return None
 
 
-def light_slots_while_heavy(profile: dict[str, Any], light_concurrency: int, measured_mb: float | None = None) -> int:
-    """How many light runs fit beside a live heavy run under the memory budget (all of them when no budget)."""
+def heavy_footprint_mb(profile: dict[str, Any], measured_mb: float | None = None, tier: str | None = None) -> float:
+    """Container memory a live heavy run holds.
+
+    A tier that declares `rss_mb` runs one process with no xdist workers (the schemathesis fuzz tier: 192 MB
+    measured 2026-10-03) and holds that. Every other run, a pytest tier, a tier that declares nothing or a run
+    whose tier is unknown, is sized as the widest pytest tier's workers plus the parent, so an unknown run is never
+    under-counted. Before this, a one-hour fuzz run was sized as four 2.3 GB workers and queued every targeted run
+    behind it for its whole timeout.
+    """
     lanes = profile.get("lanes") or {}
-    budget = lanes.get("mem_budget_mb")
-    if budget is None:
-        return light_concurrency
     tiers = profile.get("tiers") or {}
+    declared = (tiers.get(tier) or {}).get("rss_mb") if tier else None
+    if declared is not None:
+        return float(declared)
     path_tier = profile.get("path_tier")
     heavy = max([int(t.get("workers", 0)) for n, t in tiers.items()
                  if n != path_tier and t.get("framework", profile.get("framework")) == "pytest"] or [0])
     worker = max(float(lanes.get("worker_rss_mb", 0)), measured_mb or 0.0)
-    spare = float(budget) - heavy * worker - float(lanes.get("parent_rss_mb", 450))
+    return heavy * worker + float(lanes.get("parent_rss_mb", 450))
+
+
+def light_slots_while_heavy(profile: dict[str, Any], light_concurrency: int, measured_mb: float | None = None,
+                            heavy_tier: str | None = None) -> int:
+    """How many light runs fit beside a live heavy run under the memory budget (all of them when no budget).
+
+    This gate would pass trivially if every tier were trusted as small: only a tier that declares `rss_mb` is
+    sized by it, and an unknown or undeclared tier keeps the widest-pytest estimate."""
+    lanes = profile.get("lanes") or {}
+    budget = lanes.get("mem_budget_mb")
+    if budget is None:
+        return light_concurrency
+    spare = float(budget) - heavy_footprint_mb(profile, measured_mb, heavy_tier)
     light = max(1.0, float(lanes.get("light_rss_mb", 1)))
     return max(0, min(light_concurrency, int(spare // light)))
 

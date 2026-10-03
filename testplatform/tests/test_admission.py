@@ -160,6 +160,37 @@ def test_light_runs_fit_beside_a_heavy_run_only_when_memory_is_left():
     assert profile.light_slots_while_heavy({"tiers": {}}, 2, None) == 2
 
 
+def test_a_heavy_tier_that_declares_its_footprint_leaves_room_for_light_runs():
+    """Sabotage/control for heavy_footprint_mb: the fuzz tier's declared 600 MB frees both light slots beside it,
+    while a tier that declares nothing, an unknown tier and an unreadable key keep the widest-pytest estimate."""
+    prof = {**MEM, "tiers": {**MEM["tiers"], "fuzz": {"framework": "schemathesis", "rss_mb": 600},
+                             "gates": {"framework": "commands"}}}
+    assert profile.light_slots_while_heavy(prof, 2, measured_mb=2400, heavy_tier="fuzz") == 2
+    for tier in ("gates", "nope", None):
+        assert profile.light_slots_while_heavy(prof, 2, measured_mb=2400, heavy_tier=tier) == 0, tier
+    assert profile.heavy_footprint_mb(prof, 2400, "fuzz") == 600.0
+
+
+def test_a_light_request_starts_beside_a_live_fuzz_run(tmp_path, monkeypatch):
+    lanes = "lanes: {mem_budget_mb: 10240, worker_rss_mb: 2300, light_rss_mb: 650, parent_rss_mb: 450, headroom_mb: 500}"
+    project = _project(tmp_path, "    light_concurrency: 2" + chr(10), lanes + chr(10))
+    project.profile["tiers"]["fast"]["workers"] = 4
+    project.profile["tiers"]["fuzz"] = {"framework": "schemathesis", "rss_mb": 600}
+    monkeypatch.setattr(runner, "measured_worker_rss_mb", lambda name: None)
+    heavy = ProjectLock("demo", tmp_path)
+    assert heavy.acquire(runner.request_key("fuzz", None))[0]
+    heavy.set_run_id(7)
+    light = runner.lock_for(project, "tests/test_a.py", None, tmp_path)
+    ok, holder = light.acquire(runner.request_key("tests/test_a.py", None))
+    assert ok, f"a 600 MB fuzz run must not hold the light lane: {holder}"
+    light.release()
+    heavy.release()
+    assert heavy.acquire(runner.request_key("fast", None))[0]
+    blocked = runner.lock_for(project, "tests/test_b.py", None, tmp_path)
+    assert not blocked.acquire(runner.request_key("tests/test_b.py", None))[0], "control: a fast run still blocks"
+    heavy.release()
+
+
 def test_light_request_queues_behind_a_live_heavy_run_when_no_memory_is_left(tmp_path, monkeypatch):
     lanes = "lanes: {mem_budget_mb: 10240, worker_rss_mb: 2300, light_rss_mb: 650, parent_rss_mb: 450, headroom_mb: 500}"
     project = _project(tmp_path, "    light_concurrency: 2" + chr(10), lanes + chr(10))
