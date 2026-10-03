@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from shipped_profiles import load_shipped_project, shipped_profile_file  # noqa: E402
 from test_lanes import _project  # noqa: E402
+
 from tplib import profile, runner, server  # noqa: E402
 from tplib.lock import HEAVY, ProjectLock, queue_snapshot  # noqa: E402
 
