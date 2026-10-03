@@ -11,6 +11,9 @@ runtime:
   mounts:
     - {host: testplatform, container: /work/testplatform, mode: ro}
     - {host: scripts, container: /work/scripts, mode: ro}
+    - {host: C:/code/ADA/.testplatform.yml, container: /work/shipped-profiles/ada/.testplatform.yml, mode: ro}
+  env:
+    TESTPLATFORM_SHIPPED_PROFILES: /work/shipped-profiles
 
 pytest:
   command: [python, -m, pytest]

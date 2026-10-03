@@ -13,6 +13,7 @@ import yaml
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from shipped_profiles import load_shipped_project, shipped_profile_file  # noqa: E402
 from test_lanes import _project  # noqa: E402
 from tplib import profile, runner, server  # noqa: E402
 from tplib.lock import HEAVY, ProjectLock, queue_snapshot  # noqa: E402
@@ -114,18 +115,15 @@ def test_light_run_is_in_process_while_a_heavy_run_is_live(tmp_path):
     heavy.release()
 
 
-def test_shipped_ada_fast_tier_has_a_fail_fast_per_test_timeout_and_a_fitting_worker_budget():
-    ada_root = Path(str(profile.load_registry(profile.PROJECTS_FILE)["projects"]["ada"]["root"]))
-    pfile = ada_root / profile.PROFILE_NAME
-    if not pfile.exists():
-        pytest.skip(f"ADA checkout not present at {ada_root}")
-    prof = yaml.safe_load(pfile.read_text(encoding="utf-8"))
+def test_shipped_ada_fast_tier_has_a_fail_fast_per_test_timeout_and_a_fitting_worker_budget(tmp_path):
+    prof = yaml.safe_load(shipped_profile_file("ada").read_text(encoding="utf-8"))
     args = list(prof["pytest"]["common_args"]) + list(prof["tiers"]["fast"].get("args", []))
     timeouts = [int(a.split("=", 1)[1]) for a in args if a.startswith("--timeout=")]
     assert timeouts and timeouts[-1] <= MAX_FAST_PER_TEST_TIMEOUT_S, f"fast per-test timeout is {timeouts}"
     assert "--timeout-method=signal" in args, "the thread method kills the xdist worker and crashes the run"
-    project = profile.load_project("ada")
+    project = load_shipped_project("ada", tmp_path)
     assert profile.worker_budget_problem(prof, project.light_concurrency) is None
+    assert profile.memory_budget_problem(prof, project.light_concurrency) is None
 
 
 def test_a_profile_whose_fast_tier_timeout_exceeds_the_cap_is_refused(tmp_path):
