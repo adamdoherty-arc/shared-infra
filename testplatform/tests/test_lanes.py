@@ -431,3 +431,46 @@ def test_legacy_plain_pid_ticket_still_parses(tmp_path):
     t = queue / "00000000000000000001-a"
     t.write_text(str(os.getpid()), encoding="utf-8")
     assert lock._is_next(queue, t)
+
+
+QUARANTINED = ["tests/test_a.py::t_q", "tests/test_ab.py::t_q", "tests/sub/test_c.py::t_q[1]"]
+
+
+class _QuarantineLegion(_StubLegion):
+    def quarantine(self, project_id):
+        return list(QUARANTINED)
+
+
+def _deselects_and_count(project: profile.Project, target: str, tmp_path: Path, monkeypatch) -> tuple[list[str], int]:
+    seen: list[list[str]] = []
+    monkeypatch.setattr(runner, "ensure_container", lambda runtime, root: None)
+    monkeypatch.setattr(runner, "pull_file", lambda *a, **k: 1)
+
+    def fake_run(cmd, timeout, out_file=None, cwd=None, env=None):
+        seen.append(cmd)
+        return 0, ""
+
+    monkeypatch.setattr(runner, "_run", fake_run)
+    _, tier, resolved = runner.resolve_target(project, target)
+    art = tmp_path / "art"
+    art.mkdir(exist_ok=True)
+    exe = runner.run_pytest(project, tier, resolved, "claude", art, _QuarantineLegion(), target, None)
+    cmd = next(c for c in seen if "pytest" in c)
+    return [cmd[i + 1] for i, arg in enumerate(cmd) if arg == "--deselect"], exe.quarantined_deselected
+
+
+def test_a_targeted_run_deselects_and_counts_only_its_own_quarantined_tests(tmp_path, monkeypatch):
+    deselected, counted = _deselects_and_count(_project(tmp_path), "tests/test_a.py", tmp_path, monkeypatch)
+    assert deselected == ["tests/test_a.py::t_q"] and counted == 1
+
+
+def test_control_a_whole_tier_run_still_deselects_the_whole_quarantine_list(tmp_path, monkeypatch):
+    deselected, counted = _deselects_and_count(_project(tmp_path), "fast", tmp_path, monkeypatch)
+    assert deselected == QUARANTINED and counted == len(QUARANTINED)
+
+
+def test_quarantine_scope_covers_dirs_and_node_ids_but_not_sibling_files():
+    assert runner.quarantine_in_scope(QUARANTINED, ["tests/sub/"]) == ["tests/sub/test_c.py::t_q[1]"]
+    assert runner.quarantine_in_scope(QUARANTINED, ["tests/sub/test_c.py::t_q"]) == ["tests/sub/test_c.py::t_q[1]"]
+    assert runner.quarantine_in_scope(QUARANTINED, ["tests/test_ab.py"]) == ["tests/test_ab.py::t_q"]
+    assert runner.quarantine_in_scope(QUARANTINED, ["tests/test_b.py"]) == []

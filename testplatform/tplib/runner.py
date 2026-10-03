@@ -590,6 +590,19 @@ def sync_snapshot(project: Project, runtime: dict[str, Any], out_log: Path) -> s
     return dest
 
 
+def quarantine_in_scope(quarantined: list[str], paths: list[str] | None) -> list[str]:
+    """The quarantined node ids a run of `paths` can collect; all of them for a whole-tier run.
+
+    A targeted run used to pass, and count as quarantined-skipped, the project's whole quarantine list, so a run of
+    one file holding no quarantined test still reported "quarantined-skipped 1" (ADA run 3669, 2026-10-03).
+    """
+    if not paths:
+        return list(quarantined)
+    scopes = [p.replace("\\", "/").rstrip("/") for p in paths]
+    return [node for node in quarantined
+            if any(node == scope or node.startswith((scope + "::", scope + "[", scope + "/")) for scope in scopes)]
+
+
 def run_pytest(project: Project, tier: dict[str, Any], paths: list[str] | None, trigger: str, art: Path,
                legion: LegionClient, target: str, changed_paths: list[str] | None = None,
                snap: snapmod.Snapshot | None = None) -> Execution:
@@ -627,6 +640,7 @@ def run_pytest(project: Project, tier: dict[str, Any], paths: list[str] | None, 
         selection = {"mode": "testmon-build"}
     if paths or changed_paths:
         extra += ["-p", "no:testmon"]
+    quarantined = quarantine_in_scope(quarantined, paths)
     (art / "selection.json").write_text(json.dumps(selection, indent=1), encoding="utf-8")
 
     report_name = f"{uuid.uuid4().hex}.json"
