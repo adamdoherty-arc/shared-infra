@@ -74,7 +74,6 @@
             "nvidia/llama-3.1-nemoguard-8b-content-safety",
             "nvidia/llama-3.1-nemotron-safety-guard-8b-v3",
             "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
-            "nvidia/nemotron-3-super-120b-a12b",
             "nvidia/nemotron-3-ultra-550b-a55b",
             "nvidia/nemotron-3.5-content-safety",
             "nvidia/nemotron-3.5-lightning-30b-a3b",
@@ -100,13 +99,11 @@
             "nemoguard-safety",
             "nemotron-lightning",
             "nemotron-safety",
-            "nemotron-super-120b",
             "nemotron-ultra-550b",
             "nvidia/ising-calibration-1.5-31b",
             "nvidia/llama-3.1-nemoguard-8b-content-safety",
             "nvidia/llama-3.1-nemotron-safety-guard-8b-v3",
             "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
-            "nvidia/nemotron-3-super-120b-a12b",
             "nvidia/nemotron-3-ultra-550b-a55b",
             "nvidia/nemotron-3.5-content-safety",
             "nvidia/nemotron-3.5-lightning-30b-a3b",
@@ -120,7 +117,6 @@
             "nemoguard-safety": "nvidia/llama-3.1-nemoguard-8b-content-safety",
             "nemotron-lightning": "nvidia/nemotron-3.5-lightning-30b-a3b",
             "nemotron-safety": "nvidia/nemotron-3.5-content-safety",
-            "nemotron-super-120b": "nvidia/nemotron-3-super-120b-a12b",
             "nemotron-ultra-550b": "nvidia/nemotron-3-ultra-550b-a55b"
           },
           "weight": 1.0
@@ -138,7 +134,6 @@
             "nvidia/llama-3.1-nemoguard-8b-content-safety",
             "nvidia/llama-3.1-nemotron-safety-guard-8b-v3",
             "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
-            "nvidia/nemotron-3-super-120b-a12b",
             "nvidia/nemotron-3-ultra-550b-a55b",
             "nvidia/nemotron-3.5-content-safety",
             "nvidia/nemotron-3.5-lightning-30b-a3b",
@@ -400,7 +395,7 @@
         {
           "provider": "nvidia-nim",
           "allow_all_keys": true,
-          "allowed_models": 20
+          "allowed_models": 18
         },
         {
           "provider": "openrouter",
@@ -447,7 +442,7 @@
         {
           "provider": "nvidia-nim",
           "allow_all_keys": true,
-          "allowed_models": 20
+          "allowed_models": 18
         },
         {
           "provider": "openrouter",
@@ -494,7 +489,7 @@
         {
           "provider": "nvidia-nim",
           "allow_all_keys": true,
-          "allowed_models": 20
+          "allowed_models": 18
         },
         {
           "provider": "sealion",
@@ -536,7 +531,7 @@
         {
           "provider": "nvidia-nim",
           "allow_all_keys": true,
-          "allowed_models": 20
+          "allowed_models": 18
         },
         {
           "provider": "openrouter",
@@ -583,7 +578,7 @@
         {
           "provider": "nvidia-nim",
           "allow_all_keys": true,
-          "allowed_models": 20
+          "allowed_models": 18
         },
         {
           "provider": "sealion",
@@ -625,7 +620,7 @@
         {
           "provider": "nvidia-nim",
           "allow_all_keys": true,
-          "allowed_models": 20
+          "allowed_models": 18
         },
         {
           "provider": "sealion",
@@ -667,7 +662,7 @@
         {
           "provider": "nvidia-nim",
           "allow_all_keys": true,
-          "allowed_models": 20
+          "allowed_models": 18
         },
         {
           "provider": "sealion",
@@ -709,7 +704,7 @@
         {
           "provider": "nvidia-nim",
           "allow_all_keys": true,
-          "allowed_models": 20
+          "allowed_models": 18
         },
         {
           "provider": "sealion",
@@ -728,6 +723,8 @@
     "_comment_drop_excess": "2026-08-10: false -> true. With false, a full provider buffer QUEUES instead of rejecting, so requests sat in Bifrost's buffer for hours (observed: 3.9h on /v1/chat/completions, 231 leaked CLOSE_WAIT sockets, 4300 open FDs). true makes an over-capacity lane return immediately so the caller's fallback chain cascades to a cloud provider. Nothing may queue unbounded.",
     "drop_excess_requests": true,
     "initial_pool_size": 100,
-    "enforce_auth_on_inference": true
+    "enforce_auth_on_inference": true,
+    "_comment_log_retention_days": "2026-10-02 (ADA Perf-1000637): Bifrost v2.2.3 reads log retention from client_config.log_retention_days (default 365) and ignores logs_store.retention_days, so bifrost_logs.logs had grown to 633k rows / 6.7 GB (78% older than 2 days) and the per-minute REFRESH MATERIALIZED VIEW CONCURRENTLY mv_logs_hourly cost 6.9 s mean (4,352 calls = 29,920 s since 2026-09-29) plus statement timeouts. Set live via PUT /api/config the same day.",
+    "log_retention_days": 2
   }
 }
