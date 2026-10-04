@@ -574,6 +574,26 @@
       }
     },
     {
+      "name": "ada-daily-plan-commit",
+      "owner": "ada",
+      "_note": "Lands docs/plans/daily/YYYY-MM-DD.md (written by ADA's daily_plan_render at 06:20 ET in ada-scheduler, which never commits) and regenerates STRUCTURE.md from the host, committing it when its table changed or the committed stamp is 3+ days old; the pre-push daily-plan-freshness gate blocks at 7 days (Fix-1100000839, sprint 15415).",
+      "cmd": [
+        "cmd.exe",
+        "/c",
+        "C:\\code\\shared-infra\\scripts\\run-daily-plan-commit.cmd"
+      ],
+      "cwd": "C:\\code\\ADA",
+      "schedule": {
+        "minute": 40,
+        "hour": 6
+      },
+      "timeout_s": 900,
+      "enabled": true,
+      "env": {
+        "GIT_CONFIG_GLOBAL": "C:\\code\\shared-infra\\scripts\\hostcron\\gitconfig-hostcron"
+      }
+    },
+    {
       "name": "ada-refresh-ava-test",
       "owner": "ada",
       "_note": "Rebuilds the hermetic ava_test DB from adam's schema when its alembic head is stale, so pytest never logs relation/column-does-not-exist errors into the shared Postgres log.",
