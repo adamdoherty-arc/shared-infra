@@ -234,8 +234,8 @@
       ],
       "cwd": "C:\\code\\ADA",
       "schedule": {
-        "minute": 15,
-        "hour": 3
+        "minute": 45,
+        "hour": 4
       },
       "timeout_s": 3600,
       "enabled": true,
