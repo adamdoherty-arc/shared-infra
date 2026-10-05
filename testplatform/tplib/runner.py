@@ -15,6 +15,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import yaml
 
@@ -1232,30 +1233,167 @@ def run_schemathesis(project: Project, tier: dict[str, Any], trigger: str, art: 
     return interpret_schemathesis(rc, report, _summary(_tail(out_log)), elapsed, timeout_s)
 
 
+PLAYWRIGHT_PAGE_KEYS = ("path", "admin_mode", "assert", "assert_testid", "assert_absent_testid")
+PLAYWRIGHT_FLOW_KEYS = ("name", "admin_mode")
+PLAYWRIGHT_FLOW_NAME = re.compile(r"[A-Za-z][A-Za-z0-9_]{0,63}")
+"""The flow-name rule, written twice on purpose: this copy rejects a bad tier entry before anything is spawned, and the
+ADA runner (`C:/code/ADA/.claude/skills/playwright-testing/runner.py`, `FLOW_NAME_PATTERN`) rejects it again before the import.
+The two must stay the same string. Each repo pins the literal in its own test
+(`test_the_flow_name_pattern_is_pinned_to_the_ada_runner_copy` in `tests/test_playwright_tier.py`, and
+`test_the_flow_name_pattern_is_pinned_to_the_testctl_copy` in ADA's `playwright-testing/tests/test_runner_contract.py`), so
+changing one side fails its own repo's test and names the other side."""
+PLAYWRIGHT_BUDGET_ENV = "TESTCTL_ITEM_TIMEOUT_S"
+"""The environment variable that tells a playwright runner its kill timeout in seconds, the same string as `ITEM_TIMEOUT_ENV` in the
+ADA runner (`C:/code/ADA/.claude/skills/playwright-testing/runner.py`). `_run` throws away the output of a process it had to kill, so a
+runner that outlives its timeout leaves its case with no verdict; told the budget, it bounds its own waits and prints first. Each repo pins
+the literal in its own test (`test_the_budget_variable_is_pinned_to_the_ada_runner_copy` here,
+`test_the_item_timeout_variable_is_pinned_to_the_testctl_copy` in ADA's `playwright-testing/tests/test_runner_contract.py`)."""
+ADMIN_SUFFIX = " [admin]"
+
+
+def _playwright_entry(where: str, entry: Any, allowed: tuple[str, ...]) -> dict[str, Any]:
+    if not isinstance(entry, dict):
+        raise RunError(f"{where} must be a mapping with keys {', '.join(allowed)}, got {type(entry).__name__}")
+    unknown = sorted(set(entry) - set(allowed))
+    if unknown:
+        raise RunError(f"{where} has unknown key(s) {', '.join(map(str, unknown))} (allowed: {', '.join(allowed)}); "
+                       "a typo here would run a weaker check than the one written")
+    admin = entry.get("admin_mode", False)
+    if not isinstance(admin, bool):
+        raise RunError(f"{where} admin_mode must be true or false, got {admin!r}")
+    return entry
+
+
+def _playwright_text(where: str, entry: dict[str, Any], key: str) -> str | None:
+    if key not in entry:
+        return None
+    value = entry[key]
+    if not isinstance(value, str) or not value:
+        raise RunError(f"{where} {key} must be a non-empty string, got {value!r}")
+    return value
+
+
+def playwright_items(tier: dict[str, Any], base: str) -> list[dict[str, Any]]:
+    """A playwright tier's `pages` and `flows` as the ordered list of things to run.
+
+    A page is a string (a plain smoke, unchanged since the tier type was written) or a mapping
+    `{path, admin_mode?, assert?, assert_testid?, assert_absent_testid?}` turned into the matching `runner.py smoke` flags
+    (`assert_absent_testid` is the negative twin of `assert_testid`: the page must NOT render a visible element with that
+    `data-testid`; the same page without `admin_mode` is the read-only smoke). A flow is a
+    mapping `{name, admin_mode?}` run as `runner.py flow <name> <base_url> [--admin-mode]`. Every item carries a
+    `label`, the case name (`e2e::<label>`), which says which page or flow and which mode: `/clients?tab=rules
+    [admin]`, `flow:admin_banner_probe [admin]`. A string page keeps its path-only name; when two items would
+    share a name (the 18 `/labs/bitcoin?tab=...` pages all reduced to `/labs/bitcoin`, so one failing tab shared
+    a case with seventeen passing ones) a later string page is named by its full path and query, and any
+    remaining twin gets ` #2`, ` #3`.
+
+    Unknown keys, a non-boolean `admin_mode`, an empty assertion and one testid both required and forbidden are errors,
+    never ignored: a mistyped `admin-mode: true` would otherwise run the page without Admin Mode and report a pass for a
+    check that was never made.
+    """
+    pages = tier.get("pages") or []
+    flows = tier.get("flows") or []
+    if not isinstance(pages, list) or not isinstance(flows, list):
+        raise RunError("a playwright tier's pages and flows must be lists")
+    items: list[dict[str, Any]] = []
+    for i, page in enumerate(pages):
+        where = f"playwright tier pages[{i}]"
+        if isinstance(page, str):
+            url = f"{base}{page}"
+            items.append({"kind": "page", "label": urlparse(url).path or "/", "full_label": page, "url": url,
+                          "argv": ["smoke", url], "admin_mode": False, "title": url, "legacy": True})
+            continue
+        entry = _playwright_entry(where, page, PLAYWRIGHT_PAGE_KEYS)
+        path = entry.get("path")
+        if not isinstance(path, str) or not path.startswith("/"):
+            raise RunError(f"{where} needs a string path starting with '/', got {path!r}")
+        admin = bool(entry.get("admin_mode", False))
+        url = f"{base}{path}"
+        argv = ["smoke", url] + (["--admin-mode"] if admin else [])
+        text = _playwright_text(where, entry, "assert")
+        testid = _playwright_text(where, entry, "assert_testid")
+        absent = _playwright_text(where, entry, "assert_absent_testid")
+        if testid is not None and testid == absent:
+            raise RunError(f"{where} requires and forbids the same data-testid {testid!r}: nothing can satisfy both")
+        if text is not None:
+            argv.append(f"--assert={text}")
+        if testid is not None:
+            argv.append(f"--assert-testid={testid}")
+        if absent is not None:
+            argv.append(f"--assert-absent-testid={absent}")
+        suffix = ADMIN_SUFFIX if admin else ""
+        items.append({"kind": "page", "label": path + suffix, "full_label": path + suffix, "url": url,
+                      "argv": argv, "admin_mode": admin, "title": url + suffix, "legacy": False})
+    for i, flow in enumerate(flows):
+        where = f"playwright tier flows[{i}]"
+        entry = _playwright_entry(where, flow, PLAYWRIGHT_FLOW_KEYS)
+        name = entry.get("name")
+        if not isinstance(name, str) or not PLAYWRIGHT_FLOW_NAME.fullmatch(name):
+            raise RunError(f"{where} needs a name that is a plain identifier, got {name!r}")
+        admin = bool(entry.get("admin_mode", False))
+        suffix = ADMIN_SUFFIX if admin else ""
+        argv = ["flow", name, base] + (["--admin-mode"] if admin else [])
+        items.append({"kind": "flow", "label": f"flow:{name}{suffix}", "full_label": f"flow:{name}{suffix}",
+                      "url": base, "argv": argv, "admin_mode": admin, "title": f"flow:{name}{suffix}",
+                      "legacy": False})
+    if not items:
+        raise RunError("playwright tier lists no pages and no flows")
+    seen: set[str] = set()
+    for item in items:
+        label = item["label"]
+        if label in seen and item["legacy"]:
+            label = item["full_label"]
+        base_label, n = label, 2
+        while label in seen:
+            label = f"{base_label} #{n}"
+            n += 1
+        seen.add(label)
+        item["label"] = label
+    return items
+
+
+def last_json_object(text: str) -> dict[str, Any]:
+    """The last line of runner output that parses as a JSON object; `{}` when none does."""
+    for line in reversed(text.strip().splitlines()):
+        try:
+            parsed = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(parsed, dict):
+            return parsed
+    return {}
+
+
 def run_playwright(project: Project, tier: dict[str, Any], art: Path) -> Execution:
+    """Run every page and flow of a playwright tier through the project's runner, one process each.
+
+    An item gets `per_item` seconds, its kill timeout, and the same number in `PLAYWRIGHT_BUDGET_ENV` so the runner can print its
+    verdict before the kill (a runner that ignores the variable behaves as before: killed at the timeout, case failed with no verdict).
+    """
     runner = project.root / tier.get("runner", ".claude/skills/playwright-testing/runner.py")
     base = tier["base_url"].rstrip("/")
     timeout_s = int(tier["timeout_s"])
-    per_page = max(30, timeout_s // max(1, len(tier["pages"])))
+    try:
+        items = playwright_items(tier, base)
+    except RunError as exc:
+        return Execution("error", error_summary=str(exc)[:500])
+    per_item = max(30, timeout_s // len(items))
     results: list[dict[str, Any]] = []
     log = art / "output.log"
     deadline = time.time() + timeout_s
-    for page in tier["pages"]:
+    for item in items:
+        record = {"url": item["url"], "label": item["label"], "kind": item["kind"], "argv": item["argv"],
+                  "admin_mode": item["admin_mode"], "budget_s": per_item}
         if time.time() > deadline:
-            break
-        url = f"{base}{page}"
+            results.append({**record, "returncode": 124, "stderr": "", "duration_ms": 0,
+                            "output": {"status": "failure", "reason": "tier deadline reached before this item ran"}})
+            continue
         started = time.time()
-        proc_rc, text = _run([sys.executable, str(runner), "smoke", url], per_page)
+        proc_rc, text = _run([sys.executable, str(runner), *item["argv"]], per_item,
+                             env={PLAYWRIGHT_BUDGET_ENV: str(per_item)})
         with open(log, "a", encoding="utf-8") as fh:
-            fh.write(f"== {url} rc={proc_rc}\n{text}\n")
-        parsed: dict[str, Any] = {}
-        for line in reversed(text.strip().splitlines()):
-            try:
-                parsed = json.loads(line)
-                break
-            except ValueError:
-                continue
-        results.append({"url": url, "returncode": proc_rc, "output": parsed, "stderr": text[-300:],
+            fh.write(f"== {item['title']} rc={proc_rc}\n{text}\n")
+        results.append({**record, "returncode": proc_rc, "output": last_json_object(text), "stderr": text[-300:],
                         "duration_ms": (time.time() - started) * 1000})
     cases = parsers.parse_playwright_smoke(results)
     (art / "report.json").write_text(json.dumps(results, indent=1), encoding="utf-8")

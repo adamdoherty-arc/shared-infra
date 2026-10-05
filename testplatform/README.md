@@ -67,7 +67,16 @@ kept honest by `scripts/fuzz/fuzz_tier_gate.py`); a named file that cannot be re
 schemathesis' NDJSON event stream (`report.ndjson.gz` in the artifact dir), flushed one event per line, so a run killed
 at `timeout_s` still reports every operation that finished, as a `timeout` run with those cases and the count of
 scenarios that were still running),
-`e2e` (playwright smoke over a page list). Legion runs in a throwaway container from its own image.
+`e2e` (playwright smoke over a page list; a `pages` entry is a path string or `{path, admin_mode?, assert?, assert_testid?, assert_absent_testid?}`,
+turned into `runner.py smoke <url> [--admin-mode] [--assert=TEXT] [--assert-testid=ID] [--assert-absent-testid=ID]` (`assert_absent_testid` is the
+negative twin of `assert_testid`: no visible element with that `data-testid` once the page has settled; the same page without `admin_mode`
+is the read-only smoke), and `flows: [{name, admin_mode?}]` runs
+`runner.py flow <name> <base_url> [--admin-mode]`. Case names say which page or flow and which mode failed
+(`/clients?tab=rules [admin]`, `flow:admin_banner_probe [admin]`; two string pages that differ only by query are named by their full
+path; a repeat gets ` #2`), an unknown key, a non-boolean `admin_mode`, an empty assertion or one testid both required and forbidden is an `error` and nothing runs, and an item the tier
+deadline cut off is a failed case, never silently dropped; every runner process is told its kill timeout (the tier's `timeout_s` divided by
+its items, at least 30 s, recorded as `budget_s` in `report.json`) in `TESTCTL_ITEM_TIMEOUT_S`, because testctl discards the output of a
+process it had to kill and a runner that knows the budget can print its verdict first). Legion runs in a throwaway container from its own image.
 
 `customer-ops` (`C:/code/customer-ops/.testplatform.yml`, Legion project 29) shows the other runtime shapes: pytest in a throwaway
 `run` container from the app's own image with the repo mounted read-only and `runtime.tmpfs` masking live data dirs

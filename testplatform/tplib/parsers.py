@@ -424,8 +424,7 @@ def parse_playwright_smoke(results: list[dict[str, Any]]) -> list[dict[str, Any]
     cases: list[dict[str, Any]] = []
     for item in results:
         url = item.get("url", "")
-        path = urlparse(url).path or "/"
-        node_id = f"e2e::{path}"
+        node_id = f"e2e::{item.get('label') or urlparse(url).path or '/'}"
         output = item.get("output") or {}
         ok = output.get("status") == "success" and item.get("returncode", 0) == 0
         case = {
@@ -434,10 +433,14 @@ def parse_playwright_smoke(results: list[dict[str, Any]]) -> list[dict[str, Any]
             "body_hash": hashlib.sha1(node_id.encode()).hexdigest(), "feature_slug": None, "requirement_ids": [],
         }
         if not ok:
-            reason = str(output.get("reason") or output.get("error") or item.get("stderr") or "smoke failed")
-            errs = output.get("console_errors") or []
-            detail = reason + ("\n" + "\n".join(str(e) for e in errs[:10]) if errs else "")
-            case["failure"] = make_failure("SmokeFailure", reason, detail)
+            flow = item.get("kind") == "flow"
+            reason = str(output.get("reason") or output.get("error") or item.get("stderr")
+                         or ("flow failed" if flow else "smoke failed"))
+            lines = [reason]
+            if output.get("detail"):
+                lines.append(str(output["detail"]))
+            lines += [str(e) for e in (output.get("console_errors") or [])[:10]]
+            case["failure"] = make_failure("FlowFailure" if flow else "SmokeFailure", reason, "\n".join(lines))
         cases.append(case)
     return cases
 
