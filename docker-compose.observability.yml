@@ -225,7 +225,7 @@ services:
       - shared-infra
     deploy:
       resources:
-        limits: { memory: 384M }
+        limits: { memory: 768M }
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/healthz"]
       interval: 30s
