@@ -227,6 +227,41 @@ def spill_paths_to_argfile(cmd_prefix: list[str], pytest_args: list[str], path_c
     return pytest_args[:command_len] + [f"@{remote}"] + pytest_args[command_len + path_count:]
 
 
+ALLOWLIST_MIN_FILES = 25
+
+
+def allowlist_plan(project: Project, paths: list[str] | None, min_files: int = ALLOWLIST_MIN_FILES
+                   ) -> tuple[list[str], str] | None:
+    """For a large named-file pytest selection, the directories to hand pytest ONCE plus the allowlist text.
+
+    pytest 9 re-lists and stats a test directory once per positional file argument, so N files over a ~2,500-entry
+    directory on a 9p bind mount cost N x 2,500 stats per worker (run #7367: 1,474 files never left collection).
+    When the profile declares `pytest.allowlist_env` and the selection holds at least `min_files` distinct
+    `test_*.py` files, the positional arguments become the minimal set of containing directories and the selected
+    files go into an allowlist (one path or path::node id per line) the project's collection plugin reads from that
+    env var. None keeps the one-argument-per-file behaviour."""
+    cfg = project.profile.get("pytest", {})
+    if not cfg.get("allowlist_env") or not paths:
+        return None
+    prefix = cfg.get("path_prefix", "")
+    entries: list[str] = []
+    files: set[str] = set()
+    for raw in paths:
+        value = raw[len(prefix):] if prefix and raw.startswith(prefix) else raw
+        value = value.replace("\\", "/")
+        base = value.split("::", 1)[0]
+        name = base.rsplit("/", 1)[-1]
+        if not base.endswith(".py") or not name.startswith("test_") or "/" not in base or base.startswith(("/", "-")):
+            return None
+        entries.append(value)
+        files.add(base)
+    if len(files) < min_files:
+        return None
+    parents = sorted({f.rsplit("/", 1)[0] for f in files})
+    dirs = [d for d in parents if not any(d != o and d.startswith(o + "/") for o in parents)]
+    return dirs, "\n".join(dict.fromkeys(entries)) + "\n"
+
+
 def push_text(container: str, remote: str, text: str) -> int:
     try:
         proc = subprocess.run(["docker", "exec", "-i", container, "sh", "-c", 'mkdir -p "$(dirname "$1")" && cat > "$1"',
@@ -419,7 +454,8 @@ def effective_workers(workers: int, paths: list[str] | None, parallel_min_files:
 
 
 def _pytest_args(project: Project, tier: dict[str, Any], paths: list[str] | None, trigger: str,
-                 report_file: str, deselect: list[str], extra: list[str]) -> list[str]:
+                 report_file: str, deselect: list[str], extra: list[str],
+                 positional: list[str] | None = None) -> list[str]:
     cfg = project.profile.get("pytest", {})
     prefix = cfg.get("path_prefix", "")
 
@@ -427,7 +463,7 @@ def _pytest_args(project: Project, tier: dict[str, Any], paths: list[str] | None
         return value[len(prefix):] if prefix and value.startswith(prefix) else value
 
     args = list(cfg.get("command", ["python", "-m", "pytest"]))
-    args += [strip(p) for p in (paths or tier.get("paths") or cfg.get("paths") or [])]
+    args += positional if positional is not None else [strip(p) for p in (paths or tier.get("paths") or cfg.get("paths") or [])]
     deselect = [strip(d) for d in deselect]
     args += list(cfg.get("common_args", []))
     workers = int(tier.get("workers", cfg.get("workers", 0)))
@@ -682,7 +718,15 @@ def run_pytest(project: Project, tier: dict[str, Any], paths: list[str] | None, 
         if snapshot_dir:
             workdir = snapshot_dir
         heavy = not paths and not changed_paths
-        pytest_args = _pytest_args(project, tier, paths, trigger, report_in, quarantined, extra)
+        argfile_in = f"{tmp_dir}/{report_name}.args"
+        allow_in = f"{tmp_dir}/{report_name}.allow"
+        positional: list[str] | None = None
+        plan = allowlist_plan(project, paths) if not snapshot_dir else None
+        if plan is not None:
+            if push_text(runtime["container"], allow_in, plan[1]) == 0:
+                positional = plan[0]
+                env[project.profile["pytest"]["allowlist_env"]] = allow_in
+        pytest_args = _pytest_args(project, tier, paths, trigger, report_in, quarantined, extra, positional)
         if snapshot_dir:
             pytest_args = [f"--rootdir={snapshot_dir}" if a == f"--rootdir={runtime.get('workdir', '/app')}" else a
                            for a in pytest_args]
@@ -690,9 +734,9 @@ def run_pytest(project: Project, tier: dict[str, Any], paths: list[str] | None, 
         for k, v in env.items():
             cmd += ["-e", f"{k}={v}"]
         cmd += [runtime["container"], "sh", "-c", f'mkdir -p {tmp_dir}; exec "$@"', "sh"] + timeout_prefix
-        argfile_in = f"{tmp_dir}/{report_name}.args"
         command_len = len(project.profile.get("pytest", {}).get("command", ["python", "-m", "pytest"]))
-        spilled = spill_paths_to_argfile(cmd, pytest_args, len(paths or []), command_len,
+        spilled = spill_paths_to_argfile(cmd, pytest_args, len(positional) if positional is not None else len(paths or []),
+                                         command_len,
                                          lambda remote, text: push_text(runtime["container"], remote, text), argfile_in)
         cmd += spilled
         sampler = RssSampler(runtime["container"], project.name) if heavy else None
@@ -713,7 +757,7 @@ def run_pytest(project: Project, tier: dict[str, Any], paths: list[str] | None, 
         cp_rc = pull_file(runtime["container"], report_in, report_host)
         if pull_file(runtime["container"], stream_in, failure_stream) != 0:
             failure_stream = None
-        _run(["docker", "exec", runtime["container"], "rm", "-f", report_in, argfile_in, stream_in], 30)
+        _run(["docker", "exec", runtime["container"], "rm", "-f", report_in, argfile_in, allow_in, stream_in], 30)
     else:
         report_in = f"/out/{report_name}"
         pytest_args = _pytest_args(project, tier, paths, trigger, report_in, quarantined, extra)
