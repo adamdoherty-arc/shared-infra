@@ -61,7 +61,7 @@ describe('resolveThemeAttrs', () => {
     const src = resolveThemeAttrs.toString();
     const lists = new Map<string, string[]>();
     for (const m of src.matchAll(/(themes|modes)\s*=\s*\[([^\]]*)\]/g)) {
-      lists.set(m[1], [...m[2].matchAll(/["']([a-z]+)["']/g)].map((x) => x[1]));
+      lists.set(m[1] ?? '', [...(m[2] ?? '').matchAll(/["']([a-z]+)["']/g)].map((x) => x[1] ?? ''));
     }
     expect(lists.get('themes') ?? []).toEqual([...THEME_IDS]);
     expect(lists.get('modes') ?? []).toEqual([...MODES]);
