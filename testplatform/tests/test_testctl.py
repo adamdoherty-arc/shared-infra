@@ -897,7 +897,7 @@ def test_sabotage_a_renamed_or_deleted_recorded_test_never_turns_the_run_into_py
     ])
     ids, info = selection.select_for_paths(
         tmp_path, {"kind": "exec", "container": "c"}, "/d", ["backend/services/mod.py"], ["backend/tests/**/test_*.py"])
-    assert ids == ["backend/tests/test_guard.py", "backend/tests/test_live.py::TestLive::test_kept[case-1]"]
+    assert ids == ["backend/tests/test_guard.py", "backend/tests/test_live.py::TestLive::test_kept"]
     assert info["stale_node_ids"] == ["backend/tests/test_deleted.py::test_gone", "backend/tests/test_guard.py::test_old_name"]
     assert info["source"] == "testmon" and info["tests"] == 2 and info["files"] == 2
 
@@ -915,7 +915,7 @@ def test_control_recorded_tests_that_still_exist_stay_node_ids(tmp_path, monkeyp
     ])
     ids, info = selection.select_for_paths(
         tmp_path, {"kind": "exec", "container": "c"}, "/d", ["backend/services/mod.py"], ["backend/tests/**/test_*.py"])
-    assert ids == ["backend/tests/test_guard.py::test_one[1]", "backend/tests/test_guard.py::test_two[1]"]
+    assert ids == ["backend/tests/test_guard.py::test_one", "backend/tests/test_guard.py::test_two"]
     assert "stale_node_ids" not in info
 
 

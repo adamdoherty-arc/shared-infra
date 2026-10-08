@@ -145,6 +145,8 @@ def prune_stale_node_ids(root: Path, chosen: set[str]) -> tuple[set[str], list[s
     pytest exits 4 and runs nothing when one requested node id does not exist, so a stale id makes its file a
     whole-file selection, and an id or path whose test file no longer exists is dropped. A test the file does not
     define at module or class level (inherited, generated) also widens to its whole file, never to nothing.
+    A parametrized id widens to its function id: the parameter set is computed at collection time, so a recorded
+    case removed since (run #8002, an iv-spike-seed case deleted from test_labs_engine_keys) cannot be checked here.
     """
     defined: dict[str, set[str] | None] = {}
     kept: set[str] = set()
@@ -165,8 +167,9 @@ def prune_stale_node_ids(root: Path, chosen: set[str]) -> tuple[set[str], list[s
             except OSError:
                 defined[rel] = None
         names = defined[rel]
-        if names is not None and rest.split("[", 1)[0] in names:
-            kept.add(node)
+        function_id = rest.split("[", 1)[0]
+        if names is not None and function_id in names:
+            kept.add(f"{rel}::{function_id}")
         else:
             stale.append(node)
             whole.add(rel)
