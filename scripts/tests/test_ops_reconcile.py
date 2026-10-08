@@ -119,3 +119,57 @@ def test_stopped_bitcoin_engine_is_standby_while_its_sibling_runs():
 def test_both_bitcoin_engines_down_is_healed_and_other_containers_unaffected():
     assert not r.is_standby_engine("ada-bitcoin", {"ada-bitcoin": "exited", "ada-bitcoin-prod": "exited"})
     assert not r.is_standby_engine("ada-backend", {"ada-backend": "exited", "ada-bitcoin": "running"})
+
+
+def _fleet(n, port0=9000):
+    return {f"svc-{i}": ins(ports={f"{port0 + i}/tcp": [{"HostIp": "0.0.0.0", "HostPort": str(port0 + i)}]})
+            for i in range(n)}
+
+
+def test_forwarder_outage_suppresses_every_per_container_heal():
+    fleet = _fleet(10)
+    probed, dead = r.scan_ports(fleet, lambda p: False, NOW, sleep=lambda s: None)
+    assert (probed, len(dead)) == (10, 10)
+    assert r.is_forwarder_outage(probed, dead)
+    assert plan(fleet, lambda p: False) == []
+
+
+def test_single_dead_container_among_healthy_still_heals_per_container():
+    fleet = _fleet(10)
+    probed, dead = r.scan_ports(fleet, lambda p: p != 9003, NOW, sleep=lambda s: None)
+    assert not r.is_forwarder_outage(probed, dead)
+    assert plan(fleet, lambda p: p != 9003) == [("svc-3", 9003)]
+
+
+def test_outage_thresholds_need_both_count_and_fraction():
+    assert not r.is_forwarder_outage(4, {"a": 1, "b": 2, "c": 3})
+    assert r.is_forwarder_outage(8, {"a": 1, "b": 2, "c": 3, "d": 4})
+    assert not r.is_forwarder_outage(20, {"a": 1, "b": 2, "c": 3, "d": 4})
+
+
+def test_outage_counts_containers_in_heal_cooldown():
+    fleet = _fleet(6)
+    cooling = {f"port:{n}": NOW.timestamp() - 60 for n in fleet}
+    probed, dead = r.scan_ports(fleet, lambda p: False, NOW, sleep=lambda s: None)
+    assert r.is_forwarder_outage(probed, dead)
+    assert plan(fleet, lambda p: False, cooling) == []
+
+
+def test_forwarder_restart_refusals():
+    def at(h, m):
+        return datetime(2026, 10, 8, h, m, tzinfo=timezone.utc)
+
+    def flat():
+        return []
+
+    t = at(12, 15).timestamp()
+    assert r.forwarder_restart_refusal(at(12, 15), {}, t, flat) is None
+    assert "6h" in r.forwarder_restart_refusal(at(12, 15), {"forwarder_restart": t - 3600}, t, flat)
+    for minute in (0, 5, 30, 36, 55, 59):
+        assert "window" in r.forwarder_restart_refusal(at(12, minute), {}, at(12, minute).timestamp(), flat)
+    assert "exposure" in r.forwarder_restart_refusal(at(12, 15), {}, t, lambda: ["live leg 7 open"])
+
+
+def test_ada_heals_run_from_the_ada_root():
+    assert r.port_heal_cwd("ada-backend") == r.ADA_ROOT
+    assert r.port_heal_cwd("shared-grafana") is None

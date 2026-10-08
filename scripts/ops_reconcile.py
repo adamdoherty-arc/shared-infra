@@ -40,6 +40,12 @@ This gate would pass trivially if it only looked at container State.Running / he
 containers were running and healthy while dead): plan_port_heals() therefore decides from PROBE
 results, and its sabotage test feeds running+healthy containers with failed probes.
 
+Forwarder outage (2026-10-08 incident): when >= FORWARDER_OUTAGE_MIN_DEAD containers AND >= half of the probed
+containers have a dead publish, the fault is Docker Desktop's host-port forwarder (every in-VM listener healthy), so NO
+per-container restart runs (the 10:13Z run restarted 16 healthy containers for nothing). One notify() line names it;
+`docker desktop restart` runs only outside :55-:05 / :30-:36, at most once per 6h, and only when ADA's own
+request_restart.live_exposure_blockers() returns [] (an unrunnable check blocks). Otherwise alert only.
+
 Usage: python scripts/ops_reconcile.py [--dry-run]
 """
 from __future__ import annotations
@@ -63,7 +69,12 @@ PORT_UPTIME_FLOOR_S = 90
 PROBE_TIMEOUT_S = 3.5
 PROBE_RETRY_GAP_S = 5
 PASSIVE_WAIT_S = 1.0
-ADA_RESTART = r"C:\code\ADA\scripts\request_restart.py"
+ADA_ROOT = r"C:\code\ADA"
+ADA_RESTART = ADA_ROOT + r"\scripts\request_restart.py"
+FORWARDER_OUTAGE_MIN_DEAD = 4
+FORWARDER_OUTAGE_DEAD_FRACTION = 0.5
+FORWARDER_RESTART_COOLDOWN_S = 6 * 3600
+FORWARDER_RESTART_TIMEOUT_S = 600
 ALERT_ONLY = {"shared-bifrost"}
 CREATE_NO_WINDOW = 0x08000000 if sys.platform == "win32" else 0
 UA = "shared-infra-ops-reconcile/1"
@@ -146,11 +157,12 @@ def uptime_s(inspect: dict, now: datetime | None = None) -> float:
     return ((now or datetime.now(UTC)) - t).total_seconds()
 
 
-def plan_port_heals(inspects: dict[str, dict], probe, last: dict, now_ts: float,
-                    now: datetime | None = None, sleep=time.sleep) -> list[tuple[str, int]]:
-    """Decide which containers have a dead host publish from PROBE results (inject `probe`/`sleep`
-    in tests). Returns [(container, first_dead_port)]."""
-    heal: list[tuple[str, int]] = []
+def scan_ports(inspects: dict[str, dict], probe, now: datetime | None = None,
+               sleep=time.sleep) -> tuple[int, dict[str, int]]:
+    """Probe every settled running container with a TCP publish. Returns (probed container count,
+    {container: first_dead_port}); a port is dead only if it fails twice, PROBE_RETRY_GAP_S apart."""
+    probed = 0
+    dead: dict[str, list[int]] = {}
     for name, ins in inspects.items():
         st = ins.get("State") or {}
         if not st.get("Running") or st.get("Restarting") or st.get("Paused"):
@@ -159,16 +171,65 @@ def plan_port_heals(inspects: dict[str, dict], probe, last: dict, now_ts: float,
             continue
         if (st.get("Health") or {}).get("Status") == "starting":
             continue
-        if now_ts - last.get(f"port:{name}", 0) < COOLDOWN_S:
+        ports = published_tcp_ports(ins)
+        if not ports:
             continue
-        dead = [p for p in published_tcp_ports(ins) if not probe(p)]
-        if not dead:
-            continue
+        probed += 1
+        failed = [p for p in ports if not probe(p)]
+        if failed:
+            dead[name] = failed
+    if dead:
         sleep(PROBE_RETRY_GAP_S)
-        dead = [p for p in dead if not probe(p)]
-        if dead:
-            heal.append((name, dead[0]))
-    return heal
+    confirmed: dict[str, int] = {}
+    for name, ports in dead.items():
+        still = [p for p in ports if not probe(p)]
+        if still:
+            confirmed[name] = still[0]
+    return probed, confirmed
+
+
+def is_forwarder_outage(probed: int, dead: dict[str, int]) -> bool:
+    """Many unrelated containers losing their host publishes at once is the Docker Desktop port
+    forwarder, not the containers: restarting them cannot help."""
+    return (len(dead) >= FORWARDER_OUTAGE_MIN_DEAD
+            and len(dead) >= FORWARDER_OUTAGE_DEAD_FRACTION * probed)
+
+
+def plan_port_heals(inspects: dict[str, dict], probe, last: dict, now_ts: float,
+                    now: datetime | None = None, sleep=time.sleep) -> list[tuple[str, int]]:
+    """Decide which containers have a dead host publish from PROBE results (inject `probe`/`sleep`
+    in tests). Returns [(container, first_dead_port)] and [] during a forwarder outage."""
+    probed, dead = scan_ports(inspects, probe, now, sleep)
+    if is_forwarder_outage(probed, dead):
+        return []
+    return [(n, p) for n, p in dead.items() if now_ts - last.get(f"port:{n}", 0) >= COOLDOWN_S]
+
+
+def live_exposure_blockers() -> list[str]:
+    """Reuse ADA's own restart guard (request_restart.live_exposure_blockers) in a subprocess; any
+    failure to run it counts as a blocker (fails closed: real money)."""
+    if not Path(ADA_RESTART).exists():
+        return [f"{ADA_RESTART} not found"]
+    code = ("import json,sys;sys.path.insert(0,sys.argv[1]);import request_restart as rr;"
+            "print(json.dumps(rr.live_exposure_blockers(['ada-bitcoin-prod'])))")
+    try:
+        p = sh([sys.executable, "-c", code, str(Path(ADA_RESTART).parent)], 90)
+        return [str(b) for b in json.loads(p.stdout.strip().splitlines()[-1])]
+    except (subprocess.TimeoutExpired, OSError, ValueError, IndexError) as exc:
+        return [f"exposure check could not run ({type(exc).__name__})"]
+
+
+def forwarder_restart_refusal(now: datetime, last: dict, now_ts: float, blockers=live_exposure_blockers) -> str | None:
+    """Why `docker desktop restart` must NOT run now; None = money-safe to proceed."""
+    if now_ts - last.get("forwarder_restart", 0) < FORWARDER_RESTART_COOLDOWN_S:
+        return "last Docker Desktop restart was under 6h ago"
+    m = now.minute
+    if m >= 55 or m <= 5 or 30 <= m <= 36:
+        return f"minute :{m:02d} is inside the Bitcoin hour-open / tuner window"
+    found = blockers()
+    if found:
+        return "live Kalshi exposure or unverifiable: " + "; ".join(found)[:300]
+    return None
 
 
 def port_heal_cmd(name: str, port: int) -> list[str] | None:
@@ -181,6 +242,11 @@ def port_heal_cmd(name: str, port: int) -> list[str] | None:
             cmd.append("--frontend-config-changed")
         return cmd
     return ["docker", "restart", name]
+
+
+def port_heal_cwd(name: str) -> str | None:
+    """request_restart.py runs bare `docker compose up`, which only finds ADA's compose file from ADA's root."""
+    return ADA_ROOT if name.startswith("ada-") else None
 
 
 def save_state(last: dict) -> None:
@@ -264,7 +330,32 @@ def main() -> int:
                     inspects[o["Name"].lstrip("/")] = o
             except (ValueError, KeyError, TypeError):
                 inspects = {}
-    for name, port in plan_port_heals(inspects, probe_port, last, time.time()):
+    probed, dead = scan_ports(inspects, probe_port)
+    outage = is_forwarder_outage(probed, dead)
+    if outage:
+        msg = (f"Docker Desktop host-port forwarder down: {len(dead)}/{probed} containers' published ports dead; "
+               "containers healthy in-VM; per-container restarts suppressed")
+        now_dt = datetime.now(UTC)
+        refusal = forwarder_restart_refusal(now_dt, last, time.time())
+        if paused or args.dry_run:
+            print(f"WOULD handle forwarder outage ({refusal or 'docker desktop restart'}): {msg}")
+        else:
+            if refusal is None:
+                last["forwarder_restart"] = time.time()
+                save_state(last)
+                try:
+                    p = sh(["docker", "desktop", "restart"], FORWARDER_RESTART_TIMEOUT_S)
+                    msg += f"; ran `docker desktop restart` rc={p.returncode}"
+                except subprocess.TimeoutExpired:
+                    msg += "; `docker desktop restart` timed out"
+            else:
+                msg += f"; alert only, no Docker Desktop restart ({refusal})"
+            if time.time() - last.get("forwarder_notified", 0) >= COOLDOWN_S:
+                last["forwarder_notified"] = time.time()
+                notify("**ops-reconcile** " + msg)
+        print(msg)
+    for name, port in ([] if outage else [(n, p) for n, p in dead.items()
+                                          if time.time() - last.get(f"port:{n}", 0) >= COOLDOWN_S]):
         cmd = port_heal_cmd(name, port)
         if cmd is None:
             failed.append(f"{name}: dead host port {port} (alert only; use the Bifrost restart sequence)")
@@ -275,7 +366,7 @@ def main() -> int:
         last[f"port:{name}"] = time.time()
         save_state(last)
         try:
-            p = sh(cmd, 900)
+            p = sh(cmd, 900, cwd=port_heal_cwd(name))
         except subprocess.TimeoutExpired:
             failed.append(f"{name}: dead port {port}, heal timed out")
             continue
@@ -291,7 +382,7 @@ def main() -> int:
     if failed:
         notify("**ops-reconcile FAILED** to heal: " + "; ".join(failed))
     print("healed:", healed or "none", "| failed:", failed or "none", "| paused:", paused)
-    return 1 if failed else 0
+    return 1 if failed or outage else 0
 
 
 if __name__ == "__main__":
