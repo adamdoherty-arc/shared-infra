@@ -1,6 +1,6 @@
 import socket
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -173,3 +173,40 @@ def test_forwarder_restart_refusals():
 def test_ada_heals_run_from_the_ada_root():
     assert r.port_heal_cwd("ada-backend") == r.ADA_ROOT
     assert r.port_heal_cwd("shared-grafana") is None
+
+
+MIRRORED = "[wsl2]\nmemory=32GB\n# networkingMode=nat\nNetworkingMode = Mirrored  # broke ports\n"
+NAT = "[wsl2]\nmemory=32GB\nnetworkingMode=nat\n"
+
+
+def test_mirrored_wslconfig_is_flagged():
+    mode = r.wsl_networking_mode(MIRRORED)
+    assert mode == "mirrored"
+    assert "mirrored" in r.wslconfig_finding(mode) and "nat" in r.wslconfig_finding(mode)
+
+
+def test_nat_missing_key_and_wrong_section_are_not_flagged():
+    assert r.wslconfig_finding(r.wsl_networking_mode(NAT)) is None
+    assert r.wsl_networking_mode("[wsl2]\nmemory=32GB\n") is None
+    assert r.wslconfig_finding(r.wsl_networking_mode("")) is None
+    assert r.wsl_networking_mode("[experimental]\nnetworkingMode=mirrored\n") is None
+    assert r.wsl_networking_mode("[wsl2]\n# networkingMode=mirrored\n") is None
+
+
+def test_missing_wslconfig_file_is_not_flagged(tmp_path):
+    assert r.read_wsl_networking_mode(str(tmp_path / "absent")) is None
+    f = tmp_path / ".wslconfig"
+    f.write_text(MIRRORED, encoding="utf8")
+    assert r.read_wsl_networking_mode(str(f)) == "mirrored"
+
+
+def test_outage_with_mirrored_skips_docker_desktop_restart_and_names_cause():
+    t = datetime(2026, 10, 8, 12, 15, tzinfo=UTC)
+
+    def flat():
+        return []
+
+    refusal = r.forwarder_restart_refusal(t, {}, t.timestamp(), flat, networking_mode="mirrored")
+    assert refusal and "mirrored" in refusal and "does not fix" in refusal
+    assert r.forwarder_restart_refusal(t, {}, t.timestamp(), flat, networking_mode="nat") is None
+    assert r.forwarder_restart_refusal(t, {}, t.timestamp(), flat, networking_mode=None) is None

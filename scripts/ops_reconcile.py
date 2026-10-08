@@ -52,6 +52,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import socket
 import subprocess
 import sys
@@ -78,6 +79,9 @@ FORWARDER_RESTART_TIMEOUT_S = 600
 ALERT_ONLY = {"shared-bifrost"}
 CREATE_NO_WINDOW = 0x08000000 if sys.platform == "win32" else 0
 UA = "shared-infra-ops-reconcile/1"
+WSLCONFIG_PATH = os.environ.get("OPS_WSLCONFIG_PATH") or r"C:\Users\hadam\.wslconfig"
+MIRRORED_FINDING = ("`.wslconfig` networkingMode=mirrored: Docker Desktop stops publishing host ports in mirrored "
+                    "mode (outage 2026-10-08); set networkingMode=nat")
 
 
 def sh(cmd: list[str], timeout: int = 60, cwd: str | None = None) -> subprocess.CompletedProcess:
@@ -219,8 +223,41 @@ def live_exposure_blockers() -> list[str]:
         return [f"exposure check could not run ({type(exc).__name__})"]
 
 
-def forwarder_restart_refusal(now: datetime, last: dict, now_ts: float, blockers=live_exposure_blockers) -> str | None:
+def wsl_networking_mode(text: str) -> str | None:
+    """Lower-cased `[wsl2]` networkingMode from .wslconfig text (key and section case-insensitive, `#`/`;`
+    comments ignored); None when the key is absent. This gate would pass trivially if the .wslconfig path
+    pointed at SYSTEM's profile instead of the user's."""
+    section = ""
+    for raw in text.splitlines():
+        line = raw.split("#", 1)[0].strip()
+        if not line or line.startswith(";"):
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            section = line[1:-1].strip().lower()
+            continue
+        key, sep, value = line.partition("=")
+        if sep and section == "wsl2" and key.strip().lower() == "networkingmode":
+            return value.strip().lower() or None
+    return None
+
+
+def read_wsl_networking_mode(path: str = WSLCONFIG_PATH) -> str | None:
+    try:
+        return wsl_networking_mode(Path(path).read_text(encoding="utf8", errors="replace"))
+    except OSError:
+        return None
+
+
+def wslconfig_finding(mode: str | None) -> str | None:
+    return MIRRORED_FINDING if mode == "mirrored" else None
+
+
+def forwarder_restart_refusal(now: datetime, last: dict, now_ts: float, blockers=live_exposure_blockers,
+                              networking_mode: str | None = None) -> str | None:
     """Why `docker desktop restart` must NOT run now; None = money-safe to proceed."""
+    if networking_mode == "mirrored":
+        return ("networkingMode=mirrored is the cause and a Docker Desktop restart does not fix it; "
+                "set networkingMode=nat and run wsl --shutdown")
     if now_ts - last.get("forwarder_restart", 0) < FORWARDER_RESTART_COOLDOWN_S:
         return "last Docker Desktop restart was under 6h ago"
     m = now.minute
@@ -332,11 +369,19 @@ def main() -> int:
                 inspects = {}
     probed, dead = scan_ports(inspects, probe_port)
     outage = is_forwarder_outage(probed, dead)
+    net_mode = read_wsl_networking_mode()
+    wsl_finding = wslconfig_finding(net_mode)
+    if wsl_finding:
+        print(wsl_finding)
+        if not (paused or args.dry_run) and time.time() - last.get("wslconfig_notified", 0) >= COOLDOWN_S:
+            last["wslconfig_notified"] = time.time()
+            notify("**ops-reconcile FAILED** " + wsl_finding)
     if outage:
-        msg = (f"Docker Desktop host-port forwarder down: {len(dead)}/{probed} containers' published ports dead; "
-               "containers healthy in-VM; per-container restarts suppressed")
+        cause = " (cause: .wslconfig networkingMode=mirrored)" if wsl_finding else ""
+        msg = (f"Docker Desktop host-port forwarder down{cause}: {len(dead)}/{probed} containers' published ports "
+               "dead; containers healthy in-VM; per-container restarts suppressed")
         now_dt = datetime.now(UTC)
-        refusal = forwarder_restart_refusal(now_dt, last, time.time())
+        refusal = forwarder_restart_refusal(now_dt, last, time.time(), networking_mode=net_mode)
         if paused or args.dry_run:
             print(f"WOULD handle forwarder outage ({refusal or 'docker desktop restart'}): {msg}")
         else:
@@ -382,7 +427,7 @@ def main() -> int:
     if failed:
         notify("**ops-reconcile FAILED** to heal: " + "; ".join(failed))
     print("healed:", healed or "none", "| failed:", failed or "none", "| paused:", paused)
-    return 1 if failed or outage else 0
+    return 1 if failed or outage or wsl_finding else 0
 
 
 if __name__ == "__main__":

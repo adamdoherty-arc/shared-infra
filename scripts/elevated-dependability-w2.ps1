@@ -59,7 +59,7 @@ if ($CompactDocker) {
 if ($ApplyWslConfig) {
     # Applies ~/.wslconfig memory=32GB and the 12G qwen38-chat limit. Stops EVERY container for
     # a few minutes; ops_reconcile (every 10 min) then brings must_run containers back.
-    Write-Host 'wsl --shutdown (applies .wslconfig memory=32GB, autoMemoryReclaim, mirrored networking)'
+    Write-Host 'wsl --shutdown (applies .wslconfig memory=32GB, autoMemoryReclaim, networkingMode=nat)'
     wsl --shutdown
     Start-Sleep 10
     Start-Process "$env:ProgramFiles\Docker\Docker\Docker Desktop.exe"
