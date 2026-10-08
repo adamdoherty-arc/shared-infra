@@ -269,6 +269,28 @@ def forwarder_restart_refusal(now: datetime, last: dict, now_ts: float, blockers
     return None
 
 
+DOCKER_RESTART_TASK = "Shared Infra - Docker Desktop Restart"
+
+
+def docker_desktop_restart_cmd(in_interactive_session: bool) -> list[str]:
+    """`docker desktop restart` launches the backend in the CALLER's session. hostcron runs in session 0, where
+    WSL refuses to start (Wsl/WSL_E_LOCAL_SYSTEM_NOT_SUPPORTED, 2026-10-08 10:35Z: the engine stayed down and
+    ada-bitcoin-prod with it), so outside the desktop session the restart goes through an interactive-logon
+    scheduled task. This gate would pass trivially if the session check always returned True."""
+    if in_interactive_session:
+        return ["docker", "desktop", "restart"]
+    return ["schtasks", "/Run", "/TN", DOCKER_RESTART_TASK]
+
+
+def current_session_is_interactive() -> bool:
+    if sys.platform != "win32":
+        return True
+    import ctypes
+    sid = ctypes.c_ulong()
+    ctypes.windll.kernel32.ProcessIdToSessionId(os.getpid(), ctypes.byref(sid))
+    return sid.value != 0
+
+
 def port_heal_cmd(name: str, port: int) -> list[str] | None:
     if name in ALERT_ONLY:
         return None
@@ -389,8 +411,9 @@ def main() -> int:
                 last["forwarder_restart"] = time.time()
                 save_state(last)
                 try:
-                    p = sh(["docker", "desktop", "restart"], FORWARDER_RESTART_TIMEOUT_S)
-                    msg += f"; ran `docker desktop restart` rc={p.returncode}"
+                    restart_cmd = docker_desktop_restart_cmd(current_session_is_interactive())
+                    p = sh(restart_cmd, FORWARDER_RESTART_TIMEOUT_S)
+                    msg += f"; ran `{' '.join(restart_cmd)}` rc={p.returncode}"
                 except subprocess.TimeoutExpired:
                     msg += "; `docker desktop restart` timed out"
             else:
