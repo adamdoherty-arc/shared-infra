@@ -113,7 +113,9 @@
             "nemotron-safety",
             "nemoguard-safety",
             "nvidia/riva-translate-4b-instruct-v2",
-            "google/gemma-4-31b-it"
+            "google/gemma-4-31b-it",
+            "meta/llama-3.2-90b-vision-instruct",
+            "meta/muse-glimmer-30b"
           ],
           "weight": 1.0,
           "aliases": {
@@ -143,7 +145,9 @@
             "nemotron-safety",
             "nemoguard-safety",
             "nvidia/riva-translate-4b-instruct-v2",
-            "google/gemma-4-31b-it"
+            "google/gemma-4-31b-it",
+            "meta/llama-3.2-90b-vision-instruct",
+            "meta/muse-glimmer-30b"
           ],
           "weight": 1.0,
           "aliases": {
@@ -173,7 +177,9 @@
             "nemotron-safety",
             "nemoguard-safety",
             "nvidia/riva-translate-4b-instruct-v2",
-            "google/gemma-4-31b-it"
+            "google/gemma-4-31b-it",
+            "meta/llama-3.2-90b-vision-instruct",
+            "meta/muse-glimmer-30b"
           ],
           "weight": 1.0,
           "aliases": {
