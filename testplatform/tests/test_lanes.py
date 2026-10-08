@@ -472,3 +472,19 @@ def test_quarantine_scope_covers_dirs_and_node_ids_but_not_sibling_files():
     assert runner.quarantine_in_scope(QUARANTINED, ["tests/sub/test_c.py::t_q"]) == ["tests/sub/test_c.py::t_q[1]"]
     assert runner.quarantine_in_scope(QUARANTINED, ["tests/test_ab.py"]) == ["tests/test_ab.py::t_q"]
     assert runner.quarantine_in_scope(QUARANTINED, ["tests/test_b.py"]) == []
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="process creation time is read through kernel32")
+def test_a_lock_whose_pid_was_recycled_after_it_was_written_is_stale(tmp_path):
+    lock = ProjectLock("p", lock_dir=tmp_path, lane=LIGHT, slots=1)
+    lock._slot_path(0).write_text(json.dumps({"pid": os.getpid(), "run_id": None, "started_at": time.time() - 86400}))
+    held = lock._read_at(lock._slot_path(0))
+    assert held is not None and held.stale
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="process creation time is read through kernel32")
+def test_control_a_lock_written_by_this_live_process_is_not_stale(tmp_path):
+    lock = ProjectLock("p", lock_dir=tmp_path, lane=LIGHT, slots=1)
+    lock._slot_path(0).write_text(json.dumps({"pid": os.getpid(), "run_id": None, "started_at": time.time()}))
+    held = lock._read_at(lock._slot_path(0))
+    assert held is not None and not held.stale

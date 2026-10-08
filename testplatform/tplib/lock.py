@@ -85,6 +85,43 @@ def pid_alive(pid: int) -> bool:
     return True
 
 
+def pid_created_at(pid: int) -> float | None:
+    """Unix creation time of a live process (Windows only), None when unreadable; lets a lock reject a recycled PID."""
+    if sys.platform != "win32" or pid <= 0:
+        return None
+    import ctypes
+    from ctypes import wintypes
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    handle = kernel32.OpenProcess(0x1000, False, pid)
+    if not handle:
+        return None
+    try:
+        created, ended, kernel, user = (wintypes.FILETIME() for _ in range(4))
+        if not kernel32.GetProcessTimes(handle, ctypes.byref(created), ctypes.byref(ended), ctypes.byref(kernel), ctypes.byref(user)):
+            return None
+        ticks = (created.dwHighDateTime << 32) | created.dwLowDateTime
+        return ticks / 1e7 - 11644473600
+    finally:
+        kernel32.CloseHandle(handle)
+
+
+PID_REUSE_SLACK_S = 5.0
+
+
+def holder_alive(pid: int, started_at: object) -> bool:
+    """A lock holder is alive only if its PID is live AND that process predates the lock: after a reboot or WSL/Docker
+    restart a dead holder's PID is reassigned to an unrelated process (a postgres backend held ada's lane for 8h)."""
+    if not pid_alive(pid):
+        return False
+    created = pid_created_at(pid)
+    try:
+        locked = float(started_at)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return True
+    return created is None or created <= locked + PID_REUSE_SLACK_S
+
+
 @dataclass
 class Held:
     project: str
@@ -138,7 +175,7 @@ class ProjectLock:
         except (OSError, ValueError):
             return None
         pid = int(data.get("pid", 0))
-        return Held(self.project, path, pid, data.get("run_id"), stale=not pid_alive(pid), key=data.get("key"),
+        return Held(self.project, path, pid, data.get("run_id"), stale=not holder_alive(pid, data.get("started_at")), key=data.get("key"),
                     lane=self.lane, group=data.get("group"))
 
     def read(self) -> Held | None:
