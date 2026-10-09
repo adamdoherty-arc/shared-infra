@@ -213,6 +213,11 @@ services:
     container_name: cadvisor
     restart: unless-stopped
     privileged: true
+    command:
+      - "--housekeeping_interval=30s"
+      - "--max_housekeeping_interval=60s"
+      - "--docker_only=true"
+      - "--disable_metrics=percpu,sched,tcp,udp,advtcp,hugetlb,referenced_memory,cpu_topology,resctrl,process"
     ports:
       - "127.0.0.1:9500:8080"
     volumes:
