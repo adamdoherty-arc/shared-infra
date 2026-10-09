@@ -21,6 +21,9 @@ Checks:
   8. GPU               free VRAM >= 400 MiB
   9. GPU budget        VRAM used <= 97%; 12 direct embeddings against vllm-embed with
                        p95 < 1s (the embed SLO); failed requests are failures
+ 10. DR scratch        no <ada|legion>-dr-restore-test-<8 hex> container (the scratch restored
+                       database and its anonymous PGDATA volume) older than 5h without the keep
+                       label; read from Docker, never from the drill's own state file
 
 This gate would pass trivially if the checks read the same state the failing job
 writes (a job that dies before writing leaves the previous "ok" file): every
@@ -100,6 +103,10 @@ def check_drills(fails: list[str], m: dict) -> None:
             d = json.loads((ADA_STATE / name).read_text(encoding="utf8"))
             age_d = (datetime.now(UTC) - datetime.fromisoformat(d["ts"])).days
             m[f'ops_dr_drill_selfcheck_ok{{target="{target}"}}'] = 1 if d.get("status") == "ok" else 0
+            if d.get("container_leaked"):
+                scratch = d.get("container", "?")
+                fails.append(f"DR drill {target}: scratch container {scratch} LEAKED, its restored database is still "
+                             f"running; remove with: docker rm -f -v {scratch}")
             if d.get("status") != "ok":
                 why = str(d.get("failure", ""))[:120]
                 fails.append(f"DR drill {target}: last run status={d.get('status')} ({why})")
@@ -107,6 +114,53 @@ def check_drills(fails: list[str], m: dict) -> None:
                 fails.append(f"DR drill {target}: last ok run is {age_d} days old (>10)")
         except Exception as exc:  # noqa: BLE001
             fails.append(f"DR drill {target}: no readable result ({type(exc).__name__})")
+
+
+DR_SCRATCH_NAME = re.compile(r"^(ada|legion)-dr-restore-test-[0-9a-f]{8}$")
+DR_SCRATCH_KEEP_LABEL = "ada.dr-drill.keep=1"
+DR_SCRATCH_MAX_AGE_H = 5.0
+
+
+def check_dr_scratch_leaks(fails: list[str], m: dict) -> None:
+    """A DR-drill scratch container (the restored scratch database and its anonymous PGDATA volume) older than
+    DR_SCRATCH_MAX_AGE_H (longer than the drill's 4h restore cap) and without the keep label is a leak.
+
+    Reads Docker, never the drill's own state file: hostcron kills a timed-out drill with `taskkill /F /T`,
+    which writes nothing, and the previous week's ok file would still read green. Would pass trivially if it
+    read dr-drill/latest.json, if a failing `docker ps` read as an empty list, if an unreadable CreatedAt
+    were skipped instead of reported, or if the name test matched every container that merely contains
+    `-dr-restore-test-`."""
+    p = sh(["docker", "ps", "-a", "--filter", "name=-dr-restore-test-", "--format", "{{json .}}"])
+    if p.returncode != 0:
+        fails.append("DR scratch probe: docker ps -a failed: " + (p.stderr or "").strip()[-120:])
+        return
+    leaked = 0
+    now = datetime.now(UTC)
+    for line in p.stdout.splitlines():
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+            name = str(row["Names"])
+        except (ValueError, KeyError, TypeError):
+            fails.append(f"DR scratch probe: unreadable docker ps row {line[:100]!r}")
+            continue
+        if not DR_SCRATCH_NAME.match(name) or DR_SCRATCH_KEEP_LABEL in str(row.get("Labels", "")).split(","):
+            continue
+        try:
+            created = datetime.strptime(str(row["CreatedAt"])[:25], "%Y-%m-%d %H:%M:%S %z")
+        except (ValueError, KeyError):
+            leaked += 1
+            fails.append(f"DR drill scratch container {name} leaked: age unreadable "
+                         f"(CreatedAt={row.get('CreatedAt')!r}); remove with: docker rm -f -v {name}")
+            continue
+        age_h = (now - created).total_seconds() / 3600
+        if age_h > DR_SCRATCH_MAX_AGE_H:
+            leaked += 1
+            fails.append(f"DR drill scratch container {name} leaked: {age_h:.1f}h old "
+                         f"(>{DR_SCRATCH_MAX_AGE_H:.0f}h, state {row.get('State', '?')}), its restored database is "
+                         f"still there; remove with: docker rm -f -v {name}")
+    m["ops_dr_scratch_containers_leaked"] = leaked
 
 
 def check_hostcron(fails: list[str], m: dict) -> None:
@@ -214,6 +268,44 @@ def check_capacity(fails: list[str], m: dict) -> None:
 
 
 HOST_MEM_MIN_AVAILABLE_GIB = 4.0
+HOST_COMMIT_MAX_RATIO = 0.90
+HOST_MEM_TOP_LOG = HERE.parent / "state" / "host-mem-top.jsonl"
+HOST_MEM_TOP_N = 8
+
+
+def host_memory_top_consumers(n: int = HOST_MEM_TOP_N) -> list[dict]:
+    """The n processes with the largest private (committed) bytes, with command lines, so a
+    low-memory incident names its culprit while the process still exists. 2026-10-07 23:05 ET a
+    host python.exe held 46.9 GB of commit (Windows event 2004) and was gone after the reboot it
+    forced, unattributable."""
+    import psutil
+
+    rows = []
+    for proc in psutil.process_iter(["pid", "name"]):
+        try:
+            private = proc.memory_info().private
+        except (psutil.Error, AttributeError):
+            continue
+        rows.append((private, proc))
+    rows.sort(key=lambda r: r[0], reverse=True)
+    out = []
+    for private, proc in rows[:n]:
+        try:
+            cmd = " ".join(proc.cmdline())[:300]
+        except psutil.Error:
+            cmd = ""
+        out.append({"pid": proc.info["pid"], "name": proc.info["name"],
+                    "private_gib": round(private / 2**30, 2), "cmd": cmd})
+    return out
+
+
+def _record_host_memory_top(avail_gib: float, commit_ratio: float) -> list[dict]:
+    top = host_memory_top_consumers()
+    HOST_MEM_TOP_LOG.parent.mkdir(parents=True, exist_ok=True)
+    with HOST_MEM_TOP_LOG.open("a", encoding="utf8") as fh:
+        fh.write(json.dumps({"ts": datetime.now(UTC).isoformat(), "available_gib": round(avail_gib, 2),
+                             "commit_ratio": round(commit_ratio, 4), "top": top}) + "\n")
+    return top
 
 
 def check_host_memory(fails: list[str], m: dict) -> None:
@@ -236,9 +328,21 @@ def check_host_memory(fails: list[str], m: dict) -> None:
     m["ops_host_mem_available_bytes"] = st.ullAvailPhys
     m["ops_host_mem_total_bytes"] = st.ullTotalPhys
     m["ops_host_mem_used_ratio"] = round(1 - st.ullAvailPhys / st.ullTotalPhys, 4)
+    commit_ratio = 1 - st.ullAvailPageFile / st.ullTotalPageFile if st.ullTotalPageFile else 0.0
+    m["ops_host_commit_limit_bytes"] = st.ullTotalPageFile
+    m["ops_host_commit_used_ratio"] = round(commit_ratio, 4)
     gib = st.ullAvailPhys / 2**30
-    if gib < HOST_MEM_MIN_AVAILABLE_GIB:
-        fails.append(f"host memory available {gib:.2f} GiB (<{HOST_MEM_MIN_AVAILABLE_GIB:.0f} GiB)")
+    low_phys = gib < HOST_MEM_MIN_AVAILABLE_GIB
+    high_commit = commit_ratio > HOST_COMMIT_MAX_RATIO
+    if not (low_phys or high_commit):
+        return
+    top = _record_host_memory_top(gib, commit_ratio)
+    culprits = ", ".join(f"{t['name']}({t['pid']}) {t['private_gib']}G" for t in top[:3])
+    if low_phys:
+        fails.append(f"host memory available {gib:.2f} GiB (<{HOST_MEM_MIN_AVAILABLE_GIB:.0f} GiB); top: {culprits}")
+    if high_commit:
+        fails.append(f"host commit charge {commit_ratio * 100:.1f}% of limit (>{HOST_COMMIT_MAX_RATIO * 100:.0f}%); "
+                     f"top: {culprits}")
 
 
 def check_containers(fails: list[str], m: dict) -> None:
@@ -356,7 +460,7 @@ def main() -> int:
     fails: list[str] = []
     metrics: dict = {}
     checks = ((check_host_memory,) if args.host_memory_only else
-              (check_backups, check_offvolume, check_drills, check_hostcron, check_exposure,
+              (check_backups, check_offvolume, check_drills, check_dr_scratch_leaks, check_hostcron, check_exposure,
                check_default_pg_password, check_capacity, check_host_memory, check_containers, check_gpu, check_gpu_budget))
     for fn in checks:
         try:

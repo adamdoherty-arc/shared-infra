@@ -8,6 +8,7 @@ import json
 import subprocess
 import sys
 import time
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 
 SCRIPTS = Path(__file__).resolve().parents[1]
@@ -205,3 +206,194 @@ def test_host_memory_low_is_a_failure_and_plenty_is_a_pass(monkeypatch):
     fails, metrics = [], {}
     selfcheck.check_host_memory(fails, metrics)  # control: 20 GiB available
     assert not fails and metrics["ops_host_mem_used_ratio"] < 0.7
+
+
+def test_host_commit_charge_high_is_a_failure_naming_culprits(monkeypatch, tmp_path):
+    import ctypes
+
+    def fake_status(avail_commit_gib):
+        def _call(ref):
+            st = ref._obj
+            st.ullTotalPhys = 64 * 2**30
+            st.ullAvailPhys = 20 * 2**30
+            st.ullTotalPageFile = 128 * 2**30
+            st.ullAvailPageFile = int(avail_commit_gib * 2**30)
+            return 1
+        return _call
+
+    class K32:
+        GlobalMemoryStatusEx = staticmethod(fake_status(4))
+
+    class Win:
+        kernel32 = K32
+
+    monkeypatch.setattr(ctypes, "windll", Win, raising=False)
+    monkeypatch.setattr(selfcheck, "HOST_MEM_TOP_LOG", tmp_path / "host-mem-top.jsonl")
+    monkeypatch.setattr(selfcheck, "host_memory_top_consumers",
+                        lambda n=8: [{"pid": 53100, "name": "python.exe", "private_gib": 46.9, "cmd": "python x.py"}])
+    fails: list[str] = []
+    metrics: dict = {}
+    selfcheck.check_host_memory(fails, metrics)  # sabotage: 124 of 128 GiB committed
+    assert fails and "python.exe(53100)" in fails[0] and metrics["ops_host_commit_used_ratio"] > 0.9
+    logged = json.loads((tmp_path / "host-mem-top.jsonl").read_text(encoding="utf8").splitlines()[-1])
+    assert logged["top"][0]["pid"] == 53100
+
+    K32.GlobalMemoryStatusEx = staticmethod(fake_status(60))
+    fails, metrics = [], {}
+    selfcheck.check_host_memory(fails, metrics)  # control: 68 of 128 GiB committed
+    assert not fails and metrics["ops_host_commit_used_ratio"] < 0.6
+
+
+_EDT = timezone(timedelta(hours=-4))
+_ALL_CHECKS = ("check_backups", "check_offvolume", "check_drills", "check_hostcron", "check_exposure",
+               "check_default_pg_password", "check_capacity", "check_host_memory", "check_containers",
+               "check_gpu", "check_gpu_budget")
+
+
+def _scratch_row(name: str, age_h: float, labels: str = "", state: str = "running",
+                 created: str | None = None) -> str:
+    stamp = (datetime.now(UTC) - timedelta(hours=age_h)).astimezone(_EDT).strftime("%Y-%m-%d %H:%M:%S %z") + " EDT"
+    return json.dumps({"Names": name, "State": state, "Labels": labels, "CreatedAt": created or stamp})
+
+
+def _docker_ps(monkeypatch, *rows: str, rc: int = 0, stderr: str = "") -> list[list[str]]:
+    seen: list[list[str]] = []
+
+    def fake_sh(cmd, timeout=60):
+        seen.append(cmd)
+        return subprocess.CompletedProcess(cmd, rc, "".join(row + "\n" for row in rows), stderr)
+
+    monkeypatch.setattr(selfcheck, "sh", fake_sh)
+    return seen
+
+
+def test_dr_scratch_container_past_five_hours_is_reported_as_a_leak(monkeypatch):
+    """Sabotage: a drill killed before it wrote anything (2026-10-04 shape) leaves a container nobody reads."""
+    seen = _docker_ps(monkeypatch,
+                      _scratch_row("ada-dr-restore-test-0ff648c6", 6.0),
+                      _scratch_row("legion-dr-restore-test-1a2b3c4d", 30.0, state="exited"))
+    fails: list[str] = []
+    metrics: dict = {}
+    selfcheck.check_dr_scratch_leaks(fails, metrics)
+    assert seen[0][:3] == ["docker", "ps", "-a"]
+    assert metrics["ops_dr_scratch_containers_leaked"] == 2
+    assert len(fails) == 2
+    assert "ada-dr-restore-test-0ff648c6 leaked" in fails[0]
+    assert "docker rm -f -v ada-dr-restore-test-0ff648c6" in fails[0]
+    assert "legion-dr-restore-test-1a2b3c4d leaked" in fails[1] and "state exited" in fails[1]
+
+
+def test_dr_scratch_age_threshold_is_five_hours(monkeypatch):
+    _docker_ps(monkeypatch, _scratch_row("ada-dr-restore-test-aaaaaaaa", 4.5))
+    fails: list[str] = []
+    metrics: dict = {}
+    selfcheck.check_dr_scratch_leaks(fails, metrics)  # control: inside the 4h restore cap plus margin
+    assert not fails and metrics["ops_dr_scratch_containers_leaked"] == 0
+
+    _docker_ps(monkeypatch, _scratch_row("ada-dr-restore-test-aaaaaaaa", 5.5))
+    fails, metrics = [], {}
+    selfcheck.check_dr_scratch_leaks(fails, metrics)  # sabotage: just past it
+    assert len(fails) == 1 and metrics["ops_dr_scratch_containers_leaked"] == 1
+
+
+def test_dr_scratch_probe_leaves_alone_what_is_not_a_leak(monkeypatch):
+    """Control: a kept container, look-alike names and unrelated containers are never flagged."""
+    _docker_ps(monkeypatch,
+               _scratch_row("ada-dr-restore-test-aaaaaaaa", 9.0, labels="ada.dr-drill=1,ada.dr-drill.keep=1"),
+               _scratch_row("my-ada-dr-restore-test-0ff648c6", 9.0),
+               _scratch_row("ada-dr-restore-test-notahex1", 9.0),
+               _scratch_row("ada-dr-restore-test-0FF648C6", 9.0),
+               _scratch_row("ada-db-backup", 99.0))
+    fails: list[str] = []
+    metrics: dict = {}
+    selfcheck.check_dr_scratch_leaks(fails, metrics)
+    assert not fails
+    assert metrics["ops_dr_scratch_containers_leaked"] == 0
+
+
+def test_dr_scratch_probe_with_nothing_to_report_is_clean(monkeypatch):
+    _docker_ps(monkeypatch)
+    fails: list[str] = []
+    metrics: dict = {}
+    selfcheck.check_dr_scratch_leaks(fails, metrics)
+    assert not fails and metrics["ops_dr_scratch_containers_leaked"] == 0
+
+
+def test_dr_scratch_probe_that_cannot_read_docker_is_a_failure_never_a_pass(monkeypatch):
+    _docker_ps(monkeypatch, rc=1, stderr="error during connect: the docker daemon is not reachable")
+    fails: list[str] = []
+    metrics: dict = {}
+    selfcheck.check_dr_scratch_leaks(fails, metrics)
+    assert fails and "docker ps -a failed" in fails[0]
+    assert "ops_dr_scratch_containers_leaked" not in metrics
+
+
+def test_dr_scratch_probe_reports_unreadable_rows_and_unreadable_ages(monkeypatch):
+    _docker_ps(monkeypatch, "not json at all",
+               _scratch_row("ada-dr-restore-test-0ff648c6", 0, created="some time yesterday"))
+    fails: list[str] = []
+    metrics: dict = {}
+    selfcheck.check_dr_scratch_leaks(fails, metrics)
+    assert any("unreadable docker ps row" in f for f in fails)
+    assert any("age unreadable" in f and "ada-dr-restore-test-0ff648c6" in f for f in fails)
+    assert metrics["ops_dr_scratch_containers_leaked"] == 1
+
+
+def _run_main(monkeypatch, capsys):
+    for name in _ALL_CHECKS:
+        monkeypatch.setattr(selfcheck, name, lambda *args: None)
+    monkeypatch.setattr(sys, "argv", ["ops_selfcheck.py", "--no-post", "--json"])
+    rc = selfcheck.main()
+    return rc, json.loads(capsys.readouterr().out)
+
+
+def test_main_runs_the_dr_scratch_probe_and_a_leak_fails_the_selfcheck(monkeypatch, capsys):
+    """Sabotage: a probe that is written but never registered in main() would leave every leak unseen."""
+    _docker_ps(monkeypatch, _scratch_row("ada-dr-restore-test-0ff648c6", 8.0))
+    rc, out = _run_main(monkeypatch, capsys)
+    assert rc == 1 and not out["ok"]
+    assert any("ada-dr-restore-test-0ff648c6 leaked" in f for f in out["failures"])
+    assert out["metrics"]["ops_dr_scratch_containers_leaked"] == 1
+
+
+def test_main_with_no_scratch_container_passes(monkeypatch, capsys):
+    _docker_ps(monkeypatch)
+    rc, out = _run_main(monkeypatch, capsys)
+    assert rc == 0 and out["ok"] and out["failures"] == []
+
+
+def _drill_state(tmp_path, monkeypatch, ada: dict) -> None:
+    now = datetime.now(UTC).isoformat()
+    (tmp_path / "latest.json").write_text(json.dumps({"ts": now, **ada}))
+    (tmp_path / "latest-legion.json").write_text(json.dumps({"ts": now, "status": "ok"}))
+    monkeypatch.setattr(selfcheck, "ADA_STATE", tmp_path)
+
+
+def test_drill_that_leaked_its_scratch_container_is_called_a_leak_whatever_its_status(tmp_path, monkeypatch):
+    """Sabotage: the 2026-10-04 pattern, status count_timeout plus a failed docker rm."""
+    _drill_state(tmp_path, monkeypatch, {
+        "status": "count_timeout", "container": "ada-dr-restore-test-0ff648c6", "container_leaked": True,
+        "failure": "container_leaked: docker rm -f -v ada-dr-restore-test-0ff648c6; live count timed out"})
+    fails: list[str] = []
+    metrics: dict = {}
+    selfcheck.check_drills(fails, metrics)
+    leak = [f for f in fails if "LEAKED" in f]
+    assert len(leak) == 1
+    assert "ada-dr-restore-test-0ff648c6" in leak[0] and "docker rm -f -v ada-dr-restore-test-0ff648c6" in leak[0]
+    assert any("status=count_timeout" in f for f in fails)
+    assert metrics['ops_dr_drill_selfcheck_ok{target="ada"}'] == 0
+
+
+def test_drill_without_a_leak_is_not_called_one(tmp_path, monkeypatch):
+    """Control: an ok drill is clean, and a plain failure is a failure but not a leak."""
+    _drill_state(tmp_path, monkeypatch, {"status": "ok", "container": "ada-dr-restore-test-0ff648c6",
+                                         "container_removed": True})
+    fails: list[str] = []
+    selfcheck.check_drills(fails, {})
+    assert fails == []
+
+    _drill_state(tmp_path, monkeypatch, {"status": "failed", "failure": "row-count parity failed",
+                                         "container_removed": True})
+    fails = []
+    selfcheck.check_drills(fails, {})
+    assert len(fails) == 1 and "status=failed" in fails[0] and "LEAKED" not in fails[0]
