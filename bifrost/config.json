@@ -223,7 +223,6 @@
             "google/gemma-4-26b-a4b-it:free",
             "google/gemma-4-31b-it:free",
             "inclusionai/ling-3.0-flash",
-            "inclusionai/ling-3.0-flash-sante:free",
             "minimax/minimax-m3",
             "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
             "nvidia/nemotron-3-super-120b-a12b:free",
@@ -245,7 +244,6 @@
             "glm-5.2-paid",
             "minimax-m3",
             "deepseek-v4-flash-or",
-            "ling-flash-sante",
             "dots-note-preview",
             "glm-5.3-flash",
             "ox-alpha",
@@ -262,7 +260,6 @@
             "glm-5.2-paid": "z-ai/glm-5.2",
             "minimax-m3": "minimax/minimax-m3",
             "deepseek-v4-flash-or": "deepseek/deepseek-v4-flash",
-            "ling-flash-sante": "inclusionai/ling-3.0-flash-sante:free",
             "dots-note-preview": "dots-studio/dots-3-note-preview:free",
             "glm-5.3-flash": "z-ai/glm-5.3-flash",
             "ox-alpha": "z-ai/glm-5.3-flash"
