@@ -6,7 +6,9 @@
     "initial_pool_size": 100,
     "enforce_auth_on_inference": true,
     "_comment_log_retention_days": "2026-10-02 (ADA Perf-1000637): Bifrost v2.2.3 reads log retention from client_config.log_retention_days (default 365) and ignores logs_store.retention_days, so bifrost_logs.logs had grown to 633k rows / 6.7 GB (78% older than 2 days) and the per-minute REFRESH MATERIALIZED VIEW CONCURRENTLY mv_logs_hourly cost 6.9 s mean (4,352 calls = 29,920 s since 2026-09-29) plus statement timeouts. Set live via PUT /api/config the same day. 2026-10-09 (ADA Perf-1000651): 2 -> 1; the refresh still cost 3.3 s mean x 2,086 calls (6,877 s) because every row carries ~11 KB of request/response content, so the refresh reads ~850 MB of heap each minute; halving the retained rows halves it. Set live via PUT /api/config.",
-    "log_retention_days": 1
+    "log_retention_days": 1,
+    "_comment_disable_content_logging": "2026-10-09 (ADA Perf-1000651, owner decision): request/response bodies are no longer stored in bifrost_logs.logs; each row carried ~11 KB of content, so the per-minute mv_logs_hourly refresh read ~850 MB of heap. Metadata (model, provider, tokens, latency, cost, status) is still logged. Set live via PUT /api/config the same day.",
+    "disable_content_logging": true
   },
   "providers": {
     "vllm-local": {
