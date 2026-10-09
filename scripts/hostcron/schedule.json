@@ -702,6 +702,81 @@
       "env": {
         "GIT_CONFIG_GLOBAL": "C:\\code\\shared-infra\\scripts\\hostcron\\gitconfig-hostcron"
       }
+    },
+    {
+      "name": "ops-engine-restore",
+      "_note": "Every minute except ops-reconcile's :x3 minutes (that full run includes this pass): ops_reconcile.py --restore-only. Heals an exited/absent must_run container and docker-starts every restart-policy container an engine stop left Exited (Docker Desktop quit marks them manually stopped; 2026-10-09 ada-bitcoin-prod/ada-nginx/ERPNext down 8 min). No port probes; shares ops_reconcile's lock, cooldowns and pause switch.",
+      "owner": "shared-infra",
+      "cmd": [
+        "C:\\Python314\\python.exe",
+        "C:\\code\\shared-infra\\scripts\\ops_reconcile.py",
+        "--restore-only"
+      ],
+      "cwd": "C:\\code\\shared-infra",
+      "schedule": {
+        "minute": [
+          0,
+          1,
+          2,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          14,
+          15,
+          16,
+          17,
+          18,
+          19,
+          20,
+          21,
+          22,
+          24,
+          25,
+          26,
+          27,
+          28,
+          29,
+          30,
+          31,
+          32,
+          34,
+          35,
+          36,
+          37,
+          38,
+          39,
+          40,
+          41,
+          42,
+          44,
+          45,
+          46,
+          47,
+          48,
+          49,
+          50,
+          51,
+          52,
+          54,
+          55,
+          56,
+          57,
+          58,
+          59
+        ]
+      },
+      "timeout_s": 900,
+      "notify_on_failure": false,
+      "enabled": true,
+      "env": {
+        "GIT_CONFIG_GLOBAL": "C:\\code\\shared-infra\\scripts\\hostcron\\gitconfig-hostcron"
+      }
     }
   ]
 }

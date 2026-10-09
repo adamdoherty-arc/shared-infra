@@ -46,7 +46,23 @@ per-container restart runs (the 10:13Z run restarted 16 healthy containers for n
 `docker desktop restart` runs only outside :55-:05 / :30-:36, at most once per 6h, and only when ADA's own
 request_restart.live_exposure_blockers() returns [] (an unrunnable check blocks). Otherwise alert only.
 
-Usage: python scripts/ops_reconcile.py [--dry-run]
+Engine-stop restore (2026-10-09 incident): after a host crash the boot task started Docker Desktop in session 0
+(12:31Z), then the logon GUI-reclaim task ran `docker desktop stop` + relaunch (12:34:58Z). Docker Desktop's
+quit stops every container through the API, which marks it manually stopped, so on the 12:35:50Z engine start
+the daemon restored only the `always` container (vllm-autoheal); every `unless-stopped` container came back only
+if some compose project re-upped it. ada-bitcoin-prod (compose profile), ada-nginx (plain docker run), ERPNext,
+customer-ops and fortressos stayed Exited for ~8 minutes. plan_engine_stop_restores() therefore restores, with
+`docker start`, every exited restart-policy container whose FinishedAt sits inside an ENGINE-STOP cluster: at
+least MASS_STOP_MIN restart-policy containers from at least MASS_STOP_MIN_PROJECTS compose projects stopped within
+MASS_STOP_WINDOW_S of each other in the last MASS_STOP_MAX_AGE_S, with some container started again after it (the
+engine came back). A deliberate `docker stop x` or one-project `compose stop` is never a cluster, so it is left
+alone. `--restore-only` (hostcron ops-engine-restore, every minute) runs just this pass plus the must_run heal.
+
+This gate would pass trivially if it decided from `docker ps` state alone (the stopped containers look exactly
+like deliberately stopped ones) or if a cluster were allowed to come from one project: the sabotage tests feed a
+one-project cluster and a single deliberate stop and assert nothing is restored.
+
+Usage: python scripts/ops_reconcile.py [--dry-run] [--restore-only]
 """
 from __future__ import annotations
 
@@ -77,6 +93,16 @@ FORWARDER_OUTAGE_DEAD_FRACTION = 0.5
 FORWARDER_RESTART_COOLDOWN_S = 6 * 3600
 FORWARDER_RESTART_TIMEOUT_S = 600
 ALERT_ONLY = {"shared-bifrost"}
+PORT_PROBE_SKIP = {k: v for k, v in EXPECTED.get("port_probe_skip", {}).items() if not k.startswith("_")}
+RESTORE_POLICIES = ("unless-stopped", "always")
+MASS_STOP_WINDOW_S = 60
+MASS_STOP_MIN = 5
+MASS_STOP_MIN_PROJECTS = 2
+MASS_STOP_MAX_AGE_S = 24 * 3600
+STILL_DOWN_NOTIFY_COOLDOWN_S = 1800
+LOCK = HERE.parent / "state" / "ops-reconcile.lock"
+LOCK_STALE_S = 960
+FULL_RUN_LOCK_WAIT_S = 120
 CREATE_NO_WINDOW = 0x08000000 if sys.platform == "win32" else 0
 UA = "shared-infra-ops-reconcile/1"
 WSLCONFIG_PATH = os.environ.get("OPS_WSLCONFIG_PATH") or r"C:\Users\hadam\.wslconfig"
@@ -175,7 +201,8 @@ def scan_ports(inspects: dict[str, dict], probe, now: datetime | None = None,
             continue
         if (st.get("Health") or {}).get("Status") == "starting":
             continue
-        ports = published_tcp_ports(ins)
+        idle = set(PORT_PROBE_SKIP.get(name, ()))
+        ports = [p for p in published_tcp_ports(ins) if p not in idle]
         if not ports:
             continue
         probed += 1
@@ -308,6 +335,97 @@ def port_heal_cwd(name: str) -> str | None:
     return ADA_ROOT if name.startswith("ada-") else None
 
 
+def parse_docker_ts(value: str | None) -> datetime | None:
+    """Docker RFC3339Nano timestamp -> aware datetime; None for the zero time or garbage."""
+    if not value or value.startswith("0001-"):
+        return None
+    try:
+        return datetime.fromisoformat(value.rstrip("Z").split(".")[0]).replace(tzinfo=UTC)
+    except ValueError:
+        return None
+
+
+def restart_policy(inspect: dict) -> str:
+    return ((inspect.get("HostConfig") or {}).get("RestartPolicy") or {}).get("Name") or ""
+
+
+def compose_project(inspect: dict) -> str:
+    labels = (inspect.get("Config") or {}).get("Labels") or {}
+    return labels.get("com.docker.compose.project") or ("standalone:" + inspect.get("Name", "").lstrip("/"))
+
+
+def container_state(inspect: dict) -> str:
+    st = inspect.get("State") or {}
+    return "running" if st.get("Running") else st.get("Status", "")
+
+
+def plan_engine_stop_restores(inspects: dict[str, dict], now: datetime,
+                              never_restore: set[str] | frozenset = frozenset(),
+                              state: dict[str, str] | None = None) -> list[str]:
+    """Exited restart-policy containers stopped by an engine stop (see module docstring), in name order."""
+    policy = {n: i for n, i in inspects.items() if restart_policy(i) in RESTORE_POLICIES}
+    finished = {n: parse_docker_ts((i.get("State") or {}).get("FinishedAt")) for n, i in policy.items()}
+    started = [parse_docker_ts((i.get("State") or {}).get("StartedAt")) for i in policy.values()
+               if (i.get("State") or {}).get("Running")]
+    state = state or {n: container_state(i) for n, i in inspects.items()}
+    out = []
+    for name, ins in sorted(policy.items()):
+        st = ins.get("State") or {}
+        if st.get("Status") != "exited" or name in never_restore or is_standby_engine(name, state):
+            continue
+        t = finished.get(name)
+        if t is None or (now - t).total_seconds() > MASS_STOP_MAX_AGE_S:
+            continue
+        stopped_with = [n for n, f in finished.items()
+                        if f is not None and abs((f - t).total_seconds()) <= MASS_STOP_WINDOW_S]
+        projects = {compose_project(policy[n]) for n in stopped_with}
+        if len(stopped_with) < MASS_STOP_MIN or len(projects) < MASS_STOP_MIN_PROJECTS:
+            continue
+        if not any(s is not None and s > t for s in started):
+            continue
+        out.append(name)
+    return out
+
+
+def acquire_lock(now_ts: float) -> bool:
+    """One ops_reconcile at a time (the every-minute restore pass and the 10-minute full pass overlap at :x3)."""
+    LOCK.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        fd = os.open(str(LOCK), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    except FileExistsError:
+        try:
+            if now_ts - LOCK.stat().st_mtime < LOCK_STALE_S:
+                return False
+            LOCK.unlink()
+            fd = os.open(str(LOCK), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except OSError:
+            return False
+    os.write(fd, str(os.getpid()).encode())
+    os.close(fd)
+    return True
+
+
+def release_lock() -> None:
+    try:
+        LOCK.unlink()
+    except OSError:
+        pass
+
+
+def must_run_heal_cmd(name: str, st: str | None) -> list[str] | None:
+    """compose up for a mapped container (recreates an absent one); `docker start` for an unmapped container that
+    still exists (ada-nginx is a plain docker run); None = nothing can bring it back."""
+    spec = EXPECTED.get("compose", {}).get(name)
+    if spec:
+        cmd = ["docker", "compose", "-p", spec["project"], "--project-directory", spec["workdir"]]
+        for f in spec["files"]:
+            cmd += ["-f", f]
+        return cmd + ["up", "-d", "--no-deps", spec["service"]]
+    if st:
+        return ["docker", "start", name]
+    return None
+
+
 def save_state(last: dict) -> None:
     STATE.parent.mkdir(parents=True, exist_ok=True)
     STATE.write_text(json.dumps(last))
@@ -329,8 +447,35 @@ def is_standby_engine(name: str, state: dict[str, str]) -> bool:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--restore-only", action="store_true",
+                    help="only the must_run heal and the engine-stop restore (no port probes); every-minute job")
     args = ap.parse_args()
+    deadline = time.time() + (0 if args.restore_only else FULL_RUN_LOCK_WAIT_S)
+    while not acquire_lock(time.time()):
+        if time.time() >= deadline:
+            print("another ops_reconcile run holds the lock; nothing done")
+            return 0
+        time.sleep(5)
+    try:
+        return run(args)
+    finally:
+        release_lock()
 
+
+def inspect_all(names: list[str]) -> dict[str, dict]:
+    out: dict[str, dict] = {}
+    if not names:
+        return out
+    p = sh(["docker", "inspect", *names], 120)
+    try:
+        for o in json.loads(p.stdout or "[]"):
+            out[o["Name"].lstrip("/")] = o
+    except (ValueError, KeyError, TypeError):
+        return {}
+    return out
+
+
+def run(args) -> int:
     if sh(["docker", "info", "--format", "{{.ServerVersion}}"], 30).returncode != 0:
         print("docker daemon not answering; nothing done", file=sys.stderr)
         return 1
@@ -352,7 +497,8 @@ def main() -> int:
     except (OSError, ValueError):
         last = {}
     paused = PAUSE.exists()
-    healed, failed = [], []
+    dry = paused or args.dry_run
+    healed, failed, still_down = [], [], []
     for name in must:
         st = state.get(name)
         if st == "running" or st in ("restarting", "paused", "created"):
@@ -360,35 +506,67 @@ def main() -> int:
         if is_standby_engine(name, state):
             continue
         if time.time() - last.get(name, 0) < COOLDOWN_S:
+            still_down.append(f"{name} ({st or 'absent'})")
             continue
-        spec = EXPECTED.get("compose", {}).get(name)
-        if not spec:
-            failed.append(f"{name}: no compose mapping")
+        cmd = must_run_heal_cmd(name, st)
+        if cmd is None:
+            failed.append(f"{name}: absent and no compose mapping")
             continue
-        cmd = ["docker", "compose", "-p", spec["project"], "--project-directory", spec["workdir"]]
-        for f in spec["files"]:
-            cmd += ["-f", f]
-        cmd += ["up", "-d", "--no-deps", spec["service"]]
-        if paused or args.dry_run:
+        if dry:
             print(f"WOULD heal {name} (state={st}): {' '.join(cmd)}")
             continue
-        p = sh(cmd, 600, cwd=spec["workdir"])
+        p = sh(cmd, 600, cwd=EXPECTED.get("compose", {}).get(name, {}).get("workdir"))
         last[name] = time.time()
         if p.returncode == 0:
             healed.append(f"{name} (was {st or 'absent'})")
+            state[name] = "running"
         else:
             failed.append(f"{name}: {p.stderr.strip()[-200:]}")
+
+    if any(st == "exited" for st in state.values()):
+        never = set(EXPECTED.get("never_restore", []))
+        restores = [n for n in plan_engine_stop_restores(inspect_all(sorted(state)), datetime.now(UTC), never, state)
+                    if state.get(n) == "exited"]
+        for name in restores:
+            if time.time() - last.get(f"restore:{name}", 0) < COOLDOWN_S:
+                still_down.append(f"{name} (exited after an engine stop)")
+                continue
+            if dry:
+                print(f"WOULD restore {name} (exited by an engine stop): docker start {name}")
+                continue
+            last[f"restore:{name}"] = time.time()
+            p = sh(["docker", "start", name], 300)
+            if p.returncode == 0:
+                healed.append(f"{name} (exited by an engine stop)")
+                state[name] = "running"
+            else:
+                failed.append(f"{name}: docker start rc={p.returncode} {(p.stderr or p.stdout).strip()[-200:]}")
+
+    outage = False
+    wsl_finding = None
+    if not args.restore_only:
+        outage, wsl_finding = port_pass(args, state, last, paused, healed, failed)
+
+    if still_down and not dry and time.time() - last.get("still_down_notified", 0) >= STILL_DOWN_NOTIFY_COOLDOWN_S:
+        last["still_down_notified"] = time.time()
+        notify("**ops-reconcile** still down after a heal attempt (cooldown): " + ", ".join(still_down))
+    if not dry:
+        save_state(last)
+    if healed:
+        notify("**ops-reconcile** brought back: " + ", ".join(healed))
+    if failed:
+        notify("**ops-reconcile FAILED** to heal: " + "; ".join(failed))
+    print("healed:", healed or "none", "| failed:", failed or "none", "| still down:", still_down or "none",
+          "| paused:", paused)
+    return 1 if failed or outage or wsl_finding else 0
+
+
+def port_pass(args, state: dict[str, str], last: dict, paused: bool, healed: list[str],
+              failed: list[str]) -> tuple[bool, str | None]:
+    must = EXPECTED["must_run"]
     probe_names = [n for n in dict.fromkeys(list(must) + EXPECTED.get("port_probe_extra", []))
                    if state.get(n) == "running"]
-    inspects: dict[str, dict] = {}
-    if probe_names:
-        ins = sh(["docker", "inspect", *probe_names], 60)
-        if ins.returncode == 0:
-            try:
-                for o in json.loads(ins.stdout or "[]"):
-                    inspects[o["Name"].lstrip("/")] = o
-            except (ValueError, KeyError, TypeError):
-                inspects = {}
+    inspects = inspect_all(probe_names)
     probed, dead = scan_ports(inspects, probe_port)
     outage = is_forwarder_outage(probed, dead)
     net_mode = read_wsl_networking_mode()
@@ -443,14 +621,7 @@ def main() -> int:
         else:
             tail = (p.stderr or p.stdout).strip()[-200:]
             failed.append(f"{name}: dead port {port}, heal rc={p.returncode} {tail}")
-    if not (paused or args.dry_run):
-        save_state(last)
-    if healed:
-        notify("**ops-reconcile** brought back: " + ", ".join(healed))
-    if failed:
-        notify("**ops-reconcile FAILED** to heal: " + "; ".join(failed))
-    print("healed:", healed or "none", "| failed:", failed or "none", "| paused:", paused)
-    return 1 if failed or outage or wsl_finding else 0
+    return outage, wsl_finding
 
 
 if __name__ == "__main__":

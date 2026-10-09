@@ -369,6 +369,39 @@ def check_containers(fails: list[str], m: dict) -> None:
         fails.append("unhealthy containers: " + ", ".join(sorted(unhealthy)))
 
 
+DOCKER_BOOT_SHIMS = {
+    r"C:\tmp\start-docker-if-down.ps1": r"C:\code\shared-infra\scripts\docker-boot-start.ps1",
+    r"C:\tmp\reclaim-docker-gui.ps1": r"C:\code\shared-infra\scripts\docker-gui-reclaim.ps1",
+}
+
+
+def docker_boot_shim_findings(read=lambda p: Path(p).read_text(encoding="utf8", errors="replace")) -> list[str]:
+    """The ZeroInfra-DockerAtBoot / -DockerGuiReclaim tasks run C:\\tmp shims (repointing them needs elevation).
+    A missing shim, or one that no longer forwards to the versioned script, silently brings back the 2026-10-09
+    double engine restart that left ada-bitcoin-prod down 8 minutes. This gate would pass trivially if it only
+    checked that the shim file exists: it requires the versioned target path inside it and the target on disk."""
+    out = []
+    for shim, target in DOCKER_BOOT_SHIMS.items():
+        try:
+            text = read(shim)
+        except OSError:
+            out.append(f"Docker boot-task shim missing: {shim} (must forward to {target})")
+            continue
+        if target.lower() not in text.lower():
+            out.append(f"Docker boot-task shim {shim} does not forward to {target}")
+        try:
+            read(target)
+        except OSError:
+            out.append(f"Docker boot-task target missing: {target}")
+    return out
+
+
+def check_docker_boot_tasks(fails: list[str], m: dict) -> None:
+    found = docker_boot_shim_findings()
+    m["ops_docker_boot_shim_findings"] = len(found)
+    fails.extend(found)
+
+
 def check_gpu(fails: list[str], m: dict) -> None:
     p = sh(["nvidia-smi", "--query-gpu=memory.free", "--format=csv,noheader,nounits"])
     if p.returncode == 0 and p.stdout.strip().isdigit():
@@ -393,7 +426,8 @@ def check_gpu_budget(fails: list[str], m: dict) -> None:
     m["ops_gpu_util_percent"] = util
     if used / total > 0.97:
         fails.append(f"GPU VRAM {used}/{total} MiB ({used / total * 100:.1f}% > 97%)")
-    body = json.dumps({"model": "Qwen/Qwen3-Embedding-0.6B", "input": "ops self-check embedding latency probe " * 4}).encode()
+    body = json.dumps({"model": "Qwen/Qwen3-Embedding-0.6B",
+                       "input": "ops self-check embedding latency probe " * 4}).encode()
     lat: list[float] = []
     errors = 0
     for _ in range(12):
@@ -461,7 +495,8 @@ def main() -> int:
     metrics: dict = {}
     checks = ((check_host_memory,) if args.host_memory_only else
               (check_backups, check_offvolume, check_drills, check_dr_scratch_leaks, check_hostcron, check_exposure,
-               check_default_pg_password, check_capacity, check_host_memory, check_containers, check_gpu, check_gpu_budget))
+               check_default_pg_password, check_capacity, check_host_memory, check_containers,
+               check_docker_boot_tasks, check_gpu, check_gpu_budget))
     for fn in checks:
         try:
             if fn in (check_offvolume,):

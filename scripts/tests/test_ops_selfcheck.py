@@ -247,7 +247,7 @@ def test_host_commit_charge_high_is_a_failure_naming_culprits(monkeypatch, tmp_p
 _EDT = timezone(timedelta(hours=-4))
 _ALL_CHECKS = ("check_backups", "check_offvolume", "check_drills", "check_hostcron", "check_exposure",
                "check_default_pg_password", "check_capacity", "check_host_memory", "check_containers",
-               "check_gpu", "check_gpu_budget")
+               "check_docker_boot_tasks", "check_gpu", "check_gpu_budget")
 
 
 def _scratch_row(name: str, age_h: float, labels: str = "", state: str = "running",
@@ -397,3 +397,47 @@ def test_drill_without_a_leak_is_not_called_one(tmp_path, monkeypatch):
     fails = []
     selfcheck.check_drills(fails, {})
     assert len(fails) == 1 and "status=failed" in fails[0] and "LEAKED" not in fails[0]
+
+
+def _reader(files):
+    def read(p):
+        if p not in files:
+            raise OSError(p)
+        return files[p]
+    return read
+
+
+def test_docker_boot_shims_forwarding_to_versioned_scripts_pass():
+    files = {}
+    for shim, target in selfcheck.DOCKER_BOOT_SHIMS.items():
+        files[shim] = f'& "{target}" @args\nexit $LASTEXITCODE\n'
+        files[target] = "# versioned\n"
+    assert selfcheck.docker_boot_shim_findings(_reader(files)) == []
+
+
+def test_docker_boot_shim_restored_to_old_inline_script_fails():
+    # sabotage: an existence-only check passes a shim overwritten with the pre-2026-10-09 inline script
+    files = {}
+    for shim, target in selfcheck.DOCKER_BOOT_SHIMS.items():
+        files[shim] = "& docker desktop stop\nStart-Process 'Docker Desktop.exe'\n"
+        files[target] = "# versioned\n"
+    found = selfcheck.docker_boot_shim_findings(_reader(files))
+    assert len(found) == 2 and all("does not forward" in f for f in found)
+
+
+def test_docker_boot_shim_or_target_missing_fails():
+    shim, target = next(iter(selfcheck.DOCKER_BOOT_SHIMS.items()))
+    assert any("shim missing" in f for f in selfcheck.docker_boot_shim_findings(_reader({})))
+    found = selfcheck.docker_boot_shim_findings(_reader({shim: f'& "{target}"'}))
+    assert any("target missing" in f for f in found)
+
+
+def test_versioned_docker_boot_scripts_keep_the_incident_guards():
+    here = Path(__file__).resolve().parents[1]
+    reclaim = (here / "docker-gui-reclaim.ps1").read_text(encoding="utf8")
+    boot = (here / "docker-boot-start.ps1").read_text(encoding="utf8")
+    stop_at = reclaim.index("& docker desktop stop")
+    assert reclaim.index("Exposure-Blockers") < stop_at
+    assert reclaim.index("Set-Content -Path $snapshot") < stop_at
+    assert "docker start $n" in reclaim and "--restore-only" in reclaim
+    assert "Interactive-Session" in boot and boot.index("if (Interactive-Session)") < boot.index("Start-Process")

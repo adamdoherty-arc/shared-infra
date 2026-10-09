@@ -5,7 +5,7 @@
     "ada-scheduler",
     "ada-agent",
     "ada-arq-worker",
-    "ada-bitcoin",
+    "ada-bitcoin-prod",
     "ada-redis",
     "ada-qdrant",
     "ada-db-backup",
@@ -26,9 +26,24 @@
     "cadvisor",
     "dcgm-exporter",
     "qwen38-chat",
-    "vllm-embed"
+    "vllm-embed",
+    "ada-nginx",
+    "customer-ops-personal-1",
+    "fortressos-postgres-1",
+    "erpnext-db-1",
+    "erpnext-redis-cache-1",
+    "erpnext-redis-queue-1",
+    "erpnext-backend-1",
+    "erpnext-queue-long-1",
+    "erpnext-queue-short-1",
+    "erpnext-scheduler-1",
+    "erpnext-websocket-1",
+    "erpnext-frontend-1"
   ],
-  "port_probe_extra": ["ada-frontend", "ada-nginx", "legion-frontend", "erpnext-frontend-1"],
+  "port_probe_extra": [
+    "ada-frontend",
+    "legion-frontend"
+  ],
   "compose": {
     "ada-backend": {
       "project": "ada",
@@ -60,14 +75,6 @@
         "C:\\code\\ADA\\docker-compose.yml"
       ],
       "service": "arq-worker",
-      "workdir": "C:\\code\\ADA"
-    },
-    "ada-bitcoin": {
-      "project": "ada",
-      "files": [
-        "C:\\code\\ADA\\docker-compose.yml"
-      ],
-      "service": "bitcoin",
       "workdir": "C:\\code\\ADA"
     },
     "ada-redis": {
@@ -249,7 +256,116 @@
       ],
       "service": "vllm-embed",
       "workdir": "C:\\code\\shared-infra"
+    },
+    "ada-bitcoin-prod": {
+      "project": "ada",
+      "files": [
+        "C:\\code\\ADA\\docker-compose.yml"
+      ],
+      "service": "bitcoin-prod",
+      "workdir": "C:\\code\\ADA"
+    },
+    "customer-ops-personal-1": {
+      "project": "customer-ops",
+      "files": [
+        "C:\\code\\customer-ops\\docker-compose.yml",
+        "C:\\code\\customer-ops\\runs\\sessions.compose.yml"
+      ],
+      "service": "personal",
+      "workdir": "C:\\code\\customer-ops"
+    },
+    "fortressos-postgres-1": {
+      "project": "fortressos",
+      "files": [
+        "C:\\code\\fortressOS\\docker-compose.yml"
+      ],
+      "service": "postgres",
+      "workdir": "C:\\code\\fortressOS"
+    },
+    "erpnext-db-1": {
+      "project": "erpnext",
+      "files": [
+        "C:\\code\\erpnext\\docker-compose.yml"
+      ],
+      "service": "db",
+      "workdir": "C:\\code\\erpnext"
+    },
+    "erpnext-redis-cache-1": {
+      "project": "erpnext",
+      "files": [
+        "C:\\code\\erpnext\\docker-compose.yml"
+      ],
+      "service": "redis-cache",
+      "workdir": "C:\\code\\erpnext"
+    },
+    "erpnext-redis-queue-1": {
+      "project": "erpnext",
+      "files": [
+        "C:\\code\\erpnext\\docker-compose.yml"
+      ],
+      "service": "redis-queue",
+      "workdir": "C:\\code\\erpnext"
+    },
+    "erpnext-backend-1": {
+      "project": "erpnext",
+      "files": [
+        "C:\\code\\erpnext\\docker-compose.yml"
+      ],
+      "service": "backend",
+      "workdir": "C:\\code\\erpnext"
+    },
+    "erpnext-queue-long-1": {
+      "project": "erpnext",
+      "files": [
+        "C:\\code\\erpnext\\docker-compose.yml"
+      ],
+      "service": "queue-long",
+      "workdir": "C:\\code\\erpnext"
+    },
+    "erpnext-queue-short-1": {
+      "project": "erpnext",
+      "files": [
+        "C:\\code\\erpnext\\docker-compose.yml"
+      ],
+      "service": "queue-short",
+      "workdir": "C:\\code\\erpnext"
+    },
+    "erpnext-scheduler-1": {
+      "project": "erpnext",
+      "files": [
+        "C:\\code\\erpnext\\docker-compose.yml"
+      ],
+      "service": "scheduler",
+      "workdir": "C:\\code\\erpnext"
+    },
+    "erpnext-websocket-1": {
+      "project": "erpnext",
+      "files": [
+        "C:\\code\\erpnext\\docker-compose.yml"
+      ],
+      "service": "websocket",
+      "workdir": "C:\\code\\erpnext"
+    },
+    "erpnext-frontend-1": {
+      "project": "erpnext",
+      "files": [
+        "C:\\code\\erpnext\\docker-compose.yml"
+      ],
+      "service": "frontend",
+      "workdir": "C:\\code\\erpnext"
     }
   },
-  "_comment_compose": "Derived from live compose labels 2026-09-30 so scripts/ops_reconcile.py can bring a container back even when it no longer exists (the INF-01 case)."
+  "_comment_compose": "Derived from live compose labels 2026-09-30 so scripts/ops_reconcile.py can bring a container back even when it no longer exists (the INF-01 case).",
+  "_comment_no_compose": "must_run containers without a compose mapping (ada-nginx is a plain docker run released by ADA scripts/frontend_prod_release.py) are healed with `docker start <name>` while the container exists.",
+  "never_restore": [
+    "ada-nginx-candidate"
+  ],
+  "_comment_never_restore": "Restart-policy containers ops_reconcile's engine-stop restore must never docker start: ada-nginx-candidate is a transient smoke container of ADA scripts/frontend_prod_release.py.",
+  "port_probe_skip": {
+    "_comment": "Host ports published with no listener by design; probing them would restart a healthy container every 30 min. customer-ops personal publishes 80/443 for the optional login edge, and Caddy runs only when /srv/edge/conf/auth.env exists (customer-ops deploy/container/programs.py).",
+    "customer-ops-personal-1": [
+      80,
+      443
+    ]
+  }
 }

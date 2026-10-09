@@ -1,12 +1,12 @@
 import socket
 import sys
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import ops_reconcile as r  # noqa: E402
 
-NOW = datetime(2026, 9, 30, 22, 0, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 9, 30, 22, 0, 0, tzinfo=UTC)
 
 
 def ins(up_s=600, running=True, ports=None, restarting=False):
@@ -157,7 +157,7 @@ def test_outage_counts_containers_in_heal_cooldown():
 
 def test_forwarder_restart_refusals():
     def at(h, m):
-        return datetime(2026, 10, 8, h, m, tzinfo=timezone.utc)
+        return datetime(2026, 10, 8, h, m, tzinfo=UTC)
 
     def flat():
         return []
@@ -210,3 +210,127 @@ def test_outage_with_mirrored_skips_docker_desktop_restart_and_names_cause():
     assert refusal and "mirrored" in refusal and "does not fix" in refusal
     assert r.forwarder_restart_refusal(t, {}, t.timestamp(), flat, networking_mode="nat") is None
     assert r.forwarder_restart_refusal(t, {}, t.timestamp(), flat, networking_mode=None) is None
+
+
+INCIDENT_NOW = datetime(2026, 10, 9, 12, 40, 0, tzinfo=UTC)
+ENGINE_STOP = "2026-10-09T12:35:11.240276753Z"
+
+
+def cont(project, running, policy="unless-stopped", started="2026-10-09T12:35:50.000000000Z",
+         finished=ENGINE_STOP, name=""):
+    labels = {"com.docker.compose.project": project} if project else {}
+    return {"Name": "/" + name, "Config": {"Labels": labels},
+            "HostConfig": {"RestartPolicy": {"Name": policy}},
+            "State": {"Running": running, "Status": "running" if running else "exited",
+                      "StartedAt": started, "FinishedAt": finished}}
+
+
+def incident_fleet():
+    """The 2026-10-09 12:40Z fleet: compose re-upped ada/legion/shared-infra; the rest stayed Exited."""
+    fleet = {}
+    for n, proj in [("ada-backend", "ada"), ("ada-redis", "ada"), ("legion-redis", "legion"),
+                    ("shared-grafana", "shared-infra"), ("shared-searxng", "shared-infra")]:
+        fleet[n] = cont(proj, True, name=n)
+    fleet["vllm-autoheal"] = cont("shared-infra", True, policy="always", name="vllm-autoheal")
+    old_start = "2026-10-09T12:31:28.000000000Z"
+    for n, proj in [("ada-bitcoin-prod", "ada"), ("ada-nginx", None), ("erpnext-db-1", "erpnext"),
+                    ("erpnext-frontend-1", "erpnext"), ("customer-ops-personal-1", "customer-ops"),
+                    ("fortressos-postgres-1", "fortressos")]:
+        fleet[n] = cont(proj, False, started=old_start, name=n)
+    fleet["ada-bitcoin"] = cont("ada", False, started="2026-10-09T00:45:32.000000000Z",
+                                finished="2026-10-09T02:10:23.000000000Z", name="ada-bitcoin")
+    fleet["erpnext-create-site-1"] = cont("erpnext", False, policy="no", name="erpnext-create-site-1")
+    return fleet
+
+
+def test_engine_stop_restores_every_exited_restart_policy_container_of_the_incident():
+    got = r.plan_engine_stop_restores(incident_fleet(), INCIDENT_NOW)
+    assert got == sorted(["ada-bitcoin-prod", "ada-nginx", "customer-ops-personal-1", "erpnext-db-1",
+                          "erpnext-frontend-1", "fortressos-postgres-1"])
+
+
+def test_engine_stop_restore_skips_deliberate_stop_standby_and_no_policy():
+    got = r.plan_engine_stop_restores(incident_fleet(), INCIDENT_NOW)
+    assert "ada-bitcoin" not in got
+    assert "erpnext-create-site-1" not in got
+
+
+def test_engine_stop_restore_honours_never_restore():
+    fleet = incident_fleet()
+    fleet["ada-nginx-candidate"] = cont(None, False, name="ada-nginx-candidate")
+    got = r.plan_engine_stop_restores(fleet, INCIDENT_NOW, {"ada-nginx-candidate"})
+    assert "ada-nginx-candidate" not in got and "ada-nginx" in got
+
+
+def test_one_project_compose_stop_is_not_an_engine_stop():
+    # sabotage: a cluster counted without the project floor would restart a deliberately stopped stack
+    fleet = {f"erpnext-{i}": cont("erpnext", False, name=f"erpnext-{i}") for i in range(8)}
+    fleet["ada-backend"] = cont("ada", True, finished="2026-10-09T09:00:00.000000000Z", name="ada-backend")
+    assert r.plan_engine_stop_restores(fleet, INCIDENT_NOW) == []
+
+
+def test_single_deliberate_stop_is_not_restored():
+    # sabotage: deciding from Exited state alone would restart this
+    fleet = {n: cont(p, True, finished="2026-10-09T09:00:00.000000000Z", name=n)
+             for n, p in [("a1", "ada"), ("l1", "legion"), ("s1", "shared-infra")]}
+    fleet["fortressos-postgres-1"] = cont("fortressos", False, finished="2026-10-09T12:38:00.000000000Z",
+                                          name="fortressos-postgres-1")
+    assert r.plan_engine_stop_restores(fleet, INCIDENT_NOW) == []
+
+
+def test_engine_stop_needs_the_engine_back_and_a_recent_stop():
+    fleet = {n: cont(p, False, name=n) for n, p in [("a", "ada"), ("b", "ada"), ("c", "legion"),
+                                                    ("d", "erpnext"), ("e", "fortressos")]}
+    assert r.plan_engine_stop_restores(fleet, INCIDENT_NOW) == []
+    fleet["f"] = cont("shared-infra", True, name="f")
+    assert r.plan_engine_stop_restores(fleet, INCIDENT_NOW) == ["a", "b", "c", "d", "e"]
+    assert r.plan_engine_stop_restores(fleet, INCIDENT_NOW + timedelta(days=2)) == []
+
+
+def test_bitcoin_standby_never_restored_while_prod_runs():
+    fleet = incident_fleet()
+    fleet["ada-bitcoin-prod"]["State"].update(Running=True, Status="running")
+    fleet["ada-bitcoin"] = cont("ada", False, name="ada-bitcoin")
+    assert "ada-bitcoin" not in r.plan_engine_stop_restores(fleet, INCIDENT_NOW)
+
+
+def test_must_run_heal_cmd_falls_back_to_docker_start_without_compose_mapping():
+    assert r.must_run_heal_cmd("ada-nginx", "exited") == ["docker", "start", "ada-nginx"]
+    assert r.must_run_heal_cmd("ada-nginx", None) is None
+    cmd = r.must_run_heal_cmd("erpnext-frontend-1", "exited")
+    assert cmd[:3] == ["docker", "compose", "-p"] and cmd[-1] == "frontend"
+
+
+def test_must_run_covers_the_incident_containers():
+    must = set(r.EXPECTED["must_run"])
+    for n in ["ada-bitcoin-prod", "ada-nginx", "customer-ops-personal-1", "fortressos-postgres-1",
+              "erpnext-db-1", "erpnext-backend-1", "erpnext-frontend-1"]:
+        assert n in must
+        assert n == "ada-nginx" or n in r.EXPECTED["compose"]
+
+
+def test_lock_is_exclusive_and_stale_lock_is_taken(tmp_path, monkeypatch):
+    lock = tmp_path / "ops-reconcile.lock"
+    monkeypatch.setattr(r, "LOCK", lock)
+    now = 1_000_000.0
+    assert r.acquire_lock(now) is True
+    assert r.acquire_lock(now) is False
+    import os
+    os.utime(lock, (now - r.LOCK_STALE_S - 5, now - r.LOCK_STALE_S - 5))
+    assert r.acquire_lock(now) is True
+    r.release_lock()
+    assert not lock.exists()
+
+
+def test_port_probe_skip_ignores_idle_by_design_publishes(monkeypatch):
+    monkeypatch.setattr(r, "PORT_PROBE_SKIP", {"customer-ops-personal-1": [80, 443]})
+    ports = {"8080/tcp": [{"HostIp": "127.0.0.1", "HostPort": "80"}],
+             "8443/tcp": [{"HostIp": "127.0.0.1", "HostPort": "443"}],
+             "8765/tcp": [{"HostIp": "127.0.0.1", "HostPort": "8765"}]}
+    fleet = {"customer-ops-personal-1": ins(ports=ports)}
+    assert plan(fleet, lambda p: p not in (80, 443)) == []
+    assert plan(fleet, lambda p: False) == [("customer-ops-personal-1", 8765)]
+
+
+def test_port_probe_skip_config_names_customer_ops_idle_edge():
+    assert set(r.PORT_PROBE_SKIP.get("customer-ops-personal-1", [])) == {80, 443}
