@@ -159,6 +159,25 @@
       }
     },
     {
+      "name": "ada-test-floor-collect",
+      "owner": "ada",
+      "_note": "Runs the fast-tier marker-set pytest --collect-only inside ada-tests and publishes .claude/state/test-collect-floor/latest.json for nightly_test_run_trends (07:30 UTC). Replaces the 600 MB collect-only child that ran inside ada-scheduler (Fix-1100000938).",
+      "cmd": [
+        "C:\\Python314\\python.exe",
+        "C:\\code\\ADA\\scripts\test_floor_collect.py"
+      ],
+      "cwd": "C:\\code\\ADA",
+      "schedule": {
+        "minute": 20,
+        "hour": 2
+      },
+      "timeout_s": 1200,
+      "enabled": true,
+      "env": {
+        "GIT_CONFIG_GLOBAL": "C:\\code\\shared-infra\\scripts\\hostcron\\gitconfig-hostcron"
+      }
+    },
+    {
       "name": "ada-master-pulse",
       "owner": "ada",
       "_note": "36 LLM-free probes; writes probe_cache/heartbeat/escalation.flag. Already native and 0-token - only its scheduler changes.",
