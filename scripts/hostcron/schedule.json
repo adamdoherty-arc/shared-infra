@@ -164,7 +164,7 @@
       "_note": "Runs the fast-tier marker-set pytest --collect-only inside ada-tests and publishes .claude/state/test-collect-floor/latest.json for nightly_test_run_trends (07:30 UTC). Replaces the 600 MB collect-only child that ran inside ada-scheduler (Fix-1100000938).",
       "cmd": [
         "C:\\Python314\\python.exe",
-        "C:\\code\\ADA\\scripts\test_floor_collect.py"
+        "C:\\code\\ADA\\scripts\\test_floor_collect.py"
       ],
       "cwd": "C:\\code\\ADA",
       "schedule": {
