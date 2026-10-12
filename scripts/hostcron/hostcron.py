@@ -615,13 +615,23 @@ def _maybe_start(job: dict) -> None:
 # main loop
 
 
+_last_good_jobs: list = []
+
+
 def _load_schedule() -> list:
+    global _last_good_jobs
     try:
         data = json.loads(SCHEDULE_PATH.read_text(encoding="utf-8"))
+        jobs = [j for j in data.get("jobs", []) if j.get("enabled", True)]
     except Exception:  # noqa: BLE001
-        log.exception("could not read schedule %s", SCHEDULE_PATH)
-        return []
-    return [j for j in data.get("jobs", []) if j.get("enabled", True)]
+        log.exception(
+            "could not read schedule %s; running the last good schedule (%d jobs)",
+            SCHEDULE_PATH,
+            len(_last_good_jobs),
+        )
+        return list(_last_good_jobs)
+    _last_good_jobs = jobs
+    return jobs
 
 
 def _beat(tick: int, job_count: int) -> None:
