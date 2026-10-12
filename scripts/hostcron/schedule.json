@@ -861,6 +861,32 @@
       "env": {
         "GIT_CONFIG_GLOBAL": "C:\\code\\shared-infra\\scripts\\hostcron\\gitconfig-hostcron"
       }
+    },
+    {
+      "name": "host-temp-cleanup",
+      "owner": "shared-infra",
+      "cmd": [
+        "powershell.exe",
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "C:\\code\\shared-infra\\scripts\\host-temp-cleanup.ps1"
+      ],
+      "schedule": {
+        "hour": [
+          5
+        ],
+        "minute": [
+          15
+        ]
+      },
+      "timeout_s": 600,
+      "enabled": true,
+      "env": {
+        "GIT_CONFIG_GLOBAL": "C:\\code\\shared-infra\\scripts\\hostcron\\gitconfig-hostcron"
+      }
     }
   ]
 }
