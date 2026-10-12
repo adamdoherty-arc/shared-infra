@@ -46,6 +46,20 @@ per-container restart runs (the 10:13Z run restarted 16 healthy containers for n
 `docker desktop restart` runs only outside :55-:05 / :30-:36, at most once per 6h, and only when ADA's own
 request_restart.live_exposure_blockers() returns [] (an unrunnable check blocks). Otherwise alert only.
 
+IPv6 loopback relay wedge (2026-09-05 and 2026-10-11 incidents): in nat mode WSL's `wslrelay.exe --mode 2`
+binds [::1]:<port> for every published port, ahead of Docker Desktop's own [::] listener. After the 2026-10-11
+17:22 ET logon the relay accepted connections and forwarded nothing for 2h13m: browsers resolve `localhost` to ::1
+first and do not fall back once the connect succeeds, so every request from http://localhost:5421 timed out
+(ada-nginx logged zero browser requests 21:23Z-23:36Z) while every 127.0.0.1 probe here answered 200.
+loopback6_wedged() therefore sends an HTTP GET to both loopbacks and reports the ports that reply on 127.0.0.1
+and stay silent on ::1, twice, PROBE_RETRY_GAP_S apart. Alert only: the one remedy for a live wedge is a Docker
+Desktop restart, which is not worth a full engine bounce for a fault that 127.0.0.1 sidesteps; the standing fix
+is `.wslconfig` [wsl2] localhostForwarding=false, which stops the relay being started at all.
+
+This gate would pass trivially if it reused probe_port() (a connected-but-silent port counts alive there, and a
+wedged relay is exactly connected-but-silent) or if it probed ::1 alone (a non-HTTP port is silent on both
+loopbacks): the sabotage test feeds a port that replies on 127.0.0.1 and is silent on ::1.
+
 Engine-stop restore (2026-10-09 incident): after a host crash the boot task started Docker Desktop in session 0
 (12:31Z), then the logon GUI-reclaim task ran `docker desktop stop` + relaunch (12:34:58Z). Docker Desktop's
 quit stops every container through the API, which marks it manually stopped, so on the 12:35:50Z engine start
@@ -106,6 +120,11 @@ FULL_RUN_LOCK_WAIT_S = 120
 CREATE_NO_WINDOW = 0x08000000 if sys.platform == "win32" else 0
 UA = "shared-infra-ops-reconcile/1"
 WSLCONFIG_PATH = os.environ.get("OPS_WSLCONFIG_PATH") or r"C:\Users\hadam\.wslconfig"
+LOOPBACK6_MAX_PORTS = 3
+LOOPBACK6_FINDING = ("http://localhost:<port> hangs in browsers: wslrelay.exe holds [::1] port(s) {ports} and "
+                     "forwards nothing while 127.0.0.1 answers (2026-09-05, 2026-10-11); http://127.0.0.1:<port> "
+                     "works meanwhile")
+LOOPBACK6_FORWARDING_HINT = "; set `.wslconfig` [wsl2] localhostForwarding=false to stop the relay being started"
 MIRRORED_FINDING = ("`.wslconfig` networkingMode=mirrored: Docker Desktop stops publishing host ports in mirrored "
                     "mode (outage 2026-10-08); set networkingMode=nat")
 
@@ -164,6 +183,44 @@ def probe_port(port: int, timeout: float = PROBE_TIMEOUT_S) -> bool:
             return True
     except OSError:
         return False
+
+
+def http_reply(host: str, port: int, timeout: float = PROBE_TIMEOUT_S) -> str:
+    """`reply` when a minimal HTTP GET gets any byte back, `silent` when the connection is accepted and nothing
+    comes back, `refused` when nothing accepts it."""
+    try:
+        with socket.create_connection((host, port), timeout=timeout) as c:
+            c.settimeout(timeout)
+            try:
+                c.sendall(b"GET / HTTP/1.0\r\nHost: localhost\r\nUser-Agent: " + UA.encode() + b"\r\n\r\n")
+                return "reply" if c.recv(64) else "silent"
+            except OSError:
+                return "silent"
+    except OSError:
+        return "refused"
+
+
+def loopback6_wedged(ports: list[int], reply=http_reply, sleep=time.sleep) -> list[int]:
+    """Ports that answer HTTP on 127.0.0.1 and accept-then-stay-silent on ::1, confirmed twice (inject
+    `reply`/`sleep` in tests). A port with no ::1 listener is fine: the browser falls back to IPv4."""
+    def wedged(port: int) -> bool:
+        return reply("127.0.0.1", port) == "reply" and reply("::1", port) == "silent"
+    first: list[int] = []
+    for port in ports:
+        if wedged(port):
+            first.append(port)
+            if len(first) >= LOOPBACK6_MAX_PORTS:
+                break
+    if first:
+        sleep(PROBE_RETRY_GAP_S)
+    return [port for port in first if wedged(port)]
+
+
+def loopback6_finding(wedged: list[int], localhost_forwarding: str | None) -> str | None:
+    if not wedged:
+        return None
+    hint = "" if localhost_forwarding == "false" else LOOPBACK6_FORWARDING_HINT
+    return LOOPBACK6_FINDING.format(ports=", ".join(str(port) for port in wedged)) + hint
 
 
 def published_tcp_ports(inspect: dict) -> list[int]:
@@ -250,8 +307,8 @@ def live_exposure_blockers() -> list[str]:
         return [f"exposure check could not run ({type(exc).__name__})"]
 
 
-def wsl_networking_mode(text: str) -> str | None:
-    """Lower-cased `[wsl2]` networkingMode from .wslconfig text (key and section case-insensitive, `#`/`;`
+def wsl2_value(text: str, wanted: str) -> str | None:
+    """Lower-cased `[wsl2]` value of `wanted` from .wslconfig text (key and section case-insensitive, `#`/`;`
     comments ignored); None when the key is absent. This gate would pass trivially if the .wslconfig path
     pointed at SYSTEM's profile instead of the user's."""
     section = ""
@@ -263,9 +320,20 @@ def wsl_networking_mode(text: str) -> str | None:
             section = line[1:-1].strip().lower()
             continue
         key, sep, value = line.partition("=")
-        if sep and section == "wsl2" and key.strip().lower() == "networkingmode":
+        if sep and section == "wsl2" and key.strip().lower() == wanted.lower():
             return value.strip().lower() or None
     return None
+
+
+def wsl_networking_mode(text: str) -> str | None:
+    return wsl2_value(text, "networkingMode")
+
+
+def read_wsl2_value(wanted: str, path: str = WSLCONFIG_PATH) -> str | None:
+    try:
+        return wsl2_value(Path(path).read_text(encoding="utf8", errors="replace"), wanted)
+    except OSError:
+        return None
 
 
 def read_wsl_networking_mode(path: str = WSLCONFIG_PATH) -> str | None:
@@ -576,6 +644,16 @@ def port_pass(args, state: dict[str, str], last: dict, paused: bool, healed: lis
         if not (paused or args.dry_run) and time.time() - last.get("wslconfig_notified", 0) >= COOLDOWN_S:
             last["wslconfig_notified"] = time.time()
             notify("**ops-reconcile FAILED** " + wsl_finding)
+    v6_finding = None
+    if not outage:
+        live = sorted({p for n, i in inspects.items() if n not in dead and (i.get("State") or {}).get("Running")
+                       for p in published_tcp_ports(i)})
+        v6_finding = loopback6_finding(loopback6_wedged(live), read_wsl2_value("localhostForwarding"))
+    if v6_finding:
+        print(v6_finding)
+        if not (paused or args.dry_run) and time.time() - last.get("loopback6_notified", 0) >= COOLDOWN_S:
+            last["loopback6_notified"] = time.time()
+            notify("**ops-reconcile FAILED** " + v6_finding)
     if outage:
         cause = " (cause: .wslconfig networkingMode=mirrored)" if wsl_finding else ""
         msg = (f"Docker Desktop host-port forwarder down{cause}: {len(dead)}/{probed} containers' published ports "
@@ -621,7 +699,7 @@ def port_pass(args, state: dict[str, str], last: dict, paused: bool, healed: lis
         else:
             tail = (p.stderr or p.stdout).strip()[-200:]
             failed.append(f"{name}: dead port {port}, heal rc={p.returncode} {tail}")
-    return outage, wsl_finding
+    return outage, "; ".join(f for f in (wsl_finding, v6_finding) if f) or None
 
 
 if __name__ == "__main__":

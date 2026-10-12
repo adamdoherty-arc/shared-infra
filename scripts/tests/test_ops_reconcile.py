@@ -334,3 +334,65 @@ def test_port_probe_skip_ignores_idle_by_design_publishes(monkeypatch):
 
 def test_port_probe_skip_config_names_customer_ops_idle_edge():
     assert set(r.PORT_PROBE_SKIP.get("customer-ops-personal-1", [])) == {80, 443}
+
+
+def _reply(table):
+    return lambda host, port: table[(host, port)]
+
+
+def test_port_replying_on_v4_and_silent_on_v6_is_a_wedged_relay():
+    # sabotage: probe_port() counts a connected-but-silent port alive, so reusing it would return [] here
+    table = {("127.0.0.1", 5421): "reply", ("::1", 5421): "silent"}
+    assert r.loopback6_wedged([5421], _reply(table), sleep=lambda s: None) == [5421]
+
+
+def test_healthy_absent_and_non_http_loopback6_are_not_wedged():
+    table = {("127.0.0.1", 5421): "reply", ("::1", 5421): "reply",
+             ("127.0.0.1", 8006): "reply", ("::1", 8006): "refused",
+             ("127.0.0.1", 6379): "silent", ("::1", 6379): "silent"}
+    assert r.loopback6_wedged([5421, 8006, 6379], _reply(table), sleep=lambda s: None) == []
+
+
+def test_loopback6_wedge_needs_two_failures_and_is_capped():
+    calls = iter(["reply", "silent", "reply", "reply"])
+    assert r.loopback6_wedged([5421], lambda h, p: next(calls), sleep=lambda s: None) == []
+    table = {(h, p): v for p in range(1, 9) for h, v in (("127.0.0.1", "reply"), ("::1", "silent"))}
+    assert r.loopback6_wedged(list(range(1, 9)), _reply(table), sleep=lambda s: None) == [1, 2, 3]
+
+
+def test_loopback6_finding_names_ports_and_drops_the_hint_once_forwarding_is_off():
+    assert r.loopback6_finding([], None) is None
+    on = r.loopback6_finding([5421, 8006], None)
+    assert "5421, 8006" in on and "127.0.0.1" in on and "localhostForwarding=false" in on
+    assert "localhostForwarding=false" not in r.loopback6_finding([5421], "false")
+    assert r.wsl2_value("[wsl2]\nlocalhostForwarding = False\n", "localhostforwarding") == "false"
+    assert r.wsl2_value("[wsl2]\n# localhostForwarding=false\n", "localhostForwarding") is None
+
+
+def test_http_reply_classification_on_a_real_socket():
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    refused = s.getsockname()[1]
+    s.close()
+    assert r.http_reply("127.0.0.1", refused, 1) == "refused"
+
+    def http(c):
+        c.settimeout(2)
+        c.recv(100)
+        c.sendall(b"HTTP/1.0 200 OK\r\n\r\n")
+        c.close()
+    srv, p = _server(http)
+    assert r.http_reply("127.0.0.1", p, 2) == "reply"
+    srv.close()
+
+    def wedged(c):
+        c.settimeout(3)
+        try:
+            c.recv(100)
+            c.recv(100)
+        except OSError:
+            pass
+        c.close()
+    srv, p = _server(wedged)
+    assert r.http_reply("127.0.0.1", p, 1) == "silent"
+    srv.close()
