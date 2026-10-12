@@ -800,10 +800,43 @@ def tmpfs_masks(root: Path, runtime: dict[str, Any]) -> list[str]:
     return out
 
 
-def check_floors(path: Path, cases: list[dict[str, Any]]) -> str | None:
+def committed_floors_text(project: Project, tier: dict[str, Any]) -> str | None:
+    """The tier's floors file as committed at the snapshot rev, so a heavy run that tests the clean HEAD tree is
+    judged by the floors that tree shipped with, never by a floor a half-finished edit added to the live file for
+    tests the snapshot does not hold (ada:fast run 11916, 2026-10-12: a labs_engine floor naming an untracked test
+    file ended the nightly fast run in `error`).
+
+    This gate would pass trivially if it read the live file whenever the commit read failed; the live file is used
+    only when the floors file is not tracked at all, and a tracked file that cannot be read judges no floors.
+    """
+    rel = tier.get("floors_file")
+    if not rel:
+        return None
+    rev = str(((project.profile.get("runtime") or {}).get("snapshot") or {}).get("rev", "HEAD"))
+    try:
+        done = subprocess.run(["git", "-C", str(project.root), "show", f"{rev}:{rel}"], capture_output=True,
+                              timeout=30, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if done.returncode == 0:
+        return done.stdout.decode("utf-8", "replace")
+    try:
+        tracked = subprocess.run(["git", "-C", str(project.root), "ls-files", "--error-unmatch", rel],
+                                 capture_output=True, timeout=30, check=False).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if tracked:
+        return None
+    try:
+        return (project.root / rel).read_text(encoding="utf-8")
+    except OSError:
+        return None
+
+
+def check_floors(path: Path, cases: list[dict[str, Any]], text: str | None = None) -> str | None:
     """Per-critical-service executed-test floors keyed on test module stem; a prefix matching nothing is an error."""
     try:
-        floors = json.loads(path.read_text(encoding="utf-8")).get("floors")
+        floors = json.loads(text if text is not None else path.read_text(encoding="utf-8")).get("floors")
     except (OSError, ValueError):
         return None
     if not isinstance(floors, dict):
@@ -895,7 +928,7 @@ def interpret_pytest(project: Project, tier: dict[str, Any], paths: list[str] | 
     reruns = SCHEDULE_RERUNS if trigger == "schedule" else 0
     cases = parsers.parse_pytest_json(report, project.root, reruns=reruns,
                                       path_prefix=project.profile.get("pytest", {}).get("path_prefix", ""))
-    breach = check_floors(project.root / tier["floors_file"], cases) \
+    breach = check_floors(project.root / tier["floors_file"], cases, committed_floors_text(project, tier)) \
         if tier.get("floors_file") and paths is None else None
     truncated = truncation_of(report, rc, out_log)
     if truncated:
@@ -1082,7 +1115,8 @@ def merge_phases(project: Project, tier: dict[str, Any], parallel: Execution, se
     status = worst.status
     summaries = [s for s in (parallel.error_summary,
                              f"serial phase: {serial.error_summary}" if serial.error_summary else None) if s]
-    breach = check_floors(project.root / tier["floors_file"], cases) if tier.get("floors_file") else None
+    breach = (check_floors(project.root / tier["floors_file"], cases, committed_floors_text(project, tier))
+              if tier.get("floors_file") else None)
     if breach:
         summaries.append(f"consequence: {breach}" if status in ("error", "timeout") else breach)
         if status != "timeout":
