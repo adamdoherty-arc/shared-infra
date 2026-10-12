@@ -21,9 +21,9 @@ Checks:
   8. GPU               free VRAM >= 400 MiB
   9. GPU budget        VRAM used <= 97%; 12 direct embeddings against vllm-embed with
                        p95 < 1s (the embed SLO); failed requests are failures
- 10. DR scratch        no <ada|legion>-dr-restore-test-<8 hex> container (the scratch restored
-                       database and its anonymous PGDATA volume) older than 5h without the keep
-                       label; read from Docker, never from the drill's own state file
+ 10. DR scratch        no labelled (ada.dr-drill=1) scratch container past its deadline label and no
+                       labelled dangling volume; read from Docker, never from the drill's state file
+ 11. task twins        no enabled Windows scheduled task runs a script an enabled hostcron job runs
 
 This gate would pass trivially if the checks read the same state the failing job
 writes (a job that dies before writing leaves the previous "ok" file): every
@@ -35,7 +35,9 @@ Usage: python scripts/ops_selfcheck.py [--no-post] [--json]
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -52,6 +54,7 @@ EXPECTED = json.loads((HERE / "ops_expected_containers.json").read_text(encoding
 RUNS = HERE / "hostcron" / "state" / "runs.jsonl"
 HEARTBEAT = HERE / "hostcron" / "state" / "heartbeat.json"
 ADA_STATE = Path(r"C:\code\ADA\.claude\state\dr-drill")
+DR_CONTRACT_DEFAULT = r"C:\code\ADA\scripts\dr_drill_contract.py"
 OFFVOLUME = Path(r"C:\ProgramData\ops-backups\manifest.json")
 PUSHGATEWAY = "http://127.0.0.1:9091"
 UA = "shared-infra-ops-selfcheck/1"
@@ -116,51 +119,122 @@ def check_drills(fails: list[str], m: dict) -> None:
             fails.append(f"DR drill {target}: no readable result ({type(exc).__name__})")
 
 
-DR_SCRATCH_NAME = re.compile(r"^(ada|legion)-dr-restore-test-[0-9a-f]{8}$")
-DR_SCRATCH_KEEP_LABEL = "ada.dr-drill.keep=1"
-DR_SCRATCH_MAX_AGE_H = 5.0
+def load_dr_contract():
+    """Load the DR drill contract by path; the drill and this check share one definition of a scratch object."""
+    path = os.environ.get("ADA_DR_CONTRACT", DR_CONTRACT_DEFAULT)
+    spec = importlib.util.spec_from_file_location("dr_drill_contract", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
-def check_dr_scratch_leaks(fails: list[str], m: dict) -> None:
-    """A DR-drill scratch container (the restored scratch database and its anonymous PGDATA volume) older than
-    DR_SCRATCH_MAX_AGE_H (longer than the drill's 4h restore cap) and without the keep label is a leak.
-
-    Reads Docker, never the drill's own state file: hostcron kills a timed-out drill with `taskkill /F /T`,
-    which writes nothing, and the previous week's ok file would still read green. Would pass trivially if it
-    read dr-drill/latest.json, if a failing `docker ps` read as an empty list, if an unreadable CreatedAt
-    were skipped instead of reported, or if the name test matched every container that merely contains
-    `-dr-restore-test-`."""
-    p = sh(["docker", "ps", "-a", "--filter", "name=-dr-restore-test-", "--format", "{{json .}}"])
-    if p.returncode != 0:
-        fails.append("DR scratch probe: docker ps -a failed: " + (p.stderr or "").strip()[-120:])
-        return
-    leaked = 0
-    now = datetime.now(UTC)
-    for line in p.stdout.splitlines():
+def _json_rows(stdout: str, what: str, fails: list[str]) -> list[dict]:
+    rows = []
+    for line in stdout.splitlines():
         if not line.strip():
             continue
         try:
-            row = json.loads(line)
-            name = str(row["Names"])
-        except (ValueError, KeyError, TypeError):
-            fails.append(f"DR scratch probe: unreadable docker ps row {line[:100]!r}")
+            rows.append(json.loads(line))
+        except ValueError:
+            fails.append(f"DR scratch probe: unreadable {what} row {line[:100]!r}")
+    return rows
+
+
+def check_dr_scratch_leaks(fails: list[str], m: dict) -> None:
+    """A DR-drill scratch object is recognised by its ada.dr-drill labels and its deadline label, never by name
+    or by the drill's state file: a labelled container past its deadline + leak_grace_s (or with no deadline
+    label and older than a day), and a labelled volume dangling in two reads volume_recheck_s apart, are leaks.
+
+    Would pass trivially if it read dr-drill/latest.json, if a failing `docker ps` or `docker volume ls` read
+    as an empty list, if a volume seen once counted as leaked, or if the classifier ignored the deadline label."""
+    try:
+        contract = load_dr_contract()
+    except Exception as exc:  # noqa: BLE001
+        fails.append(f"DR scratch probe: contract unreadable ({type(exc).__name__}: {exc})")
+        return
+    ps = sh(contract.CONTAINER_QUERY)
+    if ps.returncode != 0:
+        fails.append("DR scratch probe: docker ps -a failed: " + (ps.stderr or "").strip()[-120:])
+        return
+    first = sh(contract.VOLUME_QUERY)
+    if first.returncode != 0:
+        fails.append("DR scratch probe: docker volume ls failed: " + (first.stderr or "").strip()[-120:])
+        return
+    time.sleep(contract.CONTRACT["volume_recheck_s"])
+    second = sh(contract.VOLUME_QUERY)
+    if second.returncode != 0:
+        fails.append("DR scratch probe: docker volume ls failed: " + (second.stderr or "").strip()[-120:])
+        return
+    problems: list[str] = []
+    containers = _json_rows(ps.stdout, "docker ps", problems)
+    volumes_first = _json_rows(first.stdout, "docker volume ls", problems)
+    volumes_second = _json_rows(second.stdout, "docker volume ls", problems)
+    fails.extend(problems)
+    found = contract.classify_scratch_objects(containers, volumes_first, volumes_second, time.time())
+    leaked_containers = [c for c in found["expired_containers"] if c["removable"]]
+    leaked_volumes = found["leaked_volumes"]
+    for c in leaked_containers:
+        fails.append(f"DR drill scratch container {c['name']} leaked: {c['reason']} (state {c['state'] or '?'}, "
+                     f"target {c['target']}), its restored database is still there; "
+                     f"remove with: docker rm -f -v {c['name']}")
+    for v in leaked_volumes:
+        fails.append(f"DR drill scratch volume {v['name']} leaked: dangling and labelled (run {v['run']}); "
+                     f"remove with: docker volume rm {v['name']}")
+    m["ops_dr_scratch_containers_leaked"] = len(leaked_containers)
+    m["ops_dr_scratch_volumes_leaked"] = len(leaked_volumes)
+
+
+INDEPENDENT_TWINS = frozenset({"ADA Master - Watchdog"})
+
+
+def _script_tokens(cmd: object) -> set[str]:
+    tokens = set()
+    for part in cmd if isinstance(cmd, list) else [cmd]:
+        text = str(part).replace("/", "\\").lower()
+        if text.endswith((".py", ".cmd", ".bat", ".ps1")) and "\\" in text:
+            tokens.add(text)
+    return tokens
+
+
+def check_task_twins(fails: list[str], m: dict) -> None:
+    """An enabled Windows scheduled task whose action runs the same script as an enabled hostcron job runs the
+    job twice. Matched by script-path token (case and slash insensitive).
+
+    INDEPENDENT_TWINS are tasks kept enabled on purpose as a watchdog independent of hostcron (shared-infra 7672344).
+
+    Would pass trivially if a failing task listing read as no tasks, or if only the job name were compared."""
+    schedule = json.loads((HERE / "hostcron" / "schedule.json").read_text(encoding="utf8"))
+    wanted: dict[str, str] = {}
+    for job in schedule.get("jobs", []):
+        if job.get("enabled", True) is False:
             continue
-        if not DR_SCRATCH_NAME.match(name) or DR_SCRATCH_KEEP_LABEL in str(row.get("Labels", "")).split(","):
+        for token in _script_tokens(job.get("cmd")):
+            wanted[token] = job["name"]
+    script = ("Get-ScheduledTask | Where-Object { $_.State -ne 'Disabled' } | ForEach-Object { "
+              "[pscustomobject]@{Name=$_.TaskName; Text=(($_.Actions | ForEach-Object { $_.Execute + ' ' + "
+              "$_.Arguments }) -join ' ')} } | ConvertTo-Json -Compress")
+    p = sh(["powershell", "-NoProfile", "-Command", script])
+    if p.returncode != 0:
+        fails.append("task twin probe: Get-ScheduledTask failed: " + (p.stderr or "").strip()[-120:])
+        return
+    try:
+        raw = json.loads(p.stdout or "[]")
+    except ValueError:
+        fails.append("task twin probe: unreadable Get-ScheduledTask output")
+        return
+    tasks = [raw] if isinstance(raw, dict) else raw
+    twins = 0
+    for task in tasks:
+        if task.get("Name") in INDEPENDENT_TWINS:
             continue
-        try:
-            created = datetime.strptime(str(row["CreatedAt"])[:25], "%Y-%m-%d %H:%M:%S %z")
-        except (ValueError, KeyError):
-            leaked += 1
-            fails.append(f"DR drill scratch container {name} leaked: age unreadable "
-                         f"(CreatedAt={row.get('CreatedAt')!r}); remove with: docker rm -f -v {name}")
-            continue
-        age_h = (now - created).total_seconds() / 3600
-        if age_h > DR_SCRATCH_MAX_AGE_H:
-            leaked += 1
-            fails.append(f"DR drill scratch container {name} leaked: {age_h:.1f}h old "
-                         f"(>{DR_SCRATCH_MAX_AGE_H:.0f}h, state {row.get('State', '?')}), its restored database is "
-                         f"still there; remove with: docker rm -f -v {name}")
-    m["ops_dr_scratch_containers_leaked"] = leaked
+        text = str(task.get("Text", "")).replace("/", "\\").lower()
+        for token, job in wanted.items():
+            if token in text:
+                twins += 1
+                fails.append(f"Windows task {task.get('Name')!r} is enabled and runs {token}, which hostcron job "
+                             f"{job} already runs; unregister the task")
+                break
+    m["ops_hostcron_task_twins"] = twins
 
 
 def check_hostcron(fails: list[str], m: dict) -> None:
@@ -494,7 +568,8 @@ def main() -> int:
     fails: list[str] = []
     metrics: dict = {}
     checks = ((check_host_memory,) if args.host_memory_only else
-              (check_backups, check_offvolume, check_drills, check_dr_scratch_leaks, check_hostcron, check_exposure,
+              (check_backups, check_offvolume, check_drills, check_dr_scratch_leaks, check_task_twins,
+               check_hostcron, check_exposure,
                check_default_pg_password, check_capacity, check_host_memory, check_containers,
                check_docker_boot_tasks, check_gpu, check_gpu_budget))
     for fn in checks:

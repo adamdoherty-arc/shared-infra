@@ -244,99 +244,167 @@ def test_host_commit_charge_high_is_a_failure_naming_culprits(monkeypatch, tmp_p
     assert not fails and metrics["ops_host_commit_used_ratio"] < 0.6
 
 
-_EDT = timezone(timedelta(hours=-4))
-_ALL_CHECKS = ("check_backups", "check_offvolume", "check_drills", "check_hostcron", "check_exposure",
-               "check_default_pg_password", "check_capacity", "check_host_memory", "check_containers",
-               "check_docker_boot_tasks", "check_gpu", "check_gpu_budget")
+_ALL_CHECKS = ("check_backups", "check_offvolume", "check_drills", "check_task_twins", "check_hostcron",
+               "check_exposure", "check_default_pg_password", "check_capacity", "check_host_memory",
+               "check_containers", "check_docker_boot_tasks", "check_gpu", "check_gpu_budget")
+
+contract = selfcheck.load_dr_contract()
+LABEL, DEADLINE_LABEL, RUN_LABEL, TARGET_LABEL = (contract.CONTRACT[k] for k in
+                                                  ("label", "label_deadline", "label_run", "label_target"))
+GRACE = contract.CONTRACT["leak_grace_s"]
 
 
-def _scratch_row(name: str, age_h: float, labels: str = "", state: str = "running",
-                 created: str | None = None) -> str:
-    stamp = (datetime.now(UTC) - timedelta(hours=age_h)).astimezone(_EDT).strftime("%Y-%m-%d %H:%M:%S %z") + " EDT"
-    return json.dumps({"Names": name, "State": state, "Labels": labels, "CreatedAt": created or stamp})
+def _labels(deadline: float | None, run: str = "abc123def456", target: str = "ada") -> str:
+    parts = [f"{LABEL}=1", f"{TARGET_LABEL}={target}", f"{RUN_LABEL}={run}"]
+    if deadline is not None:
+        parts.append(f"{DEADLINE_LABEL}={int(deadline)}")
+    return ",".join(parts)
 
 
-def _docker_ps(monkeypatch, *rows: str, rc: int = 0, stderr: str = "") -> list[list[str]]:
+def _scratch_row(name: str, deadline_in_s: float | None, state: str = "running", labelled: bool = True,
+                 created_age_h: float = 1.0) -> str:
+    stamp = (datetime.now(UTC) - timedelta(hours=created_age_h)).strftime("%Y-%m-%d %H:%M:%S +0000 UTC")
+    labels = _labels(None if deadline_in_s is None else time.time() + deadline_in_s) if labelled else "a=b"
+    return json.dumps({"Names": name, "ID": name[:6], "State": state, "Labels": labels, "CreatedAt": stamp})
+
+
+def _volume_row(name: str, labelled: bool = True) -> str:
+    return json.dumps({"Name": name, "Labels": _labels(time.time() - 9999) if labelled else ""})
+
+
+def _docker(monkeypatch, containers=(), volumes_first=(), volumes_second=None, ps_rc=0, vol_rc=0, stderr=""):
     seen: list[list[str]] = []
+    reads = {"volume": 0}
+    second = volumes_first if volumes_second is None else volumes_second
 
     def fake_sh(cmd, timeout=60):
         seen.append(cmd)
-        return subprocess.CompletedProcess(cmd, rc, "".join(row + "\n" for row in rows), stderr)
+        if cmd[:3] == ["docker", "ps", "-a"]:
+            return subprocess.CompletedProcess(cmd, ps_rc, "".join(r + "\n" for r in containers), stderr)
+        if cmd[:3] == ["docker", "volume", "ls"]:
+            reads["volume"] += 1
+            rows = volumes_first if reads["volume"] == 1 else second
+            return subprocess.CompletedProcess(cmd, vol_rc, "".join(r + "\n" for r in rows), stderr)
+        raise AssertionError(cmd)
 
     monkeypatch.setattr(selfcheck, "sh", fake_sh)
+    monkeypatch.setattr(selfcheck.time, "sleep", lambda s: None)
     return seen
 
 
-def test_dr_scratch_container_past_five_hours_is_reported_as_a_leak(monkeypatch):
-    """Sabotage: a drill killed before it wrote anything (2026-10-04 shape) leaves a container nobody reads."""
-    seen = _docker_ps(monkeypatch,
-                      _scratch_row("ada-dr-restore-test-0ff648c6", 6.0),
-                      _scratch_row("legion-dr-restore-test-1a2b3c4d", 30.0, state="exited"))
+def _probe():
     fails: list[str] = []
     metrics: dict = {}
     selfcheck.check_dr_scratch_leaks(fails, metrics)
-    assert seen[0][:3] == ["docker", "ps", "-a"]
-    assert metrics["ops_dr_scratch_containers_leaked"] == 2
-    assert len(fails) == 2
-    assert "ada-dr-restore-test-0ff648c6 leaked" in fails[0]
+    return fails, metrics
+
+
+def test_dr_scratch_container_past_its_deadline_is_reported_as_a_leak(monkeypatch):
+    """Sabotage: a container whose deadline label passed more than leak_grace_s ago, in any state."""
+    seen = _docker(monkeypatch, containers=(
+        _scratch_row("ada-dr-restore-test-0ff648c6", -(GRACE + 60)),
+        _scratch_row("zz-anything", -(GRACE + 60), state="exited")))
+    fails, metrics = _probe()
+    assert seen[0][:3] == ["docker", "ps", "-a"] and "label=ada.dr-drill=1" in seen[0]
+    assert metrics["ops_dr_scratch_containers_leaked"] == 2 and len(fails) == 2
     assert "docker rm -f -v ada-dr-restore-test-0ff648c6" in fails[0]
-    assert "legion-dr-restore-test-1a2b3c4d leaked" in fails[1] and "state exited" in fails[1]
+    assert "state exited" in fails[1]
 
 
-def test_dr_scratch_age_threshold_is_five_hours(monkeypatch):
-    _docker_ps(monkeypatch, _scratch_row("ada-dr-restore-test-aaaaaaaa", 4.5))
-    fails: list[str] = []
-    metrics: dict = {}
-    selfcheck.check_dr_scratch_leaks(fails, metrics)  # control: inside the 4h restore cap plus margin
+def test_dr_scratch_container_inside_its_deadline_or_grace_is_not_a_leak(monkeypatch):
+    """Control: a live drill, and one just past its deadline but inside the grace, are left alone."""
+    _docker(monkeypatch, containers=(_scratch_row("a", 3000), _scratch_row("b", -(GRACE - 60))))
+    fails, metrics = _probe()
     assert not fails and metrics["ops_dr_scratch_containers_leaked"] == 0
 
-    _docker_ps(monkeypatch, _scratch_row("ada-dr-restore-test-aaaaaaaa", 5.5))
-    fails, metrics = [], {}
-    selfcheck.check_dr_scratch_leaks(fails, metrics)  # sabotage: just past it
-    assert len(fails) == 1 and metrics["ops_dr_scratch_containers_leaked"] == 1
+
+def test_dr_scratch_is_recognised_by_label_not_by_name(monkeypatch):
+    """Sabotage for a name-regex classifier: an unlabelled look-alike is ignored, a labelled odd name is caught."""
+    _docker(monkeypatch, containers=(_scratch_row("ada-dr-restore-test-0ff648c6", -(GRACE + 60), labelled=False),))
+    fails, metrics = _probe()
+    assert not fails and metrics["ops_dr_scratch_containers_leaked"] == 0
+    _docker(monkeypatch, containers=(_scratch_row("renamed-by-someone", -(GRACE + 60)),))
+    fails, metrics = _probe()
+    assert metrics["ops_dr_scratch_containers_leaked"] == 1 and "renamed-by-someone" in fails[0]
 
 
-def test_dr_scratch_probe_leaves_alone_what_is_not_a_leak(monkeypatch):
-    """Control: a kept container, look-alike names and unrelated containers are never flagged."""
-    _docker_ps(monkeypatch,
-               _scratch_row("ada-dr-restore-test-aaaaaaaa", 9.0, labels="ada.dr-drill=1,ada.dr-drill.keep=1"),
-               _scratch_row("my-ada-dr-restore-test-0ff648c6", 9.0),
-               _scratch_row("ada-dr-restore-test-notahex1", 9.0),
-               _scratch_row("ada-dr-restore-test-0FF648C6", 9.0),
-               _scratch_row("ada-db-backup", 99.0))
-    fails: list[str] = []
-    metrics: dict = {}
-    selfcheck.check_dr_scratch_leaks(fails, metrics)
-    assert not fails
-    assert metrics["ops_dr_scratch_containers_leaked"] == 0
+def test_dr_scratch_without_a_deadline_label_leaks_only_after_a_day(monkeypatch):
+    _docker(monkeypatch, containers=(_scratch_row("young", None, created_age_h=2),
+                                     _scratch_row("old", None, created_age_h=30)))
+    fails, metrics = _probe()
+    assert metrics["ops_dr_scratch_containers_leaked"] == 1 and "old" in fails[0] and "no_deadline_label" in fails[0]
+
+
+def test_dr_scratch_dangling_labelled_volume_must_be_seen_in_both_reads(monkeypatch):
+    """Sabotage: a labelled volume listed twice is a leak; control: one listed once (a drill mid-teardown) is not."""
+    _docker(monkeypatch, volumes_first=(_volume_row("vol-leak"), _volume_row("vol-gone")),
+            volumes_second=(_volume_row("vol-leak"),))
+    fails, metrics = _probe()
+    assert metrics["ops_dr_scratch_volumes_leaked"] == 1 and len(fails) == 1
+    assert "docker volume rm vol-leak" in fails[0]
+
+
+def test_dr_scratch_unlabelled_dangling_volumes_are_never_touched(monkeypatch):
+    _docker(monkeypatch, volumes_first=(_volume_row("other-project", labelled=False),))
+    fails, metrics = _probe()
+    assert not fails and metrics["ops_dr_scratch_volumes_leaked"] == 0
 
 
 def test_dr_scratch_probe_with_nothing_to_report_is_clean(monkeypatch):
-    _docker_ps(monkeypatch)
-    fails: list[str] = []
-    metrics: dict = {}
-    selfcheck.check_dr_scratch_leaks(fails, metrics)
+    _docker(monkeypatch)
+    fails, metrics = _probe()
     assert not fails and metrics["ops_dr_scratch_containers_leaked"] == 0
 
 
 def test_dr_scratch_probe_that_cannot_read_docker_is_a_failure_never_a_pass(monkeypatch):
-    _docker_ps(monkeypatch, rc=1, stderr="error during connect: the docker daemon is not reachable")
-    fails: list[str] = []
-    metrics: dict = {}
-    selfcheck.check_dr_scratch_leaks(fails, metrics)
-    assert fails and "docker ps -a failed" in fails[0]
-    assert "ops_dr_scratch_containers_leaked" not in metrics
+    _docker(monkeypatch, ps_rc=1, stderr="error during connect: the docker daemon is not reachable")
+    fails, metrics = _probe()
+    assert fails and "docker ps -a failed" in fails[0] and "ops_dr_scratch_containers_leaked" not in metrics
+    _docker(monkeypatch, vol_rc=1, stderr="daemon down")
+    fails, metrics = _probe()
+    assert fails and "docker volume ls failed" in fails[0] and "ops_dr_scratch_containers_leaked" not in metrics
 
 
-def test_dr_scratch_probe_reports_unreadable_rows_and_unreadable_ages(monkeypatch):
-    _docker_ps(monkeypatch, "not json at all",
-               _scratch_row("ada-dr-restore-test-0ff648c6", 0, created="some time yesterday"))
-    fails: list[str] = []
-    metrics: dict = {}
-    selfcheck.check_dr_scratch_leaks(fails, metrics)
+def test_dr_scratch_probe_reports_unreadable_rows(monkeypatch):
+    _docker(monkeypatch, containers=("not json at all",))
+    fails, metrics = _probe()
     assert any("unreadable docker ps row" in f for f in fails)
-    assert any("age unreadable" in f and "ada-dr-restore-test-0ff648c6" in f for f in fails)
-    assert metrics["ops_dr_scratch_containers_leaked"] == 1
+
+
+def test_dr_scratch_constants_come_from_the_contract_not_from_this_file():
+    """The name regex and the age constants that drifted from the drill are gone."""
+    for gone in ("DR_SCRATCH_NAME", "DR_SCRATCH_MAX_AGE_H", "DR_SCRATCH_KEEP_LABEL"):
+        assert not hasattr(selfcheck, gone)
+
+
+def _windows_tasks(monkeypatch, tasks: list[dict], rc: int = 0):
+    def fake_sh(cmd, timeout=60):
+        return subprocess.CompletedProcess(cmd, rc, json.dumps(tasks), "boom")
+    monkeypatch.setattr(selfcheck, "sh", fake_sh)
+
+
+def test_enabled_windows_task_twin_of_a_hostcron_job_is_flagged(monkeypatch):
+    """Sabotage: a still-enabled task running the drill script would run the drill a second time."""
+    _windows_tasks(monkeypatch, [
+        {"Name": "ADA DR Restore Drill - Weekly",
+         "Text": "cmd.exe /c C:/Code/ADA/scripts/dr_restore_and_diff.py --target ada"},
+        {"Name": "Unrelated", "Text": "notepad.exe C:\\x\\y.txt"}])
+    fails: list[str] = []
+    metrics: dict = {}
+    selfcheck.check_task_twins(fails, metrics)
+    assert metrics["ops_hostcron_task_twins"] == 1 and "ADA DR Restore Drill - Weekly" in fails[0]
+
+
+def test_no_windows_task_twins_is_clean_and_a_failed_listing_is_a_failure(monkeypatch):
+    _windows_tasks(monkeypatch, [{"Name": "Unrelated", "Text": "notepad.exe C:\\x\\y.txt"}])
+    fails: list[str] = []
+    metrics: dict = {}
+    selfcheck.check_task_twins(fails, metrics)
+    assert not fails and metrics["ops_hostcron_task_twins"] == 0
+    _windows_tasks(monkeypatch, [], rc=1)
+    fails, metrics = [], {}
+    selfcheck.check_task_twins(fails, metrics)
+    assert fails and "ops_hostcron_task_twins" not in metrics
 
 
 def _run_main(monkeypatch, capsys):
@@ -349,7 +417,7 @@ def _run_main(monkeypatch, capsys):
 
 def test_main_runs_the_dr_scratch_probe_and_a_leak_fails_the_selfcheck(monkeypatch, capsys):
     """Sabotage: a probe that is written but never registered in main() would leave every leak unseen."""
-    _docker_ps(monkeypatch, _scratch_row("ada-dr-restore-test-0ff648c6", 8.0))
+    _docker(monkeypatch, containers=(_scratch_row("ada-dr-restore-test-0ff648c6", -(GRACE + 600)),))
     rc, out = _run_main(monkeypatch, capsys)
     assert rc == 1 and not out["ok"]
     assert any("ada-dr-restore-test-0ff648c6 leaked" in f for f in out["failures"])
@@ -357,7 +425,7 @@ def test_main_runs_the_dr_scratch_probe_and_a_leak_fails_the_selfcheck(monkeypat
 
 
 def test_main_with_no_scratch_container_passes(monkeypatch, capsys):
-    _docker_ps(monkeypatch)
+    _docker(monkeypatch)
     rc, out = _run_main(monkeypatch, capsys)
     assert rc == 0 and out["ok"] and out["failures"] == []
 
@@ -441,3 +509,15 @@ def test_versioned_docker_boot_scripts_keep_the_incident_guards():
     assert reclaim.index("Set-Content -Path $snapshot") < stop_at
     assert "docker start $n" in reclaim and "--restore-only" in reclaim
     assert "Interactive-Session" in boot and boot.index("if (Interactive-Session)") < boot.index("Start-Process")
+
+
+def test_the_independent_watchdog_task_is_not_called_a_twin(monkeypatch):
+    """Control for the twin check: the watchdog is kept enabled on purpose (7672344) and is never flagged."""
+    schedule = json.loads((SCRIPTS / "hostcron" / "schedule.json").read_text(encoding="utf8"))["jobs"]
+    watchdog = next(j for j in schedule if j["name"] == "ada-master-watchdog")
+    script = next(part for part in watchdog["cmd"] if str(part).lower().endswith(".ps1"))
+    _windows_tasks(monkeypatch, [{"Name": "ADA Master - Watchdog", "Text": f"powershell.exe -File {script}"}])
+    fails: list[str] = []
+    metrics: dict = {}
+    selfcheck.check_task_twins(fails, metrics)
+    assert not fails and metrics["ops_hostcron_task_twins"] == 0

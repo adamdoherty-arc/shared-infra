@@ -15,6 +15,11 @@
        2026-09-23. Disable rather than delete so the original definitions stay
        inspectable and -Revert can put them back in one step.
 
+       One exception: 'ADA DR Restore Drill - Weekly' is UNREGISTERED. Its cmd
+       wrapper is deleted and the drill now runs as the hostcron jobs
+       legion-dr-restore-drill-weekly and ada-dr-restore-drill-weekly, so there
+       is nothing for -Revert to put back.
+
   Deliberately NOT touched:
     ZeroInfra-DockerGuiReclaim - a logon task that hands the Docker Desktop GUI
     from session 0 to the interactive desktop. A session-0 service cannot do
@@ -58,7 +63,6 @@ $MigratedTasks = @(
     'ADA Security Sweep - Daily',
     'ADA Security Sweep - Weekly',
     'ADA Bifrost Model Sync - Daily',
-    'ADA DR Restore Drill - Weekly',
     'Claude Usage Forensics - Weekly',
     'ADA LLM Weekly Report',
     'ADA Prompt Weekly Review'
@@ -179,6 +183,15 @@ foreach ($t in $RetiredClaudeTasks) {
     if ($task.State -eq 'Disabled') { Write-Host "already disabled: $t"; continue }
     Disable-ScheduledTask -TaskName $t | Out-Null
     Write-Host "disabled: $t"
+}
+
+Write-Host ''
+Write-Host '== unregistering the retired DR drill task =='
+if (Get-ScheduledTask -TaskName 'ADA DR Restore Drill - Weekly' -ErrorAction SilentlyContinue) {
+    Unregister-ScheduledTask -TaskName 'ADA DR Restore Drill - Weekly' -Confirm:$false
+    Write-Host 'unregistered: ADA DR Restore Drill - Weekly'
+} else {
+    Write-Host 'already gone: ADA DR Restore Drill - Weekly'
 }
 
 Write-Host ''

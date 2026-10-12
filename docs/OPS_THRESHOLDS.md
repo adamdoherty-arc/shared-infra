@@ -9,7 +9,7 @@ Discord receiver `discord-ops`) AND, independently, by the nightly `scripts/ops_
 |---|---|---|---|
 | ADA / Legion newest dump age | > 30 h | daily cadence + one missed run of grace | `BackupStale`, `LegionBackupStale`, selfcheck, docker healthchecks (`-mmin -1800`) |
 | Off-VHDX copy age | > 36 h | runs 10:30 daily after the 03:30 ET dump | `OffVolumeBackupStale`, selfcheck |
-| DR restore drill | last ok > 10 d, or last run failed | weekly Sunday 09:00 + 3 days grace | `DrDrillStale`, selfcheck |
+| DR restore drill | last ok > 10 d, or last run failed | weekly Sunday 15:00 (Legion) and 17:00 (ADA) + 3 days grace | `DrDrillStale`, selfcheck |
 | C: free space | < 15 % for 10 min | VHDX growth can fill C: and stop Docker + native Postgres together | `HostDiskFreeLow`, selfcheck |
 | `docker_data.vhdx` size | > 1000 GB | internal used is ~660 GB; the rest is uncompacted slack | `DockerVhdxLarge` |
 | GPU free VRAM | < 400 MiB for 30 min | measured steady state is 0.7-1.0 GiB free on the 32 GiB card | `GpuVramNearlyFull`, selfcheck |

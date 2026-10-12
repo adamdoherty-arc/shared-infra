@@ -12,8 +12,11 @@ runtime:
     - {host: testplatform, container: /work/testplatform, mode: ro}
     - {host: scripts, container: /work/scripts, mode: ro}
     - {host: C:/code/ADA/.testplatform.yml, container: /work/shipped-profiles/ada/.testplatform.yml, mode: ro}
+    - {host: C:/code/ADA/scripts/dr_drill_contract.py, container: /work/ada-dr/dr_drill_contract.py, mode: ro}
+    - {host: observability/prometheus/rules, container: /work/observability/prometheus/rules, mode: ro}
   env:
     TESTPLATFORM_SHIPPED_PROFILES: /work/shipped-profiles
+    ADA_DR_CONTRACT: /work/ada-dr/dr_drill_contract.py
 
 pytest:
   command: [python, -m, pytest]
@@ -33,3 +36,9 @@ tiers:
     workers: 0
     timeout_s: 600
     min_executed: 1
+  host:
+    framework: commands
+    timeout_s: 1800
+    commands:
+      - {name: hostcron_kill_ladder, run: [C:/Python314/python.exe, scripts/tests/host/hostcron_kill_ladder.py], timeout_s: 600, file: scripts/hostcron/hostcron.py}
+      - {name: dr_scratch_selfexpiry, run: [C:/Python314/python.exe, scripts/tests/host/dr_scratch_selfexpiry.py], timeout_s: 900, file: scripts/tests/host/dr_scratch_selfexpiry.py}

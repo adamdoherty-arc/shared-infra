@@ -50,11 +50,11 @@ groups:
           summary: "The off-VHDX backup copy is older than 36h"
           description: "scripts/backup_offvolume.py has not copied a fresh dump outside the Docker VHDX."
       - alert: DrDrillStale
-        expr: time() - ops_dr_drill_last_ok_timestamp_seconds{target="ada"} > 10 * 86400
+        expr: time() - ops_dr_drill_last_ok_timestamp_seconds{target=~"ada|legion"} > 10 * 86400
         for: 0m
         labels: { severity: warning, ops_direct: "true" }
         annotations:
-          summary: "No successful ADA DR restore drill in 10 days"
+          summary: "No successful DR restore drill in 10 days for {{ $labels.target }}"
           description: "The weekly restore drill failed or did not run; a backup that has not been restored is not a backup."
       - alert: HostMemoryLow
         expr: ops_host_mem_available_bytes < 4 * 1024 * 1024 * 1024

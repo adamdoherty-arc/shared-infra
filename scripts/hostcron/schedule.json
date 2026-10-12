@@ -159,6 +159,33 @@
       }
     },
     {
+      "name": "ada-owner-plan-weekly-screen",
+      "owner": "ada",
+      "_note": "Creates the Trade Planner owner plan (track-only, no broker order) for the current ET week: runs the Monday screen in ada-backend and imports it. Fires Mon-Fri 10:10 host-local (the host clock is America/New_York); the script exits 0 with a nothing-to-do line when the day is not a trading day, before 10:05 ET, or the week already has a run, so a Monday holiday creates the plan on the first trading day. Raw output .claude/state/owner-plan-screen/<date>.out, log .claude/logs/owner-plan-weekly-screen.log, runbook docs/runbooks/compounding-book.md.",
+      "cmd": [
+        "cmd.exe",
+        "/c",
+        "C:\\code\\ADA\\scripts\\setup\\run-owner-plan-weekly-screen.cmd"
+      ],
+      "cwd": "C:\\code\\ADA",
+      "schedule": {
+        "minute": 10,
+        "hour": 10,
+        "dow": [
+          1,
+          2,
+          3,
+          4,
+          5
+        ]
+      },
+      "timeout_s": 1800,
+      "enabled": true,
+      "env": {
+        "GIT_CONFIG_GLOBAL": "C:\\code\\shared-infra\\scripts\\hostcron\\gitconfig-hostcron"
+      }
+    },
+    {
       "name": "ada-test-floor-collect",
       "owner": "ada",
       "_note": "Runs the fast-tier marker-set pytest --collect-only inside ada-tests and publishes .claude/state/test-collect-floor/latest.json for nightly_test_run_trends (07:30 UTC). Replaces the 600 MB collect-only child that ran inside ada-scheduler (Fix-1100000938).",
@@ -381,22 +408,59 @@
       }
     },
     {
-      "name": "ada-dr-restore-drill-weekly",
+      "name": "legion-dr-restore-drill-weekly",
       "owner": "ada",
       "cmd": [
-        "cmd.exe",
-        "/c",
-        "C:\\code\\ADA\\scripts\\setup\\run-dr-restore-drill-weekly.cmd"
+        "C:\\Python314\\python.exe",
+        "C:\\code\\ADA\\scripts\\dr_restore_and_diff.py",
+        "--target",
+        "legion"
       ],
       "cwd": "C:\\code\\ADA",
       "schedule": {
         "minute": 0,
-        "hour": 9,
+        "hour": 15,
         "dow": 0
       },
-      "timeout_s": 10800,
+      "timeout_s": 5400,
+      "grace_s": 1200,
+      "artifact": {
+        "path": "C:\\code\\ADA\\.claude\\state\\dr-drill\\latest-legion.json",
+        "reject_status": [
+          "running"
+        ]
+      },
       "enabled": true,
-      "_note": "Restores the newest ADA AND Legion dumps into throwaway containers and row-diffs them against live; exit code is non-zero if either fails. ADA budget scales with dump size (min 1h); 3h outer bound.",
+      "_note": "Restores the newest Legion dump into a self-expiring labelled scratch container and row-diffs it against live. Sunday 15:00 clears every heavy job and ends before the ADA drill window opens. artifact: an exit 0 is ledgered failed unless latest-legion.json carries this run's hostcron_run_id and a non-running status.",
+      "env": {
+        "GIT_CONFIG_GLOBAL": "C:\\code\\shared-infra\\scripts\\hostcron\\gitconfig-hostcron"
+      }
+    },
+    {
+      "name": "ada-dr-restore-drill-weekly",
+      "owner": "ada",
+      "cmd": [
+        "C:\\Python314\\python.exe",
+        "C:\\code\\ADA\\scripts\\dr_restore_and_diff.py",
+        "--target",
+        "ada"
+      ],
+      "cwd": "C:\\code\\ADA",
+      "schedule": {
+        "minute": 0,
+        "hour": 17,
+        "dow": 0
+      },
+      "timeout_s": 13500,
+      "grace_s": 1200,
+      "artifact": {
+        "path": "C:\\code\\ADA\\.claude\\state\\dr-drill\\latest.json",
+        "reject_status": [
+          "running"
+        ]
+      },
+      "enabled": true,
+      "_note": "Restores the newest ADA dump into a self-expiring labelled scratch container and row-diffs it against live. One job per target; python is the direct child so hostcron's graceful stop (console break, then grace_s) reaches the drill. Sunday 17:00 keeps the worst-case hard kill (timeout + grace) before the 21:15 bitcoin release. artifact: an exit 0 is ledgered failed unless latest.json carries this run's hostcron_run_id and a non-running status.",
       "env": {
         "GIT_CONFIG_GLOBAL": "C:\\code\\shared-infra\\scripts\\hostcron\\gitconfig-hostcron"
       }
@@ -550,7 +614,8 @@
       },
       "schedule": {},
       "timeout_s": 120,
-      "enabled": true
+      "enabled": true,
+      "runner_env": false
     },
     {
       "name": "ada-docs-refresh-commit",
@@ -665,7 +730,7 @@
         "minute": 45,
         "hour": 11
       },
-      "timeout_s": 300,
+      "timeout_s": 600,
       "notify_on_failure": false,
       "enabled": true,
       "env": {
