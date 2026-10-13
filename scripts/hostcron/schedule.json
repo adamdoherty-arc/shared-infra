@@ -895,7 +895,7 @@
       "cmd": [
         "cmd.exe",
         "/c",
-        "C:\\code\\ADA\\scripts\\setup\run-labs-close-identity-stacks.cmd"
+        "C:\\code\\ADA\\scripts\\setup\\run-labs-close-identity-stacks.cmd"
       ],
       "cwd": "C:\\code\\ADA",
       "schedule": {
