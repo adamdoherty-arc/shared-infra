@@ -887,6 +887,33 @@
       "env": {
         "GIT_CONFIG_GLOBAL": "C:\\code\\shared-infra\\scripts\\hostcron\\gitconfig-hostcron"
       }
+    },
+    {
+      "name": "ada-labs-close-identity-stacks",
+      "owner": "ada",
+      "_note": "Closes the duplicate open current lab theses that predate the identity policy (62 on 2026-10-13: sectors 51, whats-next 6, short-premium 5) and stamps identity_key on the survivors. Runs inside the 16:15-17:20 ET window the script requires (priced option quotes, printed equity bars; never 17:25-19:50). A duplicate whose leg is not yet priced is skipped and retried next day. Idempotent.",
+      "cmd": [
+        "cmd.exe",
+        "/c",
+        "C:\\code\\ADA\\scripts\\setup\run-labs-close-identity-stacks.cmd"
+      ],
+      "cwd": "C:\\code\\ADA",
+      "schedule": {
+        "minute": 30,
+        "hour": 16,
+        "dow": [
+          1,
+          2,
+          3,
+          4,
+          5
+        ]
+      },
+      "timeout_s": 1500,
+      "enabled": true,
+      "env": {
+        "GIT_CONFIG_GLOBAL": "C:\\code\\shared-infra\\scripts\\hostcron\\gitconfig-hostcron"
+      }
     }
   ]
 }
