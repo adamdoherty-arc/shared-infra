@@ -914,6 +914,31 @@
       "env": {
         "GIT_CONFIG_GLOBAL": "C:\\code\\shared-infra\\scripts\\hostcron\\gitconfig-hostcron"
       }
+    },
+    {
+      "name": "ada-lan-block-rule",
+      "owner": "ada",
+      "_note": "Re-asserts the Windows Firewall rule that blocks raw-LAN clients from the Docker app ports (ADA accepted failure mode 2026-10-13). Idempotent; exits 0 when the rule is present, 2 when it is missing and this service is not elevated.",
+      "cmd": [
+        "powershell.exe",
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "C:\\code\\ADA\\scripts\\setup\\ensure_lan_block_rule.ps1"
+      ],
+      "cwd": "C:\\code\\ADA",
+      "schedule": {
+        "minute": [
+          11
+        ]
+      },
+      "timeout_s": 120,
+      "enabled": true,
+      "env": {
+        "GIT_CONFIG_GLOBAL": "C:\\code\\shared-infra\\scripts\\hostcron\\gitconfig-hostcron"
+      }
     }
   ]
 }
