@@ -25,7 +25,7 @@ services:
     container_name: shared-pyroscope
     restart: unless-stopped
     ports:
-      - "4040:4040"
+      - "127.0.0.1:4040:4040"
     volumes:
       - pyroscope_data:/data
     networks:
