@@ -899,11 +899,29 @@ def truncation_of(report: dict[str, Any], rc: int, out_log: Path) -> str | None:
     return "; ".join(parts)
 
 
+def report_is_complete(report_path: Path | None) -> bool:
+    """True when pytest-json-report wrote its summary and it accounts for every collected test.
+
+    The plugin writes the file only when the session finishes, so a run killed mid-way never has one; a run that
+    has one and was still killed hung afterwards, at shutdown, and its results are whole.
+    """
+    if report_path is None or not report_path.exists():
+        return False
+    try:
+        summary = json.loads(report_path.read_text(encoding="utf-8")).get("summary") or {}
+    except (ValueError, OSError):
+        return False
+    collected, total = summary.get("collected"), summary.get("total")
+    return bool(collected) and total == collected
+
+
 def interpret_pytest(project: Project, tier: dict[str, Any], paths: list[str] | None, trigger: str, rc: int,
                      report_path: Path | None, out_log: Path, elapsed: float, timeout_s: int,
                      quarantined_count: int, failure_stream: Path | None = None, stalled_s: int = 0) -> Execution:
     tail = _summary(_tail(out_log))
-    if stalled_s or (rc in (124, 137) and elapsed >= timeout_s - 5):
+    cut_short = bool(stalled_s or (rc in (124, 137) and elapsed >= timeout_s - 5))
+    reported_everything = cut_short and report_is_complete(report_path)
+    if cut_short and not reported_everything:
         streamed = parsers.cases_from_failure_stream(failure_stream, project.root,
                                                      project.profile.get("pytest", {}).get("path_prefix", ""))
         summary = timeout_summary(out_log, timeout_s)
@@ -955,6 +973,8 @@ def interpret_pytest(project: Project, tier: dict[str, Any], paths: list[str] | 
     summary = None
     if status == "error":
         summary = f"collection/setup errors in {totals['errors']} items: {tail}"[:500]
+    if reported_everything and status == "passed":
+        summary = f"pytest hung at shutdown after reporting every test; killed at {int(elapsed)}s"
     return Execution(status, cases, summary, quarantined_count, rc)
 
 

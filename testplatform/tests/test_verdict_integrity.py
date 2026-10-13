@@ -138,3 +138,28 @@ def test_verdict_totals_equal_the_cases_the_report_lists(tmp_path):
     exe = _interpret(_project(tmp_path), tmp_path, 1, tests)
     totals = runner.parsers.totals_of(exe.cases)
     assert (totals["total"], totals["passed"], totals["failed"], totals["skipped"]) == (4, 2, 1, 1)
+
+
+def _stalled(tmp_path, tests, summary, rc=137, stalled_s=600):
+    path = tmp_path / "report.json"
+    path.write_text(json.dumps({"summary": summary, "tests": tests}), encoding="utf-8")
+    log = tmp_path / "out.log"
+    log.write_text("..", encoding="utf-8")
+    return runner.interpret_pytest(_project(tmp_path), {"timeout_s": 60, "min_executed": 1}, None, "schedule", rc, path,
+                                   log, 3700, 60, 0, None, stalled_s)
+
+
+def test_a_run_killed_at_shutdown_after_reporting_every_test_keeps_its_results(tmp_path):
+    summary = {"passed": 2, "total": 2, "collected": 2}
+    exe = _stalled(tmp_path, [_t("tests/a.py::t1"), _t("tests/a.py::t2", "failed")], summary)
+    assert exe.status == "failed" and len(exe.cases) == 2
+    exe = _stalled(tmp_path, [_t("tests/a.py::t1"), _t("tests/a.py::t2")], summary)
+    assert exe.status == "passed" and "hung at shutdown" in exe.error_summary
+
+
+def test_sabotage_a_run_killed_before_the_summary_covers_every_collected_test_is_still_a_timeout(tmp_path):
+    tests = [_t("tests/a.py::t1")]
+    assert _stalled(tmp_path, tests, {"total": 1, "collected": 5}).status == "timeout"
+    assert _stalled(tmp_path, tests, {}).status == "timeout"
+    assert _stalled(tmp_path, tests, {"total": 1, "collected": 1}, rc=124, stalled_s=0).status == "passed"
+
