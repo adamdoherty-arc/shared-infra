@@ -161,7 +161,7 @@
     {
       "name": "ada-owner-plan-weekly-screen",
       "owner": "ada",
-      "_note": "Creates the Trade Planner owner plan (track-only, no broker order) for the current ET week: runs the Monday screen in ada-backend and imports it. Fires Mon-Fri 10:10 host-local (the host clock is America/New_York); the script exits 0 with a nothing-to-do line when the day is not a trading day, before 10:05 ET, or the week already has a run, so a Monday holiday creates the plan on the first trading day. Raw output .claude/state/owner-plan-screen/<date>.out, log .claude/logs/owner-plan-weekly-screen.log, runbook docs/runbooks/compounding-book.md.",
+      "_note": "Creates the Trade Planner owner plan (track-only, no broker order) for the current ET week: runs the Monday screen in ada-backend and imports it. Fires Mon-Fri 10:10 host-local (the host clock is America/New_York); the script exits 0 with a nothing-to-do line when the day is not a trading day, before 10:05 ET, or the week already has a run, so a Monday holiday creates the plan on the first trading day. Raw output .claude/state/owner-plan-screen/<date>.out, log .claude/logs/owner-plan-weekly-screen.log, runbook docs/runbooks/owner-plan-weekly.md.",
       "cmd": [
         "cmd.exe",
         "/c",
