@@ -18,6 +18,7 @@ HEAVY = "heavy"
 LIGHT = "light"
 GATE_STALE_S = 15.0
 CLAIM_GRACE_S = 30.0
+SHORT_FIRST_AGING_S = 1500.0
 _SLOT_STEM = re.compile(r"^(?P<project>.+)\.light(?P<slot>\d+)$")
 
 
@@ -436,7 +437,9 @@ class ProjectLock:
     def queue_position(self, ticket: Path) -> int:
         """1-based place in this lane's queue (1 = next to start), counting only live waiters."""
         ahead = 0
-        for other in sorted(self._queue_dir.iterdir()) if self._queue_dir.exists() else []:
+        now = time.time()
+        waiting = list(self._queue_dir.iterdir()) if self._queue_dir.exists() else []
+        for other in sorted(waiting, key=lambda path: (self._rank(path, now), path.name)):
             if other == ticket:
                 return ahead + 1
             try:
@@ -457,12 +460,27 @@ class ProjectLock:
         pid = int(raw or 0)
         return pid, f"pid:{pid}"
 
+    def _rank(self, ticket: Path, now: float) -> int:
+        """0 runs before 1 in the heavy lane: a request naming files (`live_db --paths <file>`, a few minutes) goes
+        ahead of a queued whole tier (twenty minutes to over an hour), and a whole tier that has waited
+        SHORT_FIRST_AGING_S goes with them so a burst of short requests cannot starve it. The light lane is not ranked."""
+        if self.lane != HEAVY:
+            return 0
+        try:
+            data = json.loads(ticket.read_text(encoding="utf-8"))
+            names_files = bool(json.loads(data.get("key") or "")[1])
+            queued_at = float(data.get("queued_at") or now)
+        except (OSError, ValueError, TypeError, IndexError, KeyError, AttributeError):
+            return 1
+        return 0 if names_files or now - queued_at >= SHORT_FIRST_AGING_S else 1
+
     def _is_next(self, queue_dir: Path, ticket: Path) -> bool:
         held_by: dict[str, int] = {}
         for h in self.holders():
             g = h.group or f"pid:{h.pid}"
             held_by[g] = held_by.get(g, 0) + 1
-        live: list[tuple[int, str, Path]] = []
+        now = time.time()
+        live: list[tuple[int, int, str, Path]] = []
         for other in sorted(queue_dir.iterdir()):
             try:
                 owner, group = self._read_ticket(other)
@@ -473,10 +491,10 @@ class ProjectLock:
             if other != ticket and not pid_alive(owner):
                 other.unlink(missing_ok=True)
                 continue
-            live.append((held_by.get(group, 0), other.name, other))
+            live.append((self._rank(other, now), held_by.get(group, 0), other.name, other))
         if not live:
             return True
-        return min(live)[2] == ticket
+        return min(live)[3] == ticket
 
     def wait_for_run_id(self, timeout: float = 15.0, key: str | None = None) -> Held | None:
         """Poll for a run id: the holder of `key` when given, else the holder acquire() attached to."""

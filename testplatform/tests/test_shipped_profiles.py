@@ -34,10 +34,17 @@ def test_control_a_mounted_profile_is_the_one_read(tmp_path, monkeypatch):
 
 
 def test_sabotage_a_shipped_profile_over_its_memory_budget_is_refused_at_load(tmp_path, monkeypatch):
-    """The verifier's margin point as an absolute check: four 2,100 MB workers, the 1,350 MB parent and the 500 MB
-    headroom are 10,250 MB against the 10,240 MB budget, and load_project refuses the whole profile."""
+    """The verifier's margin point as an absolute check: the shipped profile's heaviest tier, with a worker RSS one MB
+    past what the budget leaves after the parent and the headroom, and load_project refuses the whole profile. It reads
+    the worker count from the profile, so lowering ADA's workers (4 to 2 on 2026-10-11, after a 3-worker OOM) cannot
+    turn this case into one that never raises."""
     shipped = yaml.safe_load(shipped_profile_file("ada").read_text(encoding="utf-8"))
-    shipped["lanes"]["worker_rss_mb"] = 2100
+    lanes = shipped["lanes"]
+    path_tier = shipped.get("path_tier")
+    heavy = max(int(t.get("workers", 0)) for n, t in shipped["tiers"].items()
+                if n != path_tier and t.get("framework", shipped.get("framework")) == "pytest")
+    room = float(lanes["mem_budget_mb"]) - float(lanes.get("parent_rss_mb", 450)) - float(lanes.get("headroom_mb", 0))
+    lanes["worker_rss_mb"] = int(room / heavy) + 1
     mount = tmp_path / "mount"
     (mount / "ada").mkdir(parents=True)
     (mount / "ada" / profile.PROFILE_NAME).write_text(yaml.safe_dump(shipped), encoding="utf-8")

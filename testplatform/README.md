@@ -17,7 +17,10 @@ testctl run ada:changed --paths <files...>   the tests that depend on those file
 testctl run ada:changed          testmon-selected (needs testmon data; refuses with a one-line hint otherwise, never a git-diff guess)
 testctl run ada:fast --quiet     prints nothing on pass, the verdict on failure; the exit code gates (hooks)
 testctl run ada                  default tier (fast)
-testctl run ada:backend/tests/test_x.py[::Class::test]    a file or node id (uses the path tier)
+testctl run ada:backend/tests/test_x.py[::Class::test]    a file or node id (uses the path tier; a plain file run deselects live_db,
+                                              slow, stress and memory_heavy tests, a node id applies no marker and forces one)
+testctl run ada:live_db --paths <files...>   the live_db tests of just those files (the explicit route to a live_db file; real adam DB;
+                                              heavy lane, one run at a time; a tier opts in with `accepts_paths: true`)
 testctl run legion:fast --no-wait                          start and return the run id
 testctl run-failures <run_id>    compact failure list
 testctl failure <failure_id>     one failure with trace tail
@@ -112,8 +115,8 @@ and a crashed run's leftovers (older than 3h) are swept by the next run. Add `<l
 **light** lane (a path target such as `ada:backend/tests/test_x.py`, a `.tsx` path, or `changed --paths`) runs up
 to `light_concurrency` requests at once (`ada`: 3, set in `projects.yml`; a profile's `lanes: {light_concurrency: N}`
 overrides it; default 1) and never waits behind a heavy run. A second request for the same spec attaches to the
-run in flight (HTTP 409 with `attached_run_id`); a different request queues first come, first served within its
-own lane. Light runs always pass `-p no:testmon` so only heavy runs ever write `.testmondata`. `testctl status`
+run in flight (HTTP 409 with `attached_run_id`); a different request queues within its own lane: first come, first served,
+except that a heavy-lane request naming files (`live_db --paths`) goes before a queued whole tier unless that tier has waited 25 minutes. Light runs always pass `-p no:testmon` so only heavy runs ever write `.testmondata`. `testctl status`
 lists active runs with their lane. It is supervised by the hostcron job `testctl-serve-ensure`
 (every minute, no-op when the port answers). `install-testctl-service.ps1` is the NSSM alternative
 (elevated). Logs: `logs/serve.log`.

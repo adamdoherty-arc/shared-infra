@@ -276,7 +276,8 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--trigger", default=os.environ.get("TESTCTL_TRIGGER", "claude"),
                    choices=list(runner.TRIGGERS))
     r.add_argument("--paths", nargs="+", metavar="FILE", default=None,
-                   help="changed tier only: run the tests that depend on these source/test files")
+                   help="changed tier: run the tests that depend on these source/test files; "
+                        "a tier declaring accepts_paths (ADA live_db): run that tier's marker over these test files")
     r.add_argument("--quiet", action="store_true", help="print nothing on pass; the exit code gates")
     f = add("failure", cmd_failure)
     f.add_argument("failure_id", type=int)

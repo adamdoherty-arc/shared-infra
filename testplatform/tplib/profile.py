@@ -248,6 +248,18 @@ def check_serial_phase(name: str, tier: dict[str, Any], framework: str | None, w
             raise ProfileError(f"{where}: tier {name!r} {key} must be an integer >= {minimum}, got {value!r}")
 
 
+def check_accepts_paths(name: str, tier: dict[str, Any], framework: str | None, where: str) -> None:
+    """`accepts_paths: true` lets `testctl run <project>:<tier> --paths <files>` run that tier's marker over the named
+    files (ADA's live_db tier: the explicit route to a live_db file, since the path tier deselects live_db). A changed
+    tier already takes --paths through its own selection, and only a pytest tier has a marker to apply."""
+    value = tier["accepts_paths"]
+    if not isinstance(value, bool):
+        raise ProfileError(f"{where}: tier {name!r} accepts_paths must be true or false, got {value!r}")
+    if value and (framework != "pytest" or tier.get("mode") == "changed"):
+        raise ProfileError(f"{where}: tier {name!r} accepts_paths needs a whole pytest tier (a changed tier takes --paths "
+                           "through its own selection)")
+
+
 def validate_profile(profile: dict[str, Any], where: str) -> None:
     if not isinstance(profile, dict):
         raise ProfileError(f"{where}: profile must be a mapping")
@@ -263,6 +275,8 @@ def validate_profile(profile: dict[str, Any], where: str) -> None:
         if int(tier.get("timeout_s", 0)) <= 0:
             raise ProfileError(f"{where}: tier {name!r} needs a positive timeout_s")
         check_serial_phase(name, tier, fw, where)
+        if "accepts_paths" in tier:
+            check_accepts_paths(name, tier, fw, where)
     lanes = profile.get("lanes")
     if lanes is not None:
         if not isinstance(lanes, dict):

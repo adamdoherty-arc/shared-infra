@@ -142,7 +142,12 @@ def preflight(project: Project, target: str | None, changed_paths: list[str] | N
         if problem:
             raise RunError(f"memory budget: {problem}; lower the heavy workers or raise the container limit")
     if changed_paths and tier.get("mode") != "changed":
-        raise RunError("--paths only applies to the changed tier (testctl run <project>:changed --paths <files>)")
+        if not tier.get("accepts_paths"):
+            raise RunError("--paths only applies to the changed tier and to tiers declaring accepts_paths "
+                           "(testctl run <project>:changed --paths <files>)")
+        for node in changed_paths:
+            if not (project.root / node.split("::", 1)[0]).exists():
+                raise RunError(f"--paths {node!r} names no existing file or directory under {project.root.as_posix()}")
     if tier.get("mode") == "changed" and project.profile.get("runtime"):
         problem = sel.preflight_changed(project.profile["runtime"], tier, bool(changed_paths))
         if problem:
@@ -337,8 +342,16 @@ def _summary(text: str, limit: int = 500) -> str:
 
 def reap_orphaned_heavy_pytest(runtime: dict[str, Any], workdir_marker: str = "pytest backend/tests --rootdir") -> int:
     """Kill whole-suite pytest processes left in the container by a runner that died. The caller holds the project's
-    single heavy-lane lock, so any whole-suite pytest still running there has no owner."""
+    single heavy-lane lock, so any whole-suite pytest still running there has no owner.
+
+    A light run whose selection is large hands pytest the `backend/tests` directory plus an allowlist, so its command
+    line matches the same words as a whole-suite run; ada:changed run 14684 (2026-10-14) was killed with exit 143 by
+    the reaper of the memory_heavy run that started the moment `ada:full` run 14591 timed out. A run with a snapshot
+    always roots at the snapshot, which a light run never does, so the pattern names that root when there is one."""
     container = runtime["container"]
+    snapshot_root = (runtime.get("snapshot") or {}).get("dest")
+    if snapshot_root and workdir_marker == "pytest backend/tests --rootdir":
+        workdir_marker = f"pytest backend/tests --rootdir={snapshot_root}"
     pattern = f"timeout -s TERM .*{workdir_marker}"
     rc, out = _run(["docker", "exec", container, "pgrep", "-f", pattern], 30)
     pids = [p for p in out.split() if p.isdigit()] if rc == 0 else []
@@ -915,6 +928,16 @@ def report_is_complete(report_path: Path | None) -> bool:
     return bool(collected) and total == collected
 
 
+def zero_executed_hint(tier: dict[str, Any]) -> str:
+    """Why a path run may have executed nothing: its marker deselects tests unless a node id is named, and a tier that
+    deselects live_db points at the explicit route to a live_db file."""
+    if not tier.get("marker_unless_node_id"):
+        return ""
+    live = (", or run a live_db file with `testctl run <project>:live_db --paths <file>`"
+            if "not live_db" in str(tier.get("marker")) else "")
+    return f" (marker {tier['marker']!r} deselects tests from file runs; name a node id to force one{live})"
+
+
 def interpret_pytest(project: Project, tier: dict[str, Any], paths: list[str] | None, trigger: str, rc: int,
                      report_path: Path | None, out_log: Path, elapsed: float, timeout_s: int,
                      quarantined_count: int, failure_stream: Path | None = None, stalled_s: int = 0) -> Execution:
@@ -962,8 +985,7 @@ def interpret_pytest(project: Project, tier: dict[str, Any], paths: list[str] | 
     if rc == 5 and min_executed == 0:
         return Execution("passed", cases, None, quarantined_count, rc)
     if executed < min_executed:
-        hint = (f" (marker {tier['marker']!r} deselects slow tests from file runs; name a node id to force one)"
-                if tier.get("marker_unless_node_id") else "")
+        hint = zero_executed_hint(tier)
         return Execution("error", cases, f"executed {executed} tests, tier requires at least {min_executed}{hint}",
                          quarantined_count, rc)
     if totals["errors"] and totals["failed"] == 0 and rc != 1:
@@ -1620,6 +1642,8 @@ def _execute_framework(project: Project, tier: dict[str, Any], paths: list[str] 
     kw: dict[str, Any] = {"snap": snap} if snap else {}
     if framework == "pytest" and changed_paths and tier.get("mode") == "changed":
         return run_changed_paths(project, tier, trigger, art, legion, target, changed_paths)
+    if framework == "pytest" and changed_paths and tier.get("accepts_paths") and tier.get("mode") != "changed":
+        return run_pytest(project, tier, list(changed_paths), trigger, art, legion, target, None, **kw)
     if framework == "pytest" and tier.get("serial_marker") and not paths and not changed_paths:
         return run_pytest_with_serial_phase(project, tier, trigger, art, legion, target, snap)
     if framework == "pytest":
